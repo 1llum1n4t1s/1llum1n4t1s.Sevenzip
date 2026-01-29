@@ -1,4 +1,12 @@
 <Project>
+    <!-- Restore 前に各プロジェクトの bin と obj フォルダの中身を削除（ビルド時は dotnet build が Restore→Build の順で実行するため実質ビルド前のクリーンになる） -->
+    <Target Name="CleanBinObjBeforeBuild" BeforeTargets="Restore">
+        <ItemGroup>
+            <_BinObjDirsToClean Include="$(MSBuildProjectDirectory)\bin" Condition="Exists('$(MSBuildProjectDirectory)\bin')" />
+            <_BinObjDirsToClean Include="$(MSBuildProjectDirectory)\obj" Condition="Exists('$(MSBuildProjectDirectory)\obj')" />
+        </ItemGroup>
+        <RemoveDir Directories="@(_BinObjDirsToClean)" />
+    </Target>
     <!-- 並列ビルドで app.ico が複数プロセスから同時書き込みされないよう、1 プロジェクトだけで実行 -->
     <Target Name="GenerateAppIcon" BeforeTargets="BeforeBuild" Condition="'$(MSBuildProjectName)' == 'Cube.Core'">
         <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)icon\generate_icon.ps1&quot;" WorkingDirectory="$(MSBuildThisFileDirectory)" />

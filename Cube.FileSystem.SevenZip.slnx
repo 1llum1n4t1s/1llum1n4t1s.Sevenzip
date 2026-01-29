@@ -2,17 +2,6 @@
   <Configurations>
     <Platform Name="x64" />
   </Configurations>
-  <Folder Name="/Applications/">
-    <Project Path="Applications/Ice/Associator/Cube.FileSystem.SevenZip.Ice.Associator.csproj">
-      <Platform Solution="*|x64" Project="x64" />
-    </Project>
-    <Project Path="Applications/Ice/Main/Cube.FileSystem.SevenZip.Ice.Main.csproj">
-      <Platform Solution="*|x64" Project="x64" />
-    </Project>
-    <Project Path="Applications/Ice/Settings/Cube.FileSystem.SevenZip.Ice.Settings.csproj">
-      <Platform Solution="*|x64" Project="x64" />
-    </Project>
-  </Folder>
   <Folder Name="/Libraries/">
     <Project Path="Libraries/Cube.Core/Cube.Core.csproj">
       <Platform Solution="*|x64" Project="x64" />
@@ -44,9 +33,6 @@
   </Folder>
   <Folder Name="/Tests/">
     <Project Path="Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj">
-      <Platform Solution="*|x64" Project="x64" />
-    </Project>
-    <Project Path="Tests/Ice/Cube.FileSystem.SevenZip.Ice.Tests.csproj">
       <Platform Solution="*|x64" Project="x64" />
     </Project>
   </Folder>
