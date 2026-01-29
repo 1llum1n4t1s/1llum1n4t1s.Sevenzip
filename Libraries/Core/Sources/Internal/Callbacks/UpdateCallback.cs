@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -19,6 +19,7 @@
 using Cube.Text.Extensions;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 namespace Cube.FileSystem.SevenZip;
 
@@ -52,6 +53,7 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
     {
         _items = items;
         TotalCount = items.Count;
+        TotalBytes = items.Sum(e => e.Length);
     }
 
     #endregion
@@ -89,7 +91,9 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
     /// SetTotal
     ///
     /// <summary>
-    /// Notifies the total bytes of target files.
+    /// Notifies the total bytes of target files. The parameter is ignored
+    /// because TotalBytes is set from items in the constructor (7-Zip may
+    /// call this per-file with the current file size).
     /// </summary>
     ///
     /// <param name="bytes">Total bytes of target files.</param>
@@ -99,7 +103,6 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
     /* --------------------------------------------------------------------- */
     public SevenZipCode SetTotal(ulong bytes)
     {
-        TotalBytes = (long)bytes;
         return Report(ProgressState.Prepare, Current());
     }
 
@@ -108,17 +111,23 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
     /// SetCompleted
     ///
     /// <summary>
-    /// Notifies the bytes to be archived.
+    /// Notifies the bytes to be archived. 7-Zip may report per-file bytes
+    /// (0 to current file size) or cumulative; we accumulate to always report
+    /// cumulative bytes for overall progress.
     /// </summary>
     ///
-    /// <param name="bytes">Bytes to be archived.</param>
+    /// <param name="bytes">Bytes to be archived (per-file or cumulative).</param>
     ///
     /// <returns>Operation result.</returns>
     ///
     /* --------------------------------------------------------------------- */
     public SevenZipCode SetCompleted(IntPtr bytes)
     {
-        if (bytes != IntPtr.Zero) Bytes = Marshal.ReadInt64(bytes);
+        var value = bytes != IntPtr.Zero ? Marshal.ReadInt64(bytes) : 0L;
+        if (value < _lastCompletedBytes)
+            _cumulativeBytes += _lastCompletedBytes;
+        _lastCompletedBytes = value;
+        Bytes = _cumulativeBytes + value;
         return Report(ProgressState.Progress, Current());
     }
 
@@ -154,7 +163,13 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
 
         var i = (int)index;
         var e = (i >= 0 && i < _items.Count) ? _items[i] : null;
-        return Report(ProgressState.Prepare, e);
+
+        if (UpdateItemProgress(index))
+        {
+            return Report(ProgressState.Prepare, e);
+        }
+
+        return SevenZipCode.Success;
     }
 
     /* --------------------------------------------------------------------- */
@@ -178,6 +193,8 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
         var i   = (int)index;
         var src = (i >= 0 && i < _items.Count) ? _items[i] : null;
         if (src is null) return SevenZipCode.Unavailable;
+
+        var indexChanged = UpdateItemProgress(index);
 
         switch (pid)
         {
@@ -214,7 +231,12 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
                 break;
         }
 
-        return Report(ProgressState.Prepare, src);
+        if (indexChanged)
+        {
+            return Report(ProgressState.Prepare, src);
+        }
+
+        return SevenZipCode.Success;
     }
 
     /* --------------------------------------------------------------------- */
@@ -263,7 +285,6 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
     /* --------------------------------------------------------------------- */
     public SevenZipCode SetOperationResult(SevenZipCode code)
     {
-        Count++;
         if (code != SevenZipCode.Success) Logger.Warn($"[{code}] Index:{_index}, Name:{Current()?.RawName ?? ""}");
         return code == SevenZipCode.Success ?
                Report(ProgressState.Success, Current()) :
@@ -366,11 +387,41 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
     /* --------------------------------------------------------------------- */
     private RawEntity Current() => (_index >= 0 && _index < _items.Count) ? _items[_index] : null;
 
+    /* --------------------------------------------------------------------- */
+    ///
+    /// UpdateItemProgress
+    ///
+    /// <summary>
+    /// Updates the progress count when the item index changes.
+    /// </summary>
+    ///
+    /// <param name="index">Index of the item.</param>
+    ///
+    /// <returns>true if the index changed; otherwise false.</returns>
+    ///
+    /* --------------------------------------------------------------------- */
+    private bool UpdateItemProgress(uint index)
+    {
+        var i = (int)index;
+        if (_processedItemIndex != i)
+        {
+            _processedItemIndex = i;
+            _processedItemCount = i + 1;
+            Count = _processedItemCount;
+            return true;
+        }
+        return false;
+    }
+
     #endregion
 
     #region Fields
     private readonly List<ArchiveStreamReader> _streams = [];
     private readonly IList<RawEntity> _items;
     private int _index = -1;
+    private int _processedItemCount = 0;
+    private int _processedItemIndex = -1;
+    private long _cumulativeBytes = 0L;
+    private long _lastCompletedBytes = 0L;
     #endregion
 }

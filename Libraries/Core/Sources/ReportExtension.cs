@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -36,14 +36,24 @@ public static class ReportExtension
     ///
     /// <summary>
     /// Gets the progress ratio within the range of [0, 1].
+    /// Returns byte-based ratio (0 to 100%) when TotalBytes > 0.
+    /// Returns 1.0 (100%) when TotalBytes == 0 (no data to process).
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    public static double GetRatio(this Report src) {
-        var c0 = src.Bytes / Math.Max(src.TotalBytes, 1.0);
-        var c1 = src.Count / Math.Max(src.TotalCount, 1.0);
-
-        return src.TotalBytes <=   0 ? c1 :
-               src.TotalCount <  100 ? c0 : Math.Min(c0, c1);
+    public static double GetRatio(this Report src)
+    {
+        if (src.TotalBytes > 0)
+        {
+            return Math.Min(src.Bytes / (double)src.TotalBytes, 1.0);
+        }
+        
+        // Fallback to file count when TotalBytes is 0 (e.g., directory-only operations)
+        if (src.TotalCount > 0)
+        {
+            return Math.Min(src.Count / (double)src.TotalCount, 1.0);
+        }
+        
+        return 1.0;
     }
 }

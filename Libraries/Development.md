@@ -561,6 +561,18 @@ indexInArchiveは更新するファイルがアーカイブ内にあるならア
 
 ### SetOperationResult
 
+### IProgress (SetTotal / SetCompleted) と進捗の「ファイルごとに100%になる」問題
+
+一部のフォーマット（例: Zip）では、7-Zip が **ファイルごとに** SetTotal(現在ファイルのサイズ) と SetCompleted(現在ファイルの処理バイト) を呼ぶ実装になっている。  
+その場合、Report の Bytes/TotalBytes がファイルごとに 0→1 となり、進捗がファイルごとに 100% になる。
+
+対策として UpdateCallback では以下を行う。
+
+- **TotalBytes**: コンストラクタで `_items.Sum(e => e.Length)` により全ファイルの合計バイト数を一度だけ設定。SetTotal では上書きしない。
+- **Bytes**: SetCompleted で 7-Zip から受け取った値を「ファイル単位」とみなし、値が前回より小さくなったら次のファイルに移ったと判断して累積する。`Bytes = _cumulativeBytes + value` で常に全体の累積バイトを Report に渡す。
+
+これにより、SetCompleted が累積でもファイル単位でも、アプリ側では常に全体進捗として扱える。
+
 <a name="IOutStream">IOutStream</a>
 ----------------------------------
 

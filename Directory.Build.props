@@ -2,7 +2,7 @@
     <PropertyGroup>
         <Platform Condition="'$(Platform)' == ''">x64</Platform>
         <Platforms>x64</Platforms>
-        <Version>1.0.18</Version>
+        <Version>1.0.24</Version>
         <Authors>clown,cube-soft,ゆろち</Authors>
         <Copyright>Copyright © 2010 CubeSoft, Inc., 2026 ゆろち</Copyright>
         <TargetFramework>net10.0-windows8.0</TargetFramework>

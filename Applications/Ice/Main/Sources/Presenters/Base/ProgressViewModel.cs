@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -15,6 +15,7 @@
 // limitations under the License.
 //
 /* ------------------------------------------------------------------------- */
+using Cube.FileSystem.SevenZip;
 using Cube.FileSystem.SevenZip.Ice.Properties;
 using Cube.Observable.Extensions;
 using System;

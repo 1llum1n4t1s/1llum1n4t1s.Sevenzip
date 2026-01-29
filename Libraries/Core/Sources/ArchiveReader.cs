@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -151,6 +151,9 @@ public sealed class ArchiveReader : DisposableBase
         var ss = new ArchiveStreamReader(Io.Open(src));
         cb.Streams.Add(ss);
         var code = _core.Open(ss, IntPtr.Zero, cb);
+
+        GC.KeepAlive(cb);
+
         if (code != 0) Logger.Warn($"[Open] Code:{code}");
 
         var n = (int)Math.Max(_core.GetNumberOfItems(), 1);
@@ -272,6 +275,8 @@ public sealed class ArchiveReader : DisposableBase
             var test = dest.HasValue() ? 0 : 1;
             var code = _core.Extract(src, n , test, cb);
 
+            GC.KeepAlive(cb);
+
             Logger.Debug($"Code:{code}");
             if (code == (int)SevenZipCode.Success) return;
             if (code == (int)SevenZipCode.WrongPassword) throw new EncryptionException();
@@ -298,7 +303,11 @@ public sealed class ArchiveReader : DisposableBase
     /* --------------------------------------------------------------------- */
     protected override void Dispose(bool disposing)
     {
-        _core?.Close();
+        if (_core != null)
+        {
+            _core.Close();
+            System.Runtime.InteropServices.Marshal.ReleaseComObject(_core);
+        }
         _disposable.Dispose();
     }
 

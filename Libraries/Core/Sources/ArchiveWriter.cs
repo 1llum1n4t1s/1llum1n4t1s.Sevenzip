@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -209,11 +209,18 @@ public sealed class ArchiveWriter : DisposableBase
         {
             using var ss = new ArchiveStreamWriter(Io.Create(dest));
             var archive = _lib.GetOutArchive(fmt);
-            var setter  = CompressionOptionSetter.From(Format, Options);
+            try
+            {
+                var setter = CompressionOptionSetter.From(Format, Options);
 
-            // ReSharper disable once SuspiciousTypeConversion.Global
-            setter?.Invoke(archive as ISetProperties);
-            return archive.UpdateItems(ss, (uint)src.Count, cb);
+                // ReSharper disable once SuspiciousTypeConversion.Global
+                setter?.Invoke(archive as ISetProperties);
+                return archive.UpdateItems(ss, (uint)src.Count, cb);
+            }
+            finally
+            {
+                if (archive != null) System.Runtime.InteropServices.Marshal.ReleaseComObject(archive);
+            }
         }, src, dest, progress);
     }
 
@@ -367,6 +374,9 @@ public sealed class ArchiveWriter : DisposableBase
         };
 
         var code = func(cb);
+
+        GC.KeepAlive(cb);
+
         if (code == (int)SevenZipCode.Success) return;
         if (code == (int)SevenZipCode.Cancel) throw cb.GetCancelException();
         throw cb.GetException(code);
