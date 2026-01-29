@@ -16,5 +16,6 @@
         <None Include="..\..\icon\app_icon.png" Pack="true" PackagePath="images\Icon.png" />
         <None Include="..\..\Readme.md" Pack="true" PackagePath="README.md" />
         <None Include="..\Cube.Core\bin\x64\$(Configuration)\$(TargetFramework)\Cube.Core.dll" Pack="true" PackagePath="lib\$(TargetFramework)\Cube.Core.dll" Visible="false" Link="Cube.Core.dll" />
+        <None Include="bin\x64\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml" Pack="true" PackagePath="lib\$(TargetFramework)\$(AssemblyName).xml" Visible="false" Condition="Exists('bin\x64\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml')" />
     </ItemGroup>
 </Project>

@@ -25,7 +25,7 @@ jobs:
         run: dotnet build Cube.FileSystem.SevenZip.slnx -c Release -p:Platform=x64 --no-restore
       
       - name: Pack
-        run: dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Platform=x64 --no-build -o Libraries/Core/bin
+        run: dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Platform=x64 --no-build -o Libraries/Core/bin -p:NoDefaultExcludes=true
       
       - name: Publish to NuGet
         run: |
