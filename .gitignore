@@ -38,9 +38,10 @@
 [Tt]mp/
 [Tt]emp/
 
-.idea
-.svn
-.vs
+.idea/
+.svn/
+.vs/
+.vscode/
 
 ~$*
 _ReSharper*/
