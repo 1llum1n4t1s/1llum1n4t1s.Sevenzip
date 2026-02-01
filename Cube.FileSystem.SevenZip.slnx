@@ -4,36 +4,33 @@
   </Configurations>
   <Folder Name="/Libraries/">
     <Project Path="Libraries/Cube.Core/Cube.Core.csproj">
-      <Platform Solution="*|x64" Project="x64" />
+      <Platform Project="x64" />
     </Project>
     <Project Path="Libraries/Cube.FileSystem.AlphaFS/Cube.FileSystem.AlphaFS.csproj">
-      <Platform Solution="*|x64" Project="x64" />
+      <Platform Project="x64" />
     </Project>
     <Project Path="Libraries/Cube.Logging.NLog/Cube.Logging.NLog.csproj">
-      <Platform Solution="*|x64" Project="x64" />
+      <Platform Project="x64" />
     </Project>
     <Project Path="Libraries/Cube.Forms/Cube.Forms.csproj">
-      <Platform Solution="*|x64" Project="x64" />
+      <Platform Project="x64" />
     </Project>
     <Project Path="Libraries/Cube.Forms.Controls/Cube.Forms.Controls.csproj">
-      <Platform Solution="*|x64" Project="x64" />
+      <Platform Project="x64" />
     </Project>
     <Project Path="Libraries/Cube.Trick/Cube.Trick.csproj">
-      <Platform Solution="*|x64" Project="x64" />
+      <Platform Project="x64" />
     </Project>
     <Project Path="Libraries/Cube.Private.Tests/Cube.Private.Tests.csproj">
-      <Platform Solution="*|x64" Project="x64" />
-    </Project>
-    <Project Path="Applications/Ice/Core/Cube.FileSystem.SevenZip.Ice.csproj">
-      <Platform Solution="*|x64" Project="x64" />
+      <Platform Project="x64" />
     </Project>
     <Project Path="Libraries/Core/Cube.FileSystem.SevenZip.csproj">
-      <Platform Solution="*|x64" Project="x64" />
+      <Platform Project="x64" />
     </Project>
   </Folder>
   <Folder Name="/Tests/">
     <Project Path="Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj">
-      <Platform Solution="*|x64" Project="x64" />
+      <Platform Project="x64" />
     </Project>
   </Folder>
 </Solution>
