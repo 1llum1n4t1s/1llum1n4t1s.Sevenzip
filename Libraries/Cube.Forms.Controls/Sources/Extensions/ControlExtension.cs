@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -17,6 +17,7 @@
 /* ------------------------------------------------------------------------- */
 using System;
 using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Drawing;
 using System.Reflection;
 using System.Windows.Forms;
@@ -91,6 +92,7 @@ public static class Methods
     /// <returns>true for any event handler has been set.</returns>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("The type of src cannot be statically discovered.")]
     public static bool HasEventHandler(this Control src, string name)
     {
         var key = GetEventKey(src, name);
@@ -111,9 +113,13 @@ public static class Methods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("The type of obj cannot be statically discovered.")]
     private static EventHandlerList GetEventHandlers(object obj)
     {
-        static MethodInfo method(Type t)
+        static MethodInfo method(
+            [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods | DynamicallyAccessedMemberTypes.NonPublicMethods)]
+            Type t
+        )
         {
             var mi = t.GetMethod("get_Events", GetAllFlags());
             if (mi is null && t.BaseType is not null) mi = method(t.BaseType);
@@ -131,9 +137,14 @@ public static class Methods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("The type of obj cannot be statically discovered.")]
     private static object GetEventKey(object obj, string name)
     {
-        static FieldInfo method(Type t, string n)
+        static FieldInfo method(
+            [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicFields | DynamicallyAccessedMemberTypes.NonPublicFields)]
+            Type t,
+            string n
+        )
         {
             var fi = t.GetField($"Event{n}", GetAllFlags());
             if (fi is null && t.BaseType is not null) fi = method(t.BaseType, n);

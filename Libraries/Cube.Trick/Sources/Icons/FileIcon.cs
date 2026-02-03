@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -17,6 +17,7 @@
 /* ------------------------------------------------------------------------- */
 using Cube.Shell32;
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Drawing;
 using System.Runtime.InteropServices;
 namespace Cube.Icons;
@@ -50,6 +51,7 @@ public static class FileIcon
     /// <returns>Icon object.</returns>
     ///
     /* --------------------------------------------------------------------- */
+    [UnconditionalSuppressMessage("Trimming", "IL2050:Correctness of COM interop cannot be guaranteed after trimming. Interfaces and interface members might be removed.", Justification = "IImageList COM interface is required for shell icon retrieval.")]
     public static Icon Get(string src, IconSize size)
     {
         var s0 = new ShFileInfo();

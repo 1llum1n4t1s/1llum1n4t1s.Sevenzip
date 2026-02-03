@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -16,6 +16,7 @@
 //
 /* ------------------------------------------------------------------------- */
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 namespace Cube;
 
@@ -49,6 +50,7 @@ public class EventBehavior : DisposableBase
     /// </param>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("The type of src cannot be statically discovered.")]
     public EventBehavior(object src, string name, Action action) :
         this(src, name, new EventHandler((_, _) => action())) { }
 
@@ -68,6 +70,7 @@ public class EventBehavior : DisposableBase
     /// </param>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("The type of src cannot be statically discovered.")]
     public EventBehavior(object src, string name, Delegate handler)
     {
         _source  = src ?? throw new ArgumentNullException(nameof(src));

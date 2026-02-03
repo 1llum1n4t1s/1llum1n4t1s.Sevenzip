@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -573,7 +573,7 @@ public class BorderlessWindow : Window
         if (MaximumSize.Width <= 0 || MaximumSize.Height <= 0) return false;
 
         var screen = Screen.FromControl(this);
-        var info = (MINMAXINFO)Marshal.PtrToStructure(m.LParam, typeof(MINMAXINFO));
+        var info = Marshal.PtrToStructure<MINMAXINFO>(m.LParam);
         info.ptMaxPosition.x = screen.WorkingArea.X - screen.Bounds.X;
         info.ptMaxPosition.y = screen.WorkingArea.Y - screen.Bounds.Y;
         info.ptMaxSize.x = screen.WorkingArea.Width;

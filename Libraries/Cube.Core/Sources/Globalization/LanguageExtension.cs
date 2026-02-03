@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -48,8 +48,7 @@ public static class LanguageExtension
     /* --------------------------------------------------------------------- */
     public static Language ToLanguage(this CultureInfo src)
     {
-        var dest = Enum.GetValues(typeof(Language))
-                       .Cast<Language>()
+        var dest = Enum.GetValues<Language>()
                        .FirstOrDefault(e => (int)e == src.LCID);
         return dest != Language.Auto ? dest : Language.Unknown;
     }

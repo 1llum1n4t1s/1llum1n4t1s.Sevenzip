@@ -17,6 +17,7 @@
 /* ------------------------------------------------------------------------- */
 using Cube.FileSystem;
 using Microsoft.Win32;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
@@ -79,6 +80,8 @@ public static class Proxy
     /// <param name="src">Object to be serialized.</param>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     public static void Serialize<T>(this Format format, string dest, T src)
     {
         switch (format)
@@ -107,6 +110,8 @@ public static class Proxy
     /// <param name="src">Object to be serialized.</param>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     public static void Serialize<T>(this RegistryKey dest, T src) =>
         new RegistrySerializer().Invoke(dest, src);
 
@@ -119,6 +124,8 @@ public static class Proxy
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     private static void SerializeXml<T>(Stream dest, T src)
     {
         var settings = new XmlWriterSettings { Indent = true };
@@ -135,6 +142,8 @@ public static class Proxy
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     private static void SerializeJson<T>(Stream dest, T src)
     {
         using var obj = JsonReaderWriterFactory.CreateJsonWriter(dest, Encoding.UTF8, false, true);
@@ -159,6 +168,8 @@ public static class Proxy
     /// <returns>Deserialized object.</returns>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     public static T Deserialize<T>(this Format format, string src)
     {
         switch (format)
@@ -186,6 +197,8 @@ public static class Proxy
     /// <returns>Deserialized object.</returns>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     public static T Deserialize<T>(this RegistryKey src) => new RegistryDeserializer().Invoke<T>(src);
 
     #endregion

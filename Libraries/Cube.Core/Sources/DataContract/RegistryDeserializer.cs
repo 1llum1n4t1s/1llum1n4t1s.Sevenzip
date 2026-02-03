@@ -21,6 +21,7 @@ using Microsoft.Win32;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.Versioning;
 namespace Cube.DataContract;
 
@@ -51,6 +52,8 @@ internal class RegistryDeserializer
     /// <returns>Deserialized object.</returns>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     public T Invoke<T>(RegistryKey src) => (T)Get(typeof(T), src);
 
     #endregion
@@ -67,7 +70,13 @@ internal class RegistryDeserializer
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    private static object Get(Type type, RegistryKey src)
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    private static object Get(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor | DynamicallyAccessedMemberTypes.PublicProperties)]
+        Type type,
+        RegistryKey src
+    )
     {
         var dest = Activator.CreateInstance(type);
         if (src is null) return dest;
@@ -92,6 +101,8 @@ internal class RegistryDeserializer
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     private static object Get(Type type, RegistryKey src, string name)
     {
         if (type.IsGenericList()) return OpenGet(src, name, e => GetList(type, e));
@@ -110,6 +121,8 @@ internal class RegistryDeserializer
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     private static Array GetArray(Type type, RegistryKey src)
     {
         if (type.GetArrayRank() != 1) return null;
@@ -133,6 +146,8 @@ internal class RegistryDeserializer
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     private static IList GetList(Type type, RegistryKey src)
     {
         var ga = type.GetGenericArguments();
@@ -149,6 +164,8 @@ internal class RegistryDeserializer
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     private static IList GetListCore(Type type, RegistryKey src)
     {
         var dest = Activator.CreateInstance(typeof(List<>)
@@ -174,7 +191,13 @@ internal class RegistryDeserializer
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    private static object GetListElement(Type type, RegistryKey src) =>
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    private static object GetListElement(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor | DynamicallyAccessedMemberTypes.PublicProperties)]
+        Type type,
+        RegistryKey src
+    ) =>
         type.IsObject() ? Get(type, src) : type.Parse(src.GetValue("", null));
 
     /* --------------------------------------------------------------------- */

@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -17,6 +17,7 @@
 /* ------------------------------------------------------------------------- */
 using Cube.Text.Extensions;
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using System.Text;
@@ -235,12 +236,13 @@ public class Shortcut
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
+    [UnconditionalSuppressMessage("Trimming", "IL2072:Target parameter argument does not satisfy 'DynamicallyAccessedMembersAttribute' in call to target method. The return value of the source method does not have matching annotations.", Justification = "COM object creation from CLSID is inherently dynamic.")]
     private static void Invoke(Action<IShellLink> action)
     {
         var guid = new Guid("00021401-0000-0000-C000-000000000046");
         var type = Type.GetTypeFromCLSID(guid);
 
-        if (Activator.CreateInstance(type) is IShellLink sh)
+        if (Activator.CreateInstance(type!) is IShellLink sh)
         {
             try { action(sh); }
             finally { _ = Marshal.ReleaseComObject(sh); }

@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -172,7 +172,7 @@ public static class FormatFactory
                 { ".zst",  Format.Zstd     },
             };
 
-            foreach (Format item in Enum.GetValues(typeof(Format)))
+            foreach (var item in Enum.GetValues<Format>())
             {
                 var ext = $".{item.ToString().ToLowerInvariant()}";
                 if (!_extension.ContainsKey(ext)) _extension.Add(ext, item);

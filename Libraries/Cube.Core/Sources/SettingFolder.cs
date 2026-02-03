@@ -21,6 +21,7 @@ using Cube.Reflection.Extensions;
 using Cube.Tasks.Extensions;
 using System;
 using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.Versioning;
 using System.Threading.Tasks;
@@ -54,6 +55,8 @@ public class SettingFolder<T> : ObservableBase where T : INotifyPropertyChanged,
     /// <param name="format">Serialization format.</param>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     public SettingFolder(Format format, Assembly assembly) :
         this(format, GetLocation(format, assembly), assembly.GetSoftwareVersion()) { }
 
@@ -71,6 +74,8 @@ public class SettingFolder<T> : ObservableBase where T : INotifyPropertyChanged,
     /// <param name="version">Software version.</param>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     public SettingFolder(Format format, string location, SoftwareVersion version)
     {
         _autosaver.AutoReset = false;
@@ -176,6 +181,8 @@ public class SettingFolder<T> : ObservableBase where T : INotifyPropertyChanged,
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     public void Load() => OnLoad();
 
     /* --------------------------------------------------------------------- */
@@ -193,6 +200,8 @@ public class SettingFolder<T> : ObservableBase where T : INotifyPropertyChanged,
     /// </remarks>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     protected virtual void OnLoad()
     {
         try
@@ -218,6 +227,8 @@ public class SettingFolder<T> : ObservableBase where T : INotifyPropertyChanged,
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     public void Save() => OnSave();
 
     /* --------------------------------------------------------------------- */
@@ -234,6 +245,8 @@ public class SettingFolder<T> : ObservableBase where T : INotifyPropertyChanged,
     /// </remarks>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     protected virtual void OnSave() => Format.Serialize(Location, Value);
 
     #endregion
@@ -255,6 +268,8 @@ public class SettingFolder<T> : ObservableBase where T : INotifyPropertyChanged,
     /// </param>
     ///
     /* --------------------------------------------------------------------- */
+    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code.", Justification = "Save is called only when AutoSave is enabled, which is a user-controlled setting.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.", Justification = "Save is called only when AutoSave is enabled, which is a user-controlled setting.")]
     protected override void Dispose(bool disposing)
     {
         if (disposing) _autosaver.Dispose();
@@ -288,6 +303,8 @@ public class SettingFolder<T> : ObservableBase where T : INotifyPropertyChanged,
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
+    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code.", Justification = "Save is called only when AutoSave is enabled, which is a user-controlled setting.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.", Justification = "Save is called only when AutoSave is enabled, which is a user-controlled setting.")]
     private void WhenChanged(object s, PropertyChangedEventArgs e)
     {
         try

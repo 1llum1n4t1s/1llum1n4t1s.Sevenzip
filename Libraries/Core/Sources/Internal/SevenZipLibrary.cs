@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -162,10 +162,9 @@ internal sealed class SevenZipLibrary : DisposableBase
     ///
     /* --------------------------------------------------------------------- */
     private CreateObjectDelegate GetDelegate() =>
-        Marshal.GetDelegateForFunctionPointer(
-            NativeMethods.GetProcAddress(_handle, "CreateObject"),
-            typeof(CreateObjectDelegate)
-        ) as CreateObjectDelegate;
+        Marshal.GetDelegateForFunctionPointer<CreateObjectDelegate>(
+            NativeMethods.GetProcAddress(_handle, "CreateObject")
+        );
 
     /* --------------------------------------------------------------------- */
     ///

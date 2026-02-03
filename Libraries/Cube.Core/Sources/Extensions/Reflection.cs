@@ -18,6 +18,7 @@
 using Cube.FileSystem;
 using Cube.Text.Extensions;
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.InteropServices;
 namespace Cube.Reflection.Extensions;
@@ -113,7 +114,13 @@ public static class Methods
     /// <returns>Path of the location.</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public static string GetLocation(this Assembly src) => GetOrEmpty(src.Location);
+    [UnconditionalSuppressMessage("SingleFile", "IL3000:Avoid accessing Assembly file path when publishing as a single file", Justification = "Fallback to AppContext.BaseDirectory is provided for single-file scenarios.")]
+    public static string GetLocation(this Assembly src)
+    {
+        var location = src.Location;
+        if (string.IsNullOrEmpty(location)) return AppContext.BaseDirectory;
+        return location;
+    }
 
     /* --------------------------------------------------------------------- */
     ///

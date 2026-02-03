@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -121,7 +121,7 @@ partial class WebControl
         /* ----------------------------------------------------------------- */
         private DialogButtons GetButtons(int src)
         {
-            foreach (DialogButtons mb in Enum.GetValues(typeof(DialogButtons)))
+            foreach (var mb in Enum.GetValues<DialogButtons>())
             {
                 if (src == (int)mb) return mb;
             }
@@ -139,7 +139,7 @@ partial class WebControl
         /* ----------------------------------------------------------------- */
         private DialogIcon GetIcon(int src)
         {
-            foreach (DialogIcon mi in Enum.GetValues(typeof(DialogIcon)))
+            foreach (var mi in Enum.GetValues<DialogIcon>())
             {
                 if (src == (int)mi) return mi;
             }

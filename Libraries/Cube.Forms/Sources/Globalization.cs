@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -17,6 +17,7 @@
 /* ------------------------------------------------------------------------- */
 using Cube.Globalization;
 using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Windows.Forms;
 namespace Cube.Forms.Globalization;
@@ -47,6 +48,7 @@ public static class Methods
     /// <param name="value">Language to show.</param>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("The type of TForm cannot be statically discovered.")]
     public static void Update<TForm>(this TForm src, Language value) where TForm : Form
     {
         var ci = value.ToCultureInfo();
@@ -71,6 +73,7 @@ public static class Methods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("The type of controls cannot be statically discovered.")]
     private static void Update(Control.ControlCollection src, ComponentResourceManager cm)
     {
         foreach (Control e in src)

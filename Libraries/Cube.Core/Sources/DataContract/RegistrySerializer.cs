@@ -20,6 +20,7 @@ using Cube.Text.Extensions;
 using Microsoft.Win32;
 using System;
 using System.Collections;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.Versioning;
 namespace Cube.DataContract;
 
@@ -49,6 +50,8 @@ internal class RegistrySerializer
     /// <param name="src">Object to be serialized.</param>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     public void Invoke<T>(RegistryKey dest, T src) => Set(typeof(T), dest, src);
 
     #endregion
@@ -64,7 +67,14 @@ internal class RegistrySerializer
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    private static void Set(Type type, RegistryKey dest, object src)
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    private static void Set(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
+        Type type,
+        RegistryKey dest,
+        object src
+    )
     {
         if (dest is null || src is null) return;
         foreach (var pi in type.GetProperties())
@@ -118,6 +128,8 @@ internal class RegistrySerializer
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     private static void SetArray(Type type, RegistryKey dest, Array src)
     {
         if (src.Rank != 1) return;
@@ -142,6 +154,8 @@ internal class RegistrySerializer
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
     private static void SetList(Type type, RegistryKey dest, IList src)
     {
         var ga = type.GetGenericArguments();
@@ -166,7 +180,14 @@ internal class RegistrySerializer
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    private static void SetListElement(Type type, RegistryKey dest, object src)
+    [RequiresUnreferencedCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    [RequiresDynamicCode("Data Contract Serialization and Deserialization might require types that cannot be statically analyzed.")]
+    private static void SetListElement(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
+        Type type,
+        RegistryKey dest,
+        object src
+    )
     {
         if (type.IsObject()) Set(type, dest, src);
         else Set(type, dest, "", src);
