@@ -82,7 +82,7 @@ internal static class ArchiveExtension
 
         var name = index == 0 ? Io.GetFileName(tmp) : $"{Io.GetFileName(tmp)}({index})";
         var ext  = Io.GetExtension(path).ToLowerInvariant();
-        var tar  = ext == ".tb2" ||
+        var tar  = ext == ".tb2" || ext == ".tbz2" ||
                    ext.Length == 4 && ext[0] == '.' && ext[1] == 't' && ext[3] == 'z';
         return tar ? $"{name}.tar" : name;
     }
