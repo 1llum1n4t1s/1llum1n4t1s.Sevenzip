@@ -156,7 +156,7 @@ public sealed class ArchiveReader : DisposableBase
 
         if (code != 0) Logger.Warn($"[Open] Code:{code}");
 
-        var n = (int)Math.Max(_core.GetNumberOfItems(), 1);
+        var n = (int)_core.GetNumberOfItems();
         Items = new ArchiveCollection(_core, n, src);
     }
 

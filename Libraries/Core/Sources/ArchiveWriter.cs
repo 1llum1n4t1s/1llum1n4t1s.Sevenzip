@@ -211,7 +211,7 @@ public sealed class ArchiveWriter : DisposableBase
             var archive = _lib.GetOutArchive(fmt);
             try
             {
-                var setter = CompressionOptionSetter.From(Format, Options);
+                var setter = CompressionOptionSetter.From(fmt, Options);
 
                 // ReSharper disable once SuspiciousTypeConversion.Global
                 setter?.Invoke(archive as ISetProperties);
