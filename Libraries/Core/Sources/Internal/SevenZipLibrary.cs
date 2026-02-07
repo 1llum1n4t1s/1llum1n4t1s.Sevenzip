@@ -162,7 +162,7 @@ internal sealed class SevenZipLibrary : DisposableBase
     ///
     /* --------------------------------------------------------------------- */
     private CreateObjectDelegate GetDelegate() =>
-        Marshal.GetDelegateForFunctionPointer<CreateObjectDelegate>(
+        _delegate ??= Marshal.GetDelegateForFunctionPointer<CreateObjectDelegate>(
             NativeMethods.GetProcAddress(_handle, "CreateObject")
         );
 
@@ -186,5 +186,6 @@ internal sealed class SevenZipLibrary : DisposableBase
 
     #region Fields
     private readonly SafeLibraryHandle _handle;
+    private CreateObjectDelegate _delegate;
     #endregion
 }

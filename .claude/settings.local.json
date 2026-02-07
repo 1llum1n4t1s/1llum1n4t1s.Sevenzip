@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(for lib in Libraries/*/Sources Tests/*/Sources)",
+      "Bash(do [ -d \"$lib\" ])",
+      "Bash(wc:*)",
+      "Bash(ls:*)",
+      "Bash(Kernel32)",
+      "Bash(Ole32 \")",
+      "Bash(dotnet build:*)",
+      "Bash(dotnet test:*)"
+    ]
+  }
+}

@@ -124,9 +124,10 @@ internal class ArchiveEntitySource : EntitySource
         LastWriteTime  = _core.Get<DateTime>(Index, ItemPropId.LastWriteTime);
         LastAccessTime = _core.Get<DateTime>(Index, ItemPropId.LastAccessTime);
 
-        if (!_path.Value.HasValue()) return;
+        var pathValue = _path.Value;
+        if (!pathValue.HasValue()) return;
 
-        FullName      = _path.Value;
+        FullName      = pathValue;
         Name          = Io.GetFileName(FullName);
         BaseName      = Io.GetBaseName(FullName);
         Extension     = Io.GetExtension(FullName);
