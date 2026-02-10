@@ -75,7 +75,7 @@ internal struct PropVariant
         VarEnum.VT_UI8     => _v64u,
         VarEnum.VT_R4      => BitConverter.Int32BitsToSingle((int)_v32u),
         VarEnum.VT_R8      => BitConverter.Int64BitsToDouble(_v64),
-        VarEnum.VT_BSTR    => _vstr != IntPtr.Zero ? Marshal.PtrToStringUni(_vstr) : null,
+        VarEnum.VT_BSTR    => _vstr != IntPtr.Zero ? Marshal.PtrToStringBSTR(_vstr) : null,
         VarEnum.VT_LPWSTR  => _vstr != IntPtr.Zero ? Marshal.PtrToStringUni(_vstr) : null,
         VarEnum.VT_LPSTR   => _vstr != IntPtr.Zero ? Marshal.PtrToStringAnsi(_vstr) : null,
         VarEnum.VT_FILETIME => DateTime.FromFileTime(_v64),
