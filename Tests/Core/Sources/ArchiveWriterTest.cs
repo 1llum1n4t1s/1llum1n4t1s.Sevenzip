@@ -16,7 +16,7 @@
 //
 /* ------------------------------------------------------------------------- */
 using Cube.Reflection.Extensions;
-using Cube.Tests;
+using Cube.Tests.Fixtures;
 using NUnit.Framework;
 using System;
 using System.Collections.Generic;

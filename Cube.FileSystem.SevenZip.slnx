@@ -2,35 +2,25 @@
   <Configurations>
     <Platform Name="x64" />
   </Configurations>
-  <Folder Name="/Libraries/">
-    <Project Path="Libraries/Cube.Core/Cube.Core.csproj">
-      <Platform Project="x64" />
-    </Project>
-    <Project Path="Libraries/Cube.FileSystem.AlphaFS/Cube.FileSystem.AlphaFS.csproj">
-      <Platform Project="x64" />
-    </Project>
-    <Project Path="Libraries/Cube.Logging.NLog/Cube.Logging.NLog.csproj">
-      <Platform Project="x64" />
-    </Project>
-    <Project Path="Libraries/Cube.Forms/Cube.Forms.csproj">
-      <Platform Project="x64" />
-    </Project>
-    <Project Path="Libraries/Cube.Forms.Controls/Cube.Forms.Controls.csproj">
-      <Platform Project="x64" />
-    </Project>
-    <Project Path="Libraries/Cube.Trick/Cube.Trick.csproj">
-      <Platform Project="x64" />
-    </Project>
-    <Project Path="Libraries/Cube.Private.Tests/Cube.Private.Tests.csproj">
-      <Platform Project="x64" />
-    </Project>
-    <Project Path="Libraries/Core/Cube.FileSystem.SevenZip.csproj">
-      <Platform Project="x64" />
-    </Project>
-  </Folder>
-  <Folder Name="/Tests/">
-    <Project Path="Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj">
-      <Platform Project="x64" />
-    </Project>
-  </Folder>
+  <Project Path="Libraries/Core/Cube.FileSystem.SevenZip.csproj">
+    <Platform Project="x64" />
+  </Project>
+  <Project Path="Libraries/Cube.Core/Cube.Core.csproj">
+    <Platform Project="x64" />
+  </Project>
+  <Project Path="Libraries/Cube.FileSystem.AlphaFS/Cube.FileSystem.AlphaFS.csproj">
+    <Platform Project="x64" />
+  </Project>
+  <Project Path="Libraries/Cube.Logging.NLog/Cube.Logging.NLog.csproj">
+    <Platform Project="x64" />
+  </Project>
+  <Project Path="Libraries/Cube.Trick/Cube.Trick.csproj">
+    <Platform Project="x64" />
+  </Project>
+  <Project Path="Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj">
+    <Platform Project="x64" />
+  </Project>
+  <Project Path="Tests/Private/Cube.Private.Tests.csproj">
+    <Platform Project="x64" />
+  </Project>
 </Solution>

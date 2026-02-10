@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <Description>Private package to test Cube.* projects.</Description>
+        <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+        <RootNamespace>Cube.Tests</RootNamespace>
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\..\Libraries\Cube.Core\Cube.Core.csproj" />
+        <ProjectReference Include="..\..\Libraries\Cube.Logging.NLog\Cube.Logging.NLog.csproj" />
+        <PackageReference Include="NUnit" Version="4.4.0" />
+    </ItemGroup>
+</Project>
