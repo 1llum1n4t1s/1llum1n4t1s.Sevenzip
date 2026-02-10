@@ -130,7 +130,7 @@ internal abstract class CallbackBase : DisposableBase
     /// </returns>
     ///
     /* --------------------------------------------------------------------- */
-    protected SevenZipCode Report(ProgressState state, Entity entity) =>
+    protected int Report(ProgressState state, Entity entity) =>
         Report(Make(state, entity, null));
 
     /* --------------------------------------------------------------------- */
@@ -149,7 +149,7 @@ internal abstract class CallbackBase : DisposableBase
     /// </returns>
     ///
     /* --------------------------------------------------------------------- */
-    protected SevenZipCode Report(Exception error, Entity entity) =>
+    protected int Report(Exception error, Entity entity) =>
         Report(Make(ProgressState.Failed, entity, error));
 
     /* --------------------------------------------------------------------- */
@@ -167,10 +167,10 @@ internal abstract class CallbackBase : DisposableBase
     /// </returns>
     ///
     /* --------------------------------------------------------------------- */
-    protected SevenZipCode Report(Report src)
+    protected int Report(Report src)
     {
         _inner?.Report(src);
-        return src.Cancel ? SevenZipCode.Cancel : SevenZipCode.Success;
+        return (int)(src.Cancel ? SevenZipCode.Cancel : SevenZipCode.Success);
     }
 
     #endregion
@@ -195,7 +195,7 @@ internal abstract class CallbackBase : DisposableBase
     /// </returns>
     ///
     /* --------------------------------------------------------------------- */
-    protected SevenZipCode Run(Func<SevenZipCode> func, ProgressState state, Entity entity) =>
+    protected int Run(Func<int> func, ProgressState state, Entity entity) =>
         Run(func, state, () => entity);
 
     /* --------------------------------------------------------------------- */
@@ -216,20 +216,20 @@ internal abstract class CallbackBase : DisposableBase
     /// </returns>
     ///
     /* --------------------------------------------------------------------- */
-    protected SevenZipCode Run(Func<SevenZipCode> func, ProgressState state, Func<Entity> entity)
+    protected int Run(Func<int> func, ProgressState state, Func<Entity> entity)
     {
         try
         {
             var c0 = func();
             var c1 = Report(state, entity());
-            return c1 == SevenZipCode.Cancel ? c1 : c0;
+            return c1 == (int)SevenZipCode.Cancel ? c1 : c0;
         }
         catch (Exception e)
         {
             Exceptions.Push(e);
             if (_inner is not null) return Report(e, entity());
-            if (e is SevenZipException se) return se.Code;
-            return SevenZipCode.UnknownError;
+            if (e is SevenZipException se) return (int)se.Code;
+            return (int)SevenZipCode.UnknownError;
         }
     }
 

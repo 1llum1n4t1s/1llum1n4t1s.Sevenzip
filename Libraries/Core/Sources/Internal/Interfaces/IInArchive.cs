@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -18,6 +18,7 @@
 /* ------------------------------------------------------------------------- */
 using System;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -29,10 +30,9 @@ namespace Cube.FileSystem.SevenZip;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-[ComImport]
+[GeneratedComInterface]
 [Guid("23170F69-40C1-278A-0000-000600600000")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IInArchive
+internal partial interface IInArchive
 {
     /* --------------------------------------------------------------------- */
     ///
@@ -55,8 +55,8 @@ internal interface IInArchive
     [PreserveSig]
     int Open(
         IInStream stream,
-        IntPtr max, // [In] ref ulong max
-        [MarshalAs(UnmanagedType.Interface)] IArchiveOpenCallback callback
+        IntPtr max,
+        IArchiveOpenCallback callback
     );
 
     /* --------------------------------------------------------------------- */
@@ -117,11 +117,11 @@ internal interface IInArchive
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    int Extract(
-        [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] uint[] indexes,
+    unsafe int Extract(
+        uint* indexes,
         uint count,
         int test,
-        [MarshalAs(UnmanagedType.Interface)] IArchiveExtractCallback callback
+        IArchiveExtractCallback callback
     );
 
     /* --------------------------------------------------------------------- */
@@ -167,7 +167,7 @@ internal interface IInArchive
     /* --------------------------------------------------------------------- */
     void GetPropertyInfo(
         uint index,
-        [MarshalAs(UnmanagedType.BStr)] out string name,
+        [MarshalUsing(typeof(BStrStringMarshaller))] out string name,
         out ItemPropId pid,
         out ushort type
     );
@@ -201,7 +201,7 @@ internal interface IInArchive
     /* --------------------------------------------------------------------- */
     void GetArchivePropertyInfo(
         uint index,
-        [MarshalAs(UnmanagedType.BStr)] out string name,
+        [MarshalUsing(typeof(BStrStringMarshaller))] out string name,
         out ItemPropId pid,
         out ushort type
     );

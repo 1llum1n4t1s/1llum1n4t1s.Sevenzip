@@ -43,6 +43,7 @@ internal class Counter : IProgress<Report>
     /* --------------------------------------------------------------------- */
     public Dictionary<ProgressState, int> Results { get; } = new()
     {
+        { ProgressState.Prepare,  0 },
         { ProgressState.Start,    0 },
         { ProgressState.Progress, 0 },
         { ProgressState.Success,  0 },

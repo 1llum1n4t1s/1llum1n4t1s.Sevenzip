@@ -315,15 +315,15 @@ public partial class WebControl : WF.WebBrowser
     /* --------------------------------------------------------------------- */
     private string GetUserAgent()
     {
-        var sb     = new StringBuilder(2048);
+        var buffer = new byte[2048];
         var size   = 0;
         var result = NativeMethods.UrlMkGetSessionOption(
             0x10000001, // URLMON_OPTION_USERAGENT,
-            sb, sb.Capacity, ref size, 0
+            buffer, buffer.Length, ref size, 0
         );
 
         if (result != 0) Logger.Warn($"UrlMkGetSessionOption:{result}");
-        return result == 0 ? sb.ToString() : string.Empty;
+        return result == 0 ? Encoding.ASCII.GetString(buffer, 0, size).TrimEnd('\0') : string.Empty;
     }
 
     /* --------------------------------------------------------------------- */

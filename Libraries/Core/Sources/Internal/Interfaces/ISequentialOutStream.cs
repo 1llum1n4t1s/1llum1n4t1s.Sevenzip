@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -18,6 +18,7 @@
 /* ------------------------------------------------------------------------- */
 using System;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -30,10 +31,9 @@ namespace Cube.FileSystem.SevenZip;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-[ComImport]
+[GeneratedComInterface]
 [Guid("23170F69-40C1-278A-0000-000300020000")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface ISequentialOutStream
+internal partial interface ISequentialOutStream
 {
     /* --------------------------------------------------------------------- */
     ///
@@ -61,9 +61,5 @@ internal interface ISequentialOutStream
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    int Write(
-        [In, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] byte[] data,
-        uint size,
-        IntPtr processedSize
-    );
+    int Write(nint data, uint size, nint processedSize);
 }

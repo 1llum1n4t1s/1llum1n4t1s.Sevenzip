@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -17,6 +17,7 @@
 /* ------------------------------------------------------------------------- */
 using System;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.Forms;
 
 /* ------------------------------------------------------------------------- */
@@ -30,10 +31,9 @@ namespace Cube.Forms;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-[ComImport]
+[GeneratedComInterface]
 [Guid("ea1afb91-9e28-4b86-90e9-9e9f8a5eefaf")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface ITaskbarList3
+internal partial interface ITaskbarList3
 {
     #region Methods
 
@@ -152,17 +152,3 @@ internal interface ITaskbarList3
 
     #endregion
 }
-
-/* ------------------------------------------------------------------------- */
-///
-/// TaskbarListInstance
-///
-/// <summary>
-/// https://msdn.microsoft.com/en-us/library/windows/desktop/bb774652.aspx
-/// </summary>
-///
-/* ------------------------------------------------------------------------- */
-[ComImport]
-[Guid("56fdf344-fd6d-11d0-958a-006097c9a090")]
-[ClassInterface(ClassInterfaceType.None)]
-internal class TaskbarListInstance;

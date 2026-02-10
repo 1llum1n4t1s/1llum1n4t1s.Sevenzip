@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -17,6 +17,7 @@
 //
 /* ------------------------------------------------------------------------- */
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -28,10 +29,9 @@ namespace Cube.FileSystem.SevenZip;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-[ComImport]
+[GeneratedComInterface]
 [Guid("23170F69-40C1-278A-0000-000300010000")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface ISequentialInStream
+internal partial interface ISequentialInStream
 {
     /* --------------------------------------------------------------------- */
     ///
@@ -41,8 +41,9 @@ internal interface ISequentialInStream
     /// Writes data to 7-zip packer
     /// </summary>
     ///
-    /// <param name="data">Array of bytes available for writing</param>
-    /// <param name="size">Array size</param>
+    /// <param name="data">Pointer to the buffer for writing data into.</param>
+    /// <param name="size">Buffer size.</param>
+    /// <param name="processedSize">Pointer to receive actual size read.</param>
     ///
     /// <returns>S_OK if success</returns>
     ///
@@ -54,5 +55,6 @@ internal interface ISequentialInStream
     /// amount of data.
     /// </remarks>
     /* --------------------------------------------------------------------- */
-    int Read([Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] byte[] data, uint size);
+    [PreserveSig]
+    int Read(nint data, uint size, nint processedSize);
 }

@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -17,6 +17,7 @@
 /* ------------------------------------------------------------------------- */
 using System;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.Forms;
 
 /* ------------------------------------------------------------------------- */
@@ -28,10 +29,9 @@ namespace Cube.Forms;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-[ComImport,
- Guid("C4D244B0-D43E-11CF-893B-00AA00BDCE1A"),
- InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IDocHostShowUI
+[GeneratedComInterface(StringMarshalling = StringMarshalling.Utf16)]
+[Guid("C4D244B0-D43E-11CF-893B-00AA00BDCE1A")]
+internal partial interface IDocHostShowUI
 {
     #region Methods
 
@@ -44,13 +44,12 @@ internal interface IDocHostShowUI
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [return: MarshalAs(UnmanagedType.U4)]
     [PreserveSig]
     int ShowMessage(IntPtr hwnd,
-        [MarshalAs(UnmanagedType.LPWStr)] string lpstrText,
-        [MarshalAs(UnmanagedType.LPWStr)] string lpstrCaption,
+        string lpstrText,
+        string lpstrCaption,
         int dwType,
-        [MarshalAs(UnmanagedType.LPWStr)] string lpstrHelpFile,
+        string lpstrHelpFile,
         int dwHelpContext,
         out int lpResult
     );
@@ -64,15 +63,14 @@ internal interface IDocHostShowUI
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [return: MarshalAs(UnmanagedType.U4)]
     [PreserveSig]
     int ShowHelp(
         IntPtr hwnd,
-        [MarshalAs(UnmanagedType.LPWStr)] string pszHelpFile,
+        string pszHelpFile,
         int uCommand,
         int dwData,
-        IntPtr ptMouse, // POINT
-        [MarshalAs(UnmanagedType.IDispatch)] object pDispatchObjectHit
+        IntPtr ptMouse,
+        nint pDispatchObjectHit
     );
 
     #endregion

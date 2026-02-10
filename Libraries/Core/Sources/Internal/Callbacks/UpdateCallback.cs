@@ -21,6 +21,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -32,7 +33,8 @@ namespace Cube.FileSystem.SevenZip;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICryptoGetTextPassword2
+[GeneratedComClass]
+internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICryptoGetTextPassword2
 {
     #region Constructors
 
@@ -101,7 +103,7 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
     /// <returns>Operation result.</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public SevenZipCode SetTotal(ulong bytes)
+    public int SetTotal(ulong bytes)
     {
         return Report(ProgressState.Prepare, Current());
     }
@@ -121,7 +123,7 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
     /// <returns>Operation result.</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public SevenZipCode SetCompleted(IntPtr bytes)
+    public int SetCompleted(IntPtr bytes)
     {
         var value = bytes != IntPtr.Zero ? Marshal.ReadInt64(bytes) : 0L;
         if (value < _lastCompletedBytes)
@@ -155,7 +157,7 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
     /// </remarks>
     ///
     /* --------------------------------------------------------------------- */
-    public SevenZipCode GetUpdateItemInfo(uint index, ref int newdata, ref int newprop, ref uint indexInArchive)
+    public int GetUpdateItemInfo(uint index, ref int newdata, ref int newprop, ref uint indexInArchive)
     {
         newdata = 1;
         newprop = 1;
@@ -169,7 +171,7 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
             return Report(ProgressState.Prepare, e);
         }
 
-        return SevenZipCode.Success;
+        return (int)SevenZipCode.Success;
     }
 
     /* --------------------------------------------------------------------- */
@@ -188,11 +190,11 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
     /// <returns>Operation result.</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public SevenZipCode GetProperty(uint index, ItemPropId pid, ref PropVariant value)
+    public int GetProperty(uint index, ItemPropId pid, ref PropVariant value)
     {
         var i   = (int)index;
         var src = (i >= 0 && i < _items.Count) ? _items[i] : null;
-        if (src is null) return SevenZipCode.Unavailable;
+        if (src is null) return (int)SevenZipCode.Unavailable;
 
         var indexChanged = UpdateItemProgress(index);
 
@@ -236,7 +238,7 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
             return Report(ProgressState.Prepare, src);
         }
 
-        return SevenZipCode.Success;
+        return (int)SevenZipCode.Success;
     }
 
     /* --------------------------------------------------------------------- */
@@ -253,7 +255,7 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
     /// <returns>OperationResult</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public SevenZipCode GetStream(uint index, out ISequentialInStream stream)
+    public int GetStream(uint index, out ISequentialInStream stream)
     {
         _index = (int)index;
 
@@ -264,7 +266,7 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
         {
             return Run(() => {
                 dest = Open(src);
-                return SevenZipCode.Success;
+                return (int)SevenZipCode.Success;
             }, ProgressState.Start, src);
         }
         finally { stream = dest; }
@@ -283,7 +285,7 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
     /// <remarks>Operation result.</remarks>
     ///
     /* --------------------------------------------------------------------- */
-    public SevenZipCode SetOperationResult(SevenZipCode code)
+    public int SetOperationResult(SevenZipCode code)
     {
         if (code != SevenZipCode.Success) Logger.Warn($"[{code}] Index:{_index}, Name:{Current()?.RawName ?? ""}");
         return code == SevenZipCode.Success ?
@@ -322,11 +324,11 @@ internal sealed class UpdateCallback : CallbackBase, IArchiveUpdateCallback, ICr
     /// <returns>Operation result.</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public SevenZipCode CryptoGetTextPassword2(ref int enabled, out string password)
+    public int CryptoGetTextPassword2(ref int enabled, out string password)
     {
         enabled  = Password.HasValue() ? 1 : 0;
         password = Password;
-        return SevenZipCode.Success;
+        return (int)SevenZipCode.Success;
     }
 
     #endregion

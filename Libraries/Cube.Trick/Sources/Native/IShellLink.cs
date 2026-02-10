@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -17,7 +17,7 @@
 /* ------------------------------------------------------------------------- */
 using System;
 using System.Runtime.InteropServices;
-using System.Text;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube;
 
 /* ------------------------------------------------------------------------- */
@@ -29,27 +29,26 @@ namespace Cube;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-[ComImport]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+[GeneratedComInterface(StringMarshalling = StringMarshalling.Utf16)]
 [Guid("000214F9-0000-0000-C000-000000000046")]
-internal interface IShellLink
+internal unsafe partial interface IShellLink
 {
-    void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszFile, int cchMaxPath, IntPtr pfd, int fFlags);
+    void GetPath(char* pszFile, int cchMaxPath, IntPtr pfd, int fFlags);
     void GetIDList(out IntPtr ppidl);
     void SetIDList(IntPtr pidl);
-    void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszName, int cchMaxName);
-    void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string pszName);
-    void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszDir, int cchMaxPath);
-    void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string pszDir);
-    void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszArgs, int cchMaxPath);
-    void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string pszArgs);
+    void GetDescription(char* pszName, int cchMaxName);
+    void SetDescription(string pszName);
+    void GetWorkingDirectory(char* pszDir, int cchMaxPath);
+    void SetWorkingDirectory(string pszDir);
+    void GetArguments(char* pszArgs, int cchMaxPath);
+    void SetArguments(string pszArgs);
     void GetHotkey(out short pwHotkey);
     void SetHotkey(short wHotkey);
     void GetShowCmd(out int piShowCmd);
     void SetShowCmd(int iShowCmd);
-    void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszIconPath, int cchIconPath, out int piIcon);
-    void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string pszIconPath, int iIcon);
-    void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string pszPathRel, int dwReserved);
+    void GetIconLocation(char* pszIconPath, int cchIconPath, out int piIcon);
+    void SetIconLocation(string pszIconPath, int iIcon);
+    void SetRelativePath(string pszPathRel, int dwReserved);
     void Resolve(IntPtr hwnd, int fFlags);
-    void SetPath([MarshalAs(UnmanagedType.LPWStr)] string pszFile);
+    void SetPath(string pszFile);
 }

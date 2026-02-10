@@ -19,6 +19,7 @@
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -30,7 +31,8 @@ namespace Cube.FileSystem.SevenZip;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-internal class ArchiveStreamWriter : ArchiveStreamBase, ISequentialOutStream, IOutStream
+[GeneratedComClass]
+internal partial class ArchiveStreamWriter : ArchiveStreamBase, IOutStream
 {
     #region Constructors
 
@@ -100,18 +102,18 @@ internal class ArchiveStreamWriter : ArchiveStreamBase, ISequentialOutStream, IO
     /// The method implements IOutStream.Write(byte[], uint, IntPtr).
     /// </summary>
     ///
-    /// <param name="data">data for writing</param>
-    /// <param name="size">size to write.</param>
-    /// <param name="result">written size.</param>
+    /// <param name="data">Pointer to the data for writing.</param>
+    /// <param name="size">Size to write.</param>
+    /// <param name="processedSize">Pointer to receive written size.</param>
     ///
-    /// <returns>Zero.</returns>
+    /// <returns>S_OK if success.</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public int Write(byte[] data, uint size, IntPtr result)
+    public unsafe int Write(nint data, uint size, nint processedSize)
     {
-        var count = (int)size;
-        BaseStream.Write(data, 0, count);
-        if (result != IntPtr.Zero) Marshal.WriteInt32(result, count);
+        var buf = new ReadOnlySpan<byte>((void*)data, (int)size);
+        BaseStream.Write(buf);
+        if (processedSize != 0) *(uint*)processedSize = size;
         return 0;
     }
 

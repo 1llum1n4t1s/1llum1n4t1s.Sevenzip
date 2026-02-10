@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -18,6 +18,7 @@
 /* ------------------------------------------------------------------------- */
 using System;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -29,10 +30,9 @@ namespace Cube.FileSystem.SevenZip;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-[ComImport]
+[GeneratedComInterface]
 [Guid("23170F69-40C1-278A-0000-000600030000")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface ISetProperties
+internal partial interface ISetProperties
 {
     /* --------------------------------------------------------------------- */
     ///
@@ -50,7 +50,9 @@ internal interface ISetProperties
     ///
     /* --------------------------------------------------------------------- */
     int SetProperties(
-        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPWStr, SizeParamIndex = 2)] string[] names,
+        [MarshalUsing(CountElementName = nameof(numProperties))]
+        [MarshalUsing(typeof(Utf16StringMarshaller), ElementIndirectionDepth = 1)]
+        string[] names,
         IntPtr values,
         uint numProperties
     );

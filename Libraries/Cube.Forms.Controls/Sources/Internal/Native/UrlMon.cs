@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -16,7 +16,7 @@
 //
 /* ------------------------------------------------------------------------- */
 using System.Runtime.InteropServices;
-using System.Text;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.Forms.UrlMon;
 
 /* ------------------------------------------------------------------------- */
@@ -28,7 +28,7 @@ namespace Cube.Forms.UrlMon;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-internal static class NativeMethods
+internal static partial class NativeMethods
 {
     #region Methods
 
@@ -41,8 +41,9 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName, CharSet = CharSet.Ansi, BestFitMapping = false, ThrowOnUnmappableChar = true)]
-    public static extern int UrlMkSetSessionOption(int dwOption, string pBuffer,
+    [LibraryImport(LibName)]
+    public static partial int UrlMkSetSessionOption(int dwOption,
+        [MarshalAs(UnmanagedType.LPStr)] string pBuffer,
         int dwBufferLength, int dwReserved);
 
     /* --------------------------------------------------------------------- */
@@ -54,8 +55,9 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName, CharSet = CharSet.Ansi, BestFitMapping = false, ThrowOnUnmappableChar = true)]
-    public static extern int UrlMkGetSessionOption(int dwOption, StringBuilder pBuffer,
+    [LibraryImport(LibName)]
+    public static partial int UrlMkGetSessionOption(int dwOption,
+        byte[] pBuffer,
         int dwBufferLength, ref int pdwBufferLength, int dwReserved);
 
     /* --------------------------------------------------------------------- */
@@ -67,8 +69,8 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName)]
-    public static extern int CoInternetIsFeatureEnabled(int featureEntry, int dwFlags);
+    [LibraryImport(LibName)]
+    public static partial int CoInternetIsFeatureEnabled(int featureEntry, int dwFlags);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -79,8 +81,9 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName)]
-    public static extern int CoInternetSetFeatureEnabled(int featureEntry, int dwFlags, bool fEnable);
+    [LibraryImport(LibName)]
+    public static partial int CoInternetSetFeatureEnabled(int featureEntry, int dwFlags,
+        [MarshalAs(UnmanagedType.Bool)] bool fEnable);
 
     #endregion
 

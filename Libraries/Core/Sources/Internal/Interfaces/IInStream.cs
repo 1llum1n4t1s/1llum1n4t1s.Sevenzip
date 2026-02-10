@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -19,6 +19,7 @@
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -30,27 +31,10 @@ namespace Cube.FileSystem.SevenZip;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-[ComImport]
+[GeneratedComInterface]
 [Guid("23170F69-40C1-278A-0000-000300030000")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IInStream
+internal partial interface IInStream : ISequentialInStream
 {
-    /* --------------------------------------------------------------------- */
-    ///
-    /// Read
-    ///
-    /// <summary>
-    /// Read routine
-    /// </summary>
-    ///
-    /// <param name="data">Array of bytes to set</param>
-    /// <param name="size">Array size</param>
-    ///
-    /// <returns>Zero if Ok</returns>
-    ///
-    /* --------------------------------------------------------------------- */
-    int Read([Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] byte[] data, uint size);
-
     /* --------------------------------------------------------------------- */
     ///
     /// Seek

@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -28,7 +28,7 @@ namespace Cube.Forms.Gdi32;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-internal static class NativeMethods
+internal static partial class NativeMethods
 {
     #region Methods
 
@@ -41,8 +41,8 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName)]
-    public static extern IntPtr CreateRoundRectRgn(int nLeftRect, int nTopRect,
+    [LibraryImport(LibName)]
+    public static partial IntPtr CreateRoundRectRgn(int nLeftRect, int nTopRect,
         int nRightRect, int nBottomRect, int nWidthEllipse, int nHeightEllipse);
 
     #endregion

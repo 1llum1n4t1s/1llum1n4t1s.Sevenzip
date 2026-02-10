@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -16,6 +16,9 @@
 //
 /* ------------------------------------------------------------------------- */
 using System.Runtime.InteropServices;
+
+#pragma warning disable SYSLIB1096 // Convert to 'GeneratedComInterface'
+
 namespace Cube.Forms;
 
 /* ------------------------------------------------------------------------- */
@@ -95,3 +98,5 @@ internal interface DWebBrowserEvents2
 
     #endregion
 }
+
+#pragma warning restore SYSLIB1096

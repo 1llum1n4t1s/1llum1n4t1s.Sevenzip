@@ -19,8 +19,10 @@
 using Cube.FileSystem.SevenZip.Kernel32;
 using Cube.Reflection.Extensions;
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -34,6 +36,8 @@ namespace Cube.FileSystem.SevenZip;
 /* ------------------------------------------------------------------------- */
 internal sealed class SevenZipLibrary : DisposableBase
 {
+    private static readonly StrategyBasedComWrappers s_comWrappers = new();
+
     #region Constructors
 
     /* --------------------------------------------------------------------- */
@@ -50,6 +54,9 @@ internal sealed class SevenZipLibrary : DisposableBase
         var dll = Io.Combine(GetType().Assembly.GetDirectoryName(), "7z.dll");
         _handle = NativeMethods.LoadLibrary(dll);
         if (_handle.IsInvalid) throw new Win32Exception("LoadLibrary");
+
+        _createObjectPtr = NativeMethods.GetProcAddress(_handle, "CreateObject");
+        if (_createObjectPtr == IntPtr.Zero) throw new Win32Exception("GetProcAddress");
     }
 
     #endregion
@@ -86,10 +93,12 @@ internal sealed class SevenZipLibrary : DisposableBase
     /* --------------------------------------------------------------------- */
     public IInArchive GetInArchive(Guid clsid)
     {
-        var iid  = typeof(IInArchive).GUID;
-        var func = GetDelegate();
-        _ = func(ref clsid, ref iid, out var result);
-        return result as IInArchive;
+        var iid = typeof(IInArchive).GUID;
+        var ptr = CreateObject(ref clsid, ref iid);
+        var obj = s_comWrappers
+            .GetOrCreateObjectForComInstance(ptr, CreateObjectFlags.UniqueInstance);
+        Track(obj);
+        return (IInArchive)obj;
     }
 
     /* --------------------------------------------------------------------- */
@@ -122,10 +131,68 @@ internal sealed class SevenZipLibrary : DisposableBase
     /* --------------------------------------------------------------------- */
     public IOutArchive GetOutArchive(Guid clsid)
     {
-        var iid  = typeof(IOutArchive).GUID;
-        var func = GetDelegate();
-        _ = func(ref clsid, ref iid, out var result);
-        return result as IOutArchive;
+        var iid = typeof(IOutArchive).GUID;
+        var ptr = CreateObject(ref clsid, ref iid);
+        var obj = s_comWrappers
+            .GetOrCreateObjectForComInstance(ptr, CreateObjectFlags.UniqueInstance);
+        Track(obj);
+        return (IOutArchive)obj;
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// QueryInterface
+    ///
+    /// <summary>
+    /// Queries a COM object for a specific interface using its IID.
+    /// </summary>
+    ///
+    /// <typeparam name="T">Target interface type.</typeparam>
+    ///
+    /// <param name="comObject">
+    /// Source COM object wrapped by ComWrappers.
+    /// </param>
+    ///
+    /// <returns>
+    /// Wrapped interface or null if the interface is not supported.
+    /// </returns>
+    ///
+    /* --------------------------------------------------------------------- */
+    public T QueryInterface<T>(object comObject) where T : class
+    {
+        if (!ComWrappers.TryGetComInstance(comObject, out var unkPtr))
+            return null;
+        try
+        {
+            var iid = typeof(T).GUID;
+            var hr = Marshal.QueryInterface(unkPtr, in iid, out var ptr);
+            if (hr != 0 || ptr == IntPtr.Zero) return null;
+            // UniqueInstance takes ownership of the reference from QueryInterface
+            var obj = s_comWrappers
+                .GetOrCreateObjectForComInstance(ptr, CreateObjectFlags.UniqueInstance);
+            Track(obj);
+            return (T)obj;
+        }
+        finally { Marshal.Release(unkPtr); }
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// ReleaseComWrapper
+    ///
+    /// <summary>
+    /// Explicitly releases a COM wrapper created with UniqueInstance to
+    /// prevent GC Finalize from calling Release after the DLL is unloaded.
+    /// Uses ComObject.FinalRelease() which atomically releases the COM
+    /// pointer, suppresses finalization, and is safe to call multiple times.
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    public static StrategyBasedComWrappers GetComWrappers() => s_comWrappers;
+
+    public static void ReleaseComWrapper(object comWrapper)
+    {
+        if (comWrapper is ComObject comObject) comObject.FinalRelease();
     }
 
     /* --------------------------------------------------------------------- */
@@ -145,6 +212,13 @@ internal sealed class SevenZipLibrary : DisposableBase
     /* --------------------------------------------------------------------- */
     protected override void Dispose(bool disposing)
     {
+        // Deterministically release all tracked COM wrappers BEFORE unloading
+        // the DLL. ComObject.FinalRelease() atomically releases the COM pointer
+        // and suppresses finalization, preventing the GC from later calling
+        // Release on vtable pointers inside the unloaded 7z.dll.
+        foreach (var obj in _tracked) ReleaseComWrapper(obj);
+        _tracked.Clear();
+
         if (_handle != null && !_handle.IsClosed) _handle.Close();
     }
 
@@ -154,38 +228,44 @@ internal sealed class SevenZipLibrary : DisposableBase
 
     /* --------------------------------------------------------------------- */
     ///
-    /// GetDelegate
+    /// Track
     ///
     /// <summary>
-    /// Gets the delegate object.
+    /// Tracks a COM wrapper object for deterministic release during Dispose.
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    private CreateObjectDelegate GetDelegate() =>
-        _delegate ??= Marshal.GetDelegateForFunctionPointer<CreateObjectDelegate>(
-            NativeMethods.GetProcAddress(_handle, "CreateObject")
-        );
+    private void Track(object comWrapper) => _tracked.Add(comWrapper);
 
     /* --------------------------------------------------------------------- */
     ///
-    /// CreateObjectDelegate
+    /// CreateObject
     ///
     /// <summary>
-    /// Represents the delegate of the CreateObject function.
+    /// Invokes the 7z.dll CreateObject function via an unsafe function
+    /// pointer and returns the raw COM interface pointer.
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    private delegate int CreateObjectDelegate(
-        [In] ref Guid classID,
-        [In] ref Guid interfaceID,
-        [MarshalAs(UnmanagedType.Interface)] out object outObject
-    );
+    private unsafe nint CreateObject(ref Guid clsid, ref Guid iid)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<Guid*, Guid*, nint*, int>)_createObjectPtr;
+        nint result;
+        int hr;
+        fixed (Guid* pClsid = &clsid)
+        fixed (Guid* pIid = &iid)
+        {
+            hr = fn(pClsid, pIid, &result);
+        }
+        if (hr != 0) Marshal.ThrowExceptionForHR(hr);
+        return result;
+    }
 
     #endregion
 
     #region Fields
     private readonly SafeLibraryHandle _handle;
-    private CreateObjectDelegate _delegate;
+    private readonly IntPtr _createObjectPtr;
+    private readonly List<object> _tracked = [];
     #endregion
 }

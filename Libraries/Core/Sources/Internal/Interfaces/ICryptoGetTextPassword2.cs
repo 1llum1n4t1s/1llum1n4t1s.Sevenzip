@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -17,6 +17,7 @@
 //
 /* ------------------------------------------------------------------------- */
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -29,10 +30,9 @@ namespace Cube.FileSystem.SevenZip;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-[ComImport]
+[GeneratedComInterface]
 [Guid("23170F69-40C1-278A-0000-000500110000")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface ICryptoGetTextPassword2
+internal partial interface ICryptoGetTextPassword2
 {
     /* --------------------------------------------------------------------- */
     ///
@@ -49,5 +49,8 @@ internal interface ICryptoGetTextPassword2
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    SevenZipCode CryptoGetTextPassword2(ref int enabled, [MarshalAs(UnmanagedType.BStr)] out string password);
+    int CryptoGetTextPassword2(
+        ref int enabled,
+        [MarshalUsing(typeof(BStrStringMarshaller))] out string password
+    );
 }

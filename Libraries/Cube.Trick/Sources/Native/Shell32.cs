@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -28,7 +28,7 @@ namespace Cube.Shell32;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-internal static class NativeMethods
+internal static partial class NativeMethods
 {
     #region Methods
 
@@ -41,8 +41,8 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName, CharSet = CharSet.Unicode)]
-    public static extern IntPtr SHGetFileInfo(
+    [LibraryImport(LibName, EntryPoint = "SHGetFileInfoW", StringMarshalling = StringMarshalling.Utf16)]
+    public static partial IntPtr SHGetFileInfo(
         string pszPath,
         uint dwFileAttributes,
         ref ShFileInfo psfi,
@@ -59,8 +59,8 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName, CharSet = CharSet.Unicode)]
-    public static extern void SHGetStockIconInfo(
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf16)]
+    public static partial void SHGetStockIconInfo(
         uint siid,
         uint uFlags,
         ref ShStockIconInfo sii
@@ -75,11 +75,11 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName, CharSet = CharSet.Unicode)]
-    public static extern int SHGetImageList(
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf16)]
+    public static partial int SHGetImageList(
         uint iImageList,
-        [MarshalAs(UnmanagedType.LPStruct)] Guid riid,
-        out IImageList ppv
+        in Guid riid,
+        out nint ppv
     );
 
     #endregion

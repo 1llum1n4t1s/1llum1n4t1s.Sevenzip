@@ -20,6 +20,7 @@ using Cube.Text.Extensions;
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -32,7 +33,8 @@ namespace Cube.FileSystem.SevenZip;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-internal class ExtractCallback : PasswordCallback, IArchiveExtractCallback
+[GeneratedComClass]
+internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallback
 {
     #region Constructors
 
@@ -103,7 +105,7 @@ internal class ExtractCallback : PasswordCallback, IArchiveExtractCallback
     /// <param name="bytes">Number of bytes.</param>
     ///
     /* --------------------------------------------------------------------- */
-    public SevenZipCode SetTotal(ulong bytes)
+    public int SetTotal(ulong bytes)
     {
         if (TotalBytes < 0) TotalBytes = (long)bytes;
         _hack = Math.Max((long)bytes - TotalBytes, 0);
@@ -130,7 +132,7 @@ internal class ExtractCallback : PasswordCallback, IArchiveExtractCallback
     /// </remarks>
     ///
     /* --------------------------------------------------------------------- */
-    public SevenZipCode SetCompleted(IntPtr bytes)
+    public int SetCompleted(IntPtr bytes)
     {
         if (bytes != IntPtr.Zero) Bytes = Math.Min(Math.Max(Marshal.ReadInt64(bytes) - _hack, 0), TotalBytes);
         return Report(ProgressState.Progress, Current());
@@ -155,14 +157,14 @@ internal class ExtractCallback : PasswordCallback, IArchiveExtractCallback
     /// <returns>Operation result.</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public SevenZipCode GetStream(uint index, out ISequentialOutStream stream, AskMode mode)
+    public int GetStream(uint index, out ISequentialOutStream stream, AskMode mode)
     {
         var dest = default(ISequentialOutStream);
         try
         {
             return Run(() => {
                 dest = NewStream(index, mode);
-                return SevenZipCode.Success;
+                return (int)SevenZipCode.Success;
             }, ProgressState.Start, Current);
         }
         finally { stream = dest; }
@@ -179,10 +181,10 @@ internal class ExtractCallback : PasswordCallback, IArchiveExtractCallback
     /// <param name="mode">Operation mode.</param>
     ///
     /* --------------------------------------------------------------------- */
-    public SevenZipCode PrepareOperation(AskMode mode)
+    public int PrepareOperation(AskMode mode)
     {
         _mode = mode;
-        if (mode == AskMode.Skip) return SevenZipCode.Success;
+        if (mode == AskMode.Skip) return (int)SevenZipCode.Success;
         return Report(ProgressState.Progress, Current());
     }
 
@@ -197,12 +199,12 @@ internal class ExtractCallback : PasswordCallback, IArchiveExtractCallback
     /// <param name="code">Operation result.</param>
     ///
     /* --------------------------------------------------------------------- */
-    public SevenZipCode SetOperationResult(SevenZipCode code)
+    public int SetOperationResult(SevenZipCode code)
     {
         if (code != SevenZipCode.Success) Logger.Warn($"[{code}] Index:{Current()?.Index ?? -1}, Name:{Current()?.RawName ?? ""}");
-        if (code == SevenZipCode.WrongPassword) return code;
-        if (code == SevenZipCode.DataError && PasswordTimes > 0) return SevenZipCode.WrongPassword;
-        if (_mode == AskMode.Skip) return SevenZipCode.Success;
+        if (code == SevenZipCode.WrongPassword) return (int)code;
+        if (code == SevenZipCode.DataError && PasswordTimes > 0) return (int)SevenZipCode.WrongPassword;
+        if (_mode == AskMode.Skip) return (int)SevenZipCode.Success;
 
         try
         {
@@ -320,7 +322,7 @@ internal class ExtractCallback : PasswordCallback, IArchiveExtractCallback
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    private SevenZipCode Report(SevenZipCode code, Exception error)
+    private int Report(SevenZipCode code, Exception error)
     {
         var e = Current();
         if (code == SevenZipCode.Success && error is null) return Report(ProgressState.Success, e);

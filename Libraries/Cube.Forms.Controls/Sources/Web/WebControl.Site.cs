@@ -104,7 +104,7 @@ partial class WebControl
         ///
         /* ----------------------------------------------------------------- */
         public int ShowHelp(IntPtr hwnd, string file, int command, int data,
-            IntPtr /* POINT */ mouse, object hit) => 1;
+            IntPtr /* POINT */ mouse, nint hit) => 1;
 
         #endregion
 

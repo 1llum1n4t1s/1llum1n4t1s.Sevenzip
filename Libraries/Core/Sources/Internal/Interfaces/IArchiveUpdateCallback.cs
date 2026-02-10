@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -18,6 +18,7 @@
 /* ------------------------------------------------------------------------- */
 using System;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -29,10 +30,9 @@ namespace Cube.FileSystem.SevenZip;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-[ComImport]
+[GeneratedComInterface]
 [Guid("23170F69-40C1-278A-0000-000600800000")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IArchiveUpdateCallback
+internal partial interface IArchiveUpdateCallback
 {
     /* --------------------------------------------------------------------- */
     ///
@@ -48,7 +48,7 @@ internal interface IArchiveUpdateCallback
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    SevenZipCode SetTotal(ulong bytes);
+    int SetTotal(ulong bytes);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -64,7 +64,7 @@ internal interface IArchiveUpdateCallback
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    SevenZipCode SetCompleted(IntPtr bytes);
+    int SetCompleted(IntPtr bytes);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -83,7 +83,7 @@ internal interface IArchiveUpdateCallback
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    SevenZipCode GetUpdateItemInfo(uint index, ref int newdata, ref int newprop, ref uint indexInArchive);
+    int GetUpdateItemInfo(uint index, ref int newdata, ref int newprop, ref uint indexInArchive);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -102,7 +102,7 @@ internal interface IArchiveUpdateCallback
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    SevenZipCode GetProperty(uint index, ItemPropId pid, ref PropVariant value);
+    int GetProperty(uint index, ItemPropId pid, ref PropVariant value);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -119,7 +119,7 @@ internal interface IArchiveUpdateCallback
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    SevenZipCode GetStream(uint index, [Out, MarshalAs(UnmanagedType.Interface)] out ISequentialInStream stream);
+    int GetStream(uint index, out ISequentialInStream stream);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -135,7 +135,7 @@ internal interface IArchiveUpdateCallback
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    SevenZipCode SetOperationResult(SevenZipCode result);
+    int SetOperationResult(SevenZipCode result);
 
     /* --------------------------------------------------------------------- */
     ///

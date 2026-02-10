@@ -16,6 +16,8 @@
 //
 /* ------------------------------------------------------------------------- */
 using System;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 using System.Windows.Forms;
 namespace Cube.Forms;
 
@@ -30,8 +32,10 @@ namespace Cube.Forms;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-public class TaskbarProgress : ObservableBase
+public partial class TaskbarProgress : ObservableBase
 {
+    private static readonly StrategyBasedComWrappers s_comWrappers = new();
+
     #region Constructors
 
     /* --------------------------------------------------------------------- */
@@ -137,7 +141,15 @@ public class TaskbarProgress : ObservableBase
         {
             if (IsSupported && _core is null)
             {
-                try { _core = (ITaskbarList3)new TaskbarListInstance(); }
+                try
+                {
+                    var clsid = new Guid("56fdf344-fd6d-11d0-958a-006097c9a090");
+                    var iid = typeof(ITaskbarList3).GUID;
+                    var hr = CoCreateInstance(ref clsid, IntPtr.Zero, 1 /* CLSCTX_INPROC_SERVER */, ref iid, out var ptr);
+                    if (hr != 0) Marshal.ThrowExceptionForHR(hr);
+                    _core = (ITaskbarList3)s_comWrappers
+                        .GetOrCreateObjectForComInstance(ptr, CreateObjectFlags.UniqueInstance);
+                }
                 catch (Exception err)
                 {
                     Logger.Warn(err);
@@ -186,6 +198,9 @@ public class TaskbarProgress : ObservableBase
     protected override void Dispose(bool disposing) { }
 
     #endregion
+
+    [LibraryImport("ole32.dll")]
+    private static partial int CoCreateInstance(ref Guid rclsid, IntPtr pUnkOuter, uint dwClsContext, ref Guid riid, out nint ppv);
 
     #region Fields
     private readonly IntPtr _handle;

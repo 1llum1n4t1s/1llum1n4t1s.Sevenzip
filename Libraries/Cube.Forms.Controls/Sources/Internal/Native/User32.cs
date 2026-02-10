@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -28,7 +28,7 @@ namespace Cube.Forms.User32;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-internal static class NativeMethods
+internal static partial class NativeMethods
 {
     #region Methods
 
@@ -41,8 +41,8 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName, CharSet = CharSet.Unicode)]
-    public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [LibraryImport(LibName, EntryPoint = "SendMessageW", StringMarshalling = StringMarshalling.Utf16)]
+    public static partial IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -53,8 +53,9 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName, CharSet = CharSet.Unicode)]
-    public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [LibraryImport(LibName, EntryPoint = "PostMessageW", StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -65,8 +66,9 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName)]
-    public static extern bool ReleaseCapture();
+    [LibraryImport(LibName)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool ReleaseCapture();
 
     /* --------------------------------------------------------------------- */
     ///
@@ -77,8 +79,9 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName)]
-    public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
+    [LibraryImport(LibName)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
         int x, int y, int cx, int cy, uint uFlags);
 
     /* --------------------------------------------------------------------- */
@@ -90,8 +93,8 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName)]
-    public static extern IntPtr GetSystemMenu(IntPtr hWnd, bool bRevert);
+    [LibraryImport(LibName)]
+    public static partial IntPtr GetSystemMenu(IntPtr hWnd, [MarshalAs(UnmanagedType.Bool)] bool bRevert);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -102,8 +105,9 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName)]
-    public static extern bool EnableMenuItem(IntPtr hMenu,
+    [LibraryImport(LibName)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool EnableMenuItem(IntPtr hMenu,
         uint uIdEnableItem, uint uEnable);
 
     /* --------------------------------------------------------------------- */
@@ -115,8 +119,8 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName)]
-    public static extern int TrackPopupMenuEx(IntPtr hMenu, uint fuFlags,
+    [LibraryImport(LibName)]
+    public static partial int TrackPopupMenuEx(IntPtr hMenu, uint fuFlags,
         int x, int y, IntPtr hwnd, IntPtr lPtpm);
 
     /* --------------------------------------------------------------------- */
@@ -128,8 +132,9 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName, SetLastError = true)]
-    public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [LibraryImport(LibName, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool SetForegroundWindow(IntPtr hWnd);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -140,8 +145,9 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName, SetLastError = true)]
-    public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+    [LibraryImport(LibName, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -152,8 +158,9 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName)]
-    public static extern bool IsIconic(IntPtr hWnd);
+    [LibraryImport(LibName)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool IsIconic(IntPtr hWnd);
 
     #endregion
 
