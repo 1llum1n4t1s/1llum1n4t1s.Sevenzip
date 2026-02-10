@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -18,7 +18,7 @@
 /* ------------------------------------------------------------------------- */
 using System;
 using System.Runtime.InteropServices;
-using System.Security;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip.Kernel32;
 
 /* ------------------------------------------------------------------------- */
@@ -30,7 +30,7 @@ namespace Cube.FileSystem.SevenZip.Kernel32;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-internal static class NativeMethods
+internal static partial class NativeMethods
 {
     #region Methods
 
@@ -43,8 +43,8 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName, CharSet = CharSet.Unicode, SetLastError = true)]
-    public static extern SafeLibraryHandle LoadLibrary(string lpFileName);
+    [LibraryImport(LibName, EntryPoint = "LoadLibraryW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
+    public static partial SafeLibraryHandle LoadLibrary(string lpFileName);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -55,10 +55,10 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName, CharSet = CharSet.Ansi, SetLastError = true, BestFitMapping = false, ThrowOnUnmappableChar = true)]
-    public static extern IntPtr GetProcAddress(
+    [LibraryImport(LibName, SetLastError = true)]
+    public static partial IntPtr GetProcAddress(
         SafeLibraryHandle hModule,
-        [MarshalAs(UnmanagedType.LPStr)] string procName
+        [MarshalUsing(typeof(AnsiStringMarshaller))] string procName
     );
 
     /* --------------------------------------------------------------------- */
@@ -70,10 +70,9 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [SuppressUnmanagedCodeSecurity]
-    [DllImport(LibName)]
+    [LibraryImport(LibName)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool FreeLibrary(IntPtr hModule);
+    public static partial bool FreeLibrary(IntPtr hModule);
 
     #endregion
 

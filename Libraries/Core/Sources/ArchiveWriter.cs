@@ -209,18 +209,10 @@ public sealed class ArchiveWriter : DisposableBase
         {
             using var ss = new ArchiveStreamWriter(Io.Create(dest));
             var archive = _lib.GetOutArchive(fmt);
-            try
-            {
-                var setter = CompressionOptionSetter.From(fmt, Options);
-
-                // ReSharper disable once SuspiciousTypeConversion.Global
-                setter?.Invoke(archive as ISetProperties);
-                return archive.UpdateItems(ss, (uint)src.Count, cb);
-            }
-            finally
-            {
-                if (archive != null) System.Runtime.InteropServices.Marshal.ReleaseComObject(archive);
-            }
+            var setter = CompressionOptionSetter.From(fmt, Options);
+            var setProps = _lib.QueryInterface<ISetProperties>(archive);
+            setter?.Invoke(setProps);
+            return archive.UpdateItems(ss, (uint)src.Count, cb);
         }, src, dest, progress);
     }
 

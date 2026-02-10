@@ -19,6 +19,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -30,7 +31,8 @@ namespace Cube.FileSystem.SevenZip;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-internal class OpenCallback : PasswordCallback, IArchiveOpenCallback, IArchiveOpenVolumeCallback
+[GeneratedComClass]
+internal partial class OpenCallback : PasswordCallback, IArchiveOpenCallback, IArchiveOpenVolumeCallback
 {
     #region Constructors
 
@@ -81,11 +83,11 @@ internal class OpenCallback : PasswordCallback, IArchiveOpenCallback, IArchiveOp
     /// <returns>ErrorCode.None for success.</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public SevenZipCode SetTotal(IntPtr count, IntPtr bytes)
+    public int SetTotal(IntPtr count, IntPtr bytes)
     {
         if (count != IntPtr.Zero) TotalCount = Marshal.ReadInt64(count);
         if (bytes != IntPtr.Zero) TotalBytes = Marshal.ReadInt64(bytes);
-        return SevenZipCode.Success;
+        return (int)SevenZipCode.Success;
     }
 
     /* --------------------------------------------------------------------- */
@@ -102,11 +104,11 @@ internal class OpenCallback : PasswordCallback, IArchiveOpenCallback, IArchiveOp
     /// <returns>ErrorCode.None for success.</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public SevenZipCode SetCompleted(IntPtr count, IntPtr bytes)
+    public int SetCompleted(IntPtr count, IntPtr bytes)
     {
         if (count != IntPtr.Zero) Count = Marshal.ReadInt64(count);
         if (bytes != IntPtr.Zero) Bytes = Marshal.ReadInt64(bytes);
-        return SevenZipCode.Success;
+        return (int)SevenZipCode.Success;
     }
 
     #endregion
@@ -127,11 +129,11 @@ internal class OpenCallback : PasswordCallback, IArchiveOpenCallback, IArchiveOp
     /// <returns>ErrorCode.None for success.</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public SevenZipCode GetProperty(ItemPropId pid, ref PropVariant value)
+    public int GetProperty(ItemPropId pid, ref PropVariant value)
     {
         if (pid == ItemPropId.Name) value.Set(Source);
         else value.Clear();
-        return SevenZipCode.Success;
+        return (int)SevenZipCode.Success;
     }
 
     /* --------------------------------------------------------------------- */
@@ -148,7 +150,7 @@ internal class OpenCallback : PasswordCallback, IArchiveOpenCallback, IArchiveOp
     /// <returns>ErrorCode.None for success.</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public SevenZipCode GetStream(string name, out IInStream stream)
+    public int GetStream(string name, out IInStream stream)
     {
         stream = null;
 
@@ -160,7 +162,7 @@ internal class OpenCallback : PasswordCallback, IArchiveOpenCallback, IArchiveOp
             stream = dest;
         }
 
-        return SevenZipCode.Success;
+        return (int)SevenZipCode.Success;
     }
 
     #endregion

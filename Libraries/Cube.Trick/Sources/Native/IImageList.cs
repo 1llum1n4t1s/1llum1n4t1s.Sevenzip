@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -17,6 +17,7 @@
 /* ------------------------------------------------------------------------- */
 using System;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube;
 
 /* ------------------------------------------------------------------------- */
@@ -28,10 +29,9 @@ namespace Cube;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-[ComImport]
+[GeneratedComInterface]
 [Guid("46EB5926-582E-4017-9FDF-E8998DAA0950")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IImageList
+internal partial interface IImageList
 {
     [PreserveSig] int Add(IntPtr hbmImage, IntPtr hbmMask, ref int pi);
 
@@ -51,13 +51,13 @@ internal interface IImageList
 
     [PreserveSig] int GetImageInfo(int i, ref ImageInfo pImageInfo);
 
-    [PreserveSig] int Copy(int iDst, IImageList punkSrc, int iSrc, int uFlags);
+    [PreserveSig] int Copy(int iDst, nint punkSrc, int iSrc, int uFlags);
 
-    [PreserveSig] int Merge(int i1, IImageList punk2, int i2, int dx, int dy, ref Guid riid, ref IntPtr ppv);
+    [PreserveSig] int Merge(int i1, nint punk2, int i2, int dx, int dy, ref Guid riid, ref IntPtr ppv);
 
     [PreserveSig] int Clone(ref Guid riid, ref IntPtr ppv);
 
-    [PreserveSig] int GetImageRect(int i, IntPtr /* ref RECT */ prc);
+    [PreserveSig] int GetImageRect(int i, IntPtr prc);
 
     [PreserveSig] int GetIconSize(ref int cx, ref int cy);
 
@@ -81,11 +81,11 @@ internal interface IImageList
 
     [PreserveSig] int DragMove(int x, int y);
 
-    [PreserveSig] int SetDragCursorImage(ref IImageList punk, int iDrag, int dxHotspot, int dyHotspot);
+    [PreserveSig] int SetDragCursorImage(nint punk, int iDrag, int dxHotspot, int dyHotspot);
 
     [PreserveSig] int DragShowNolock(int fShow);
 
-    [PreserveSig] int GetDragImage(IntPtr /* ref POINT */ ppt, IntPtr /* ref POINT */ pptHotspot, ref Guid riid, ref IntPtr ppv);
+    [PreserveSig] int GetDragImage(IntPtr ppt, IntPtr pptHotspot, ref Guid riid, ref IntPtr ppv);
 
     [PreserveSig] int GetItemFlags(int i, ref int dwFlags);
 

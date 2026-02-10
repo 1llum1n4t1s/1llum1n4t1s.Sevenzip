@@ -7,6 +7,7 @@
 > - **.NET 10** 対応（ターゲットを net10.0 / net10.0-windows に変更）
 > - CI を AppVeyor から **GitHub Actions** に移行
 > - NuGet パッケージ名を **1llum1n4t1s.Sevenzip** として公開
+> - **NativeAOT 対応**（COM Interop を `[GeneratedComInterface]` に、P/Invoke を `[LibraryImport]` に全面移行）
 > - [Cube.Core](https://github.com/cube-soft/cube.core) や Cube.FileSystem.AlphaFS、Cube.Logging.NLog、Cube.Forms などを NuGet 参照ではなく **ソリューション内のプロジェクトとして組み込み**
 
 ---
@@ -85,6 +86,36 @@ using (var reader = new ArchiveReader(@"path\to\archive", password, options))
 ```
 
 ArchiveWriter および ArchiveReader は、生成から破棄まで同一スレッドで実行する必要があります。非同期に圧縮・解凍したい場合は、一連の処理全体を `Task.Run()` で実行してください。
+
+## Upstream からの変更点・注意事項
+
+本フォークでは NativeAOT 対応のために COM Interop を `[ComImport]` から `[GeneratedComInterface]` / `[GeneratedComClass]` へ、P/Invoke を `[DllImport]` から `[LibraryImport]` へ全面移行しています。これに伴い、upstream と比較して以下の仕様変更および注意点があります。
+
+### 公開 API の変更
+
+| メソッド | 変更内容 | 影響 |
+|---------|---------|------|
+| `ArchiveReader.Save(string, uint[], IProgress<Report>)` | `unsafe` 修飾子が追加 | **呼び出し側への影響なし。** C# では `unsafe` メソッドの呼び出しに `unsafe` コンテキストは不要です。`AllowUnsafeBlocks` はライブラリ側のビルドにのみ必要で、消費者側のプロジェクトには不要です。 |
+
+### COM 例外の HRESULT 変更
+
+`[ComImport]` の CLR CCW は、マネージド例外をすべて `E_FAIL`（0x80004005）として返していました。`[GeneratedComInterface]` では例外ごとに固有の HRESULT が返されます（例: `KeyNotFoundException` → 0x80131577）。
+
+本ライブラリ内部では HRESULT を適切にハンドリングしているため、**通常の C# 消費者には影響ありません。** ただし、ネイティブ C++ コードから直接 COM コールバックの HRESULT を検査している場合は注意が必要です。
+
+### IProgress\<Report\> 実装の要件
+
+upstream では `SetTotal` コールバックで `ProgressState.Prepare` が報告されていましたが、`[ComImport]` の CCW が例外を `E_FAIL` として飲み込んでいたため、`IProgress<Report>` 実装側が `Prepare` を処理しなくても表面上は動作していました。
+
+本フォークでは `[GeneratedComInterface]` により例外が正確に伝播するため、**カスタムの `IProgress<Report>` 実装はすべての `ProgressState` 値（`Prepare`, `Start`, `Progress`, `Success`, `Failed`）を処理する必要があります。** 未処理の状態値があると例外として 7-Zip 側に伝わり、操作が中断されます。
+
+### COM オブジェクトのライフタイム管理
+
+COM オブジェクトの生成・解放を `StrategyBasedComWrappers` + `CreateObjectFlags.UniqueInstance` による明示的管理に変更しました。これにより、ネイティブ DLL アンロード後の GC ファイナライザによるクラッシュが防止されます。消費者側のコードに変更は不要です。
+
+### DataContract（レジストリシリアライズ）の AOT 互換性
+
+`Cube.DataContract` の `RegistrySerializer` / `RegistryDeserializer` はリフレクションベースの実装であり、NativeAOT と完全には互換しません。`[RequiresUnreferencedCode]` / `[RequiresDynamicCode]` 属性で警告されています。SevenZip のアーカイブ操作（圧縮・解凍）はこのコードパスを通らないため、**SevenZip ライブラリとしての AOT 利用には影響ありません。**
 
 ## Dependencies
 

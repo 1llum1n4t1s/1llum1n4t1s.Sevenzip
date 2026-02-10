@@ -15,7 +15,7 @@
 // limitations under the License.
 //
 /* ------------------------------------------------------------------------- */
-using Cube.Tests;
+using Cube.Tests.Fixtures;
 using NUnit.Framework;
 using System;
 namespace Cube.FileSystem.SevenZip.Tests;

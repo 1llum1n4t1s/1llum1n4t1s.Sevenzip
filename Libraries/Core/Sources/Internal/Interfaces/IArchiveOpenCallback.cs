@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -18,6 +18,7 @@
 /* ------------------------------------------------------------------------- */
 using System;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -29,10 +30,9 @@ namespace Cube.FileSystem.SevenZip;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-[ComImport]
+[GeneratedComInterface]
 [Guid("23170F69-40C1-278A-0000-000600100000")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IArchiveOpenCallback
+internal partial interface IArchiveOpenCallback
 {
     /* --------------------------------------------------------------------- */
     ///
@@ -49,7 +49,7 @@ internal interface IArchiveOpenCallback
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    SevenZipCode SetTotal(IntPtr count, IntPtr bytes);
+    int SetTotal(IntPtr count, IntPtr bytes);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -66,5 +66,5 @@ internal interface IArchiveOpenCallback
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    SevenZipCode SetCompleted(IntPtr count, IntPtr bytes);
+    int SetCompleted(IntPtr count, IntPtr bytes);
 }

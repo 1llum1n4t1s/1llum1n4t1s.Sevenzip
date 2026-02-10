@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -17,6 +17,7 @@
 //
 /* ------------------------------------------------------------------------- */
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -28,10 +29,9 @@ namespace Cube.FileSystem.SevenZip;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-[ComImport]
+[GeneratedComInterface]
 [Guid("23170F69-40C1-278A-0000-000600300000")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IArchiveOpenVolumeCallback
+internal partial interface IArchiveOpenVolumeCallback
 {
     /* --------------------------------------------------------------------- */
     ///
@@ -50,7 +50,7 @@ internal interface IArchiveOpenVolumeCallback
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    SevenZipCode GetProperty(ItemPropId pid, ref PropVariant value);
+    int GetProperty(ItemPropId pid, ref PropVariant value);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -67,8 +67,5 @@ internal interface IArchiveOpenVolumeCallback
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    SevenZipCode GetStream(
-        [MarshalAs(UnmanagedType.LPWStr)] string name,
-        [Out, MarshalAs(UnmanagedType.Interface)] out IInStream stream
-    );
+    int GetStream([MarshalUsing(typeof(Utf16StringMarshaller))] string name, out IInStream stream);
 }

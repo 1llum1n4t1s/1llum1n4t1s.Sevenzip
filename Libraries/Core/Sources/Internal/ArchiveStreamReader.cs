@@ -16,7 +16,9 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
 /* ------------------------------------------------------------------------- */
+using System;
 using System.IO;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -28,7 +30,8 @@ namespace Cube.FileSystem.SevenZip;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-internal class ArchiveStreamReader : ArchiveStreamBase, ISequentialInStream, IInStream
+[GeneratedComClass]
+internal partial class ArchiveStreamReader : ArchiveStreamBase, IInStream
 {
     #region Constructors
 
@@ -76,13 +79,20 @@ internal class ArchiveStreamReader : ArchiveStreamBase, ISequentialInStream, IIn
     /// Reads the data.
     /// </summary>
     ///
-    /// <param name="buffer">Buffer.</param>
+    /// <param name="data">Pointer to the buffer.</param>
     /// <param name="size">Size to read.</param>
+    /// <param name="processedSize">Pointer to receive actual size read.</param>
     ///
-    /// <returns>Actual size read.</returns>
+    /// <returns>S_OK if success.</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public int Read(byte[] buffer, uint size) => BaseStream.Read(buffer, 0, (int)size);
+    public unsafe int Read(nint data, uint size, nint processedSize)
+    {
+        var buf = new Span<byte>((void*)data, (int)size);
+        var read = BaseStream.Read(buf);
+        if (processedSize != 0) *(uint*)processedSize = (uint)read;
+        return 0; // S_OK
+    }
 
     #endregion
 }

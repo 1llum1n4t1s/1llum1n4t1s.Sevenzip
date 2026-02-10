@@ -9,7 +9,7 @@
     </PropertyGroup>
     <ItemGroup>
         <ProjectReference Include="..\..\Libraries\Core\Cube.FileSystem.SevenZip.csproj" />
-        <ProjectReference Include="..\..\Libraries\Cube.Private.Tests\Cube.Private.Tests.csproj" />
+        <ProjectReference Include="..\Private\Cube.Private.Tests.csproj" />
         <PackageReference Include="Microsoft.NET.Test.Sdk" Version="*" />
         <PackageReference Include="NUnit3TestAdapter" Version="*" />
         <PackageReference Include="Appveyor.TestLogger" Version="*" />

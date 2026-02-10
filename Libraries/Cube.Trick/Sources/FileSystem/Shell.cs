@@ -58,6 +58,9 @@ public static class Shell
             0x0410 // SHGFI_TYPENAME | SHGFI_USEFILEATTRIBUTES
         );
 
-        return status != IntPtr.Zero ? dest.szTypeName : string.Empty;
+        unsafe
+        {
+            return status != IntPtr.Zero ? new string(dest.szTypeName) : string.Empty;
+        }
     }
 }

@@ -29,12 +29,11 @@ namespace Cube;
 ///
 /* ------------------------------------------------------------------------- */
 [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-internal struct ShStockIconInfo
+internal unsafe struct ShStockIconInfo
 {
     public int cbSize;
     public IntPtr hIcon;
     public int iSysImageIndex;
     public int iIcon;
-    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
-    public string szPath;
+    public fixed char szPath[260];
 }

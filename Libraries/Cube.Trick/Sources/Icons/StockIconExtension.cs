@@ -17,9 +17,9 @@
 /* ------------------------------------------------------------------------- */
 using Cube.Shell32;
 using System;
-using System.Diagnostics.CodeAnalysis;
 using System.Drawing;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.Icons;
 
 /* ------------------------------------------------------------------------- */
@@ -33,6 +33,8 @@ namespace Cube.Icons;
 /* ------------------------------------------------------------------------- */
 public static class StockIconExtension
 {
+    private static readonly StrategyBasedComWrappers s_comWrappers = new();
+
     #region Methods
 
     /* --------------------------------------------------------------------- */
@@ -50,7 +52,6 @@ public static class StockIconExtension
     /// <returns>Icon object.</returns>
     ///
     /* --------------------------------------------------------------------- */
-    [UnconditionalSuppressMessage("Trimming", "IL2050:Correctness of COM interop cannot be guaranteed after trimming. Interfaces and interface members might be removed.", Justification = "IImageList COM interface is required for shell icon retrieval.")]
     public static Icon Get(this StockIcon src, IconSize size)
     {
         var s0 = new ShStockIconInfo();
@@ -59,8 +60,11 @@ public static class StockIconExtension
         NativeMethods.SHGetStockIconInfo((uint)src, f0, ref s0);
 
         var s1 = new Guid("46EB5926-582E-4017-9FDF-E8998DAA0950"); // IID_IImageList
-        var r1 = NativeMethods.SHGetImageList((uint)size, s1, out var images);
-        if (r1 != 0 || images is null) return null;
+        var r1 = NativeMethods.SHGetImageList((uint)size, s1, out var imagesPtr);
+        if (r1 != 0 || imagesPtr == 0) return null;
+
+        var images = (IImageList)s_comWrappers
+            .GetOrCreateObjectForComInstance(imagesPtr, CreateObjectFlags.UniqueInstance);
 
         var s2 = IntPtr.Zero;
         var f2 = 0x01; // ILD_TRANSPARENT

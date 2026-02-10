@@ -30,7 +30,7 @@ namespace Cube.FileSystem.SevenZip;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-internal abstract class PasswordCallback : CallbackBase, ICryptoGetTextPassword
+internal abstract partial class PasswordCallback : CallbackBase, ICryptoGetTextPassword
 {
     #region Constructors
 
@@ -103,19 +103,19 @@ internal abstract class PasswordCallback : CallbackBase, ICryptoGetTextPassword
     /// <returns>Operation result</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public SevenZipCode CryptoGetTextPassword(out string value)
+    public int CryptoGetTextPassword(out string value)
     {
         PasswordTimes++;
         value = string.Empty;
-        if (Password is null) return SevenZipCode.WrongPassword;
+        if (Password is null) return (int)SevenZipCode.WrongPassword;
 
         var e = Query.NewMessage(Source);
         Password.Request(e);
-        if (e.Cancel) return SevenZipCode.Cancel;
+        if (e.Cancel) return (int)SevenZipCode.Cancel;
 
         var done = e.Value.HasValue();
         if (done) value = e.Value;
-        return done ? SevenZipCode.Success : SevenZipCode.WrongPassword;
+        return (int)(done ? SevenZipCode.Success : SevenZipCode.WrongPassword);
     }
 
     #endregion

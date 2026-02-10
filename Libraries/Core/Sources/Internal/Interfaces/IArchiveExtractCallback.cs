@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -18,6 +18,7 @@
 /* ------------------------------------------------------------------------- */
 using System;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -29,10 +30,9 @@ namespace Cube.FileSystem.SevenZip;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-[ComImport]
+[GeneratedComInterface]
 [Guid("23170F69-40C1-278A-0000-000600200000")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IArchiveExtractCallback
+internal partial interface IArchiveExtractCallback
 {
     /* --------------------------------------------------------------------- */
     ///
@@ -49,7 +49,7 @@ internal interface IArchiveExtractCallback
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    SevenZipCode SetTotal(ulong bytes);
+    int SetTotal(ulong bytes);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -65,7 +65,7 @@ internal interface IArchiveExtractCallback
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    SevenZipCode SetCompleted(IntPtr bytes);
+    int SetCompleted(IntPtr bytes);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -83,9 +83,9 @@ internal interface IArchiveExtractCallback
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    SevenZipCode GetStream(
+    int GetStream(
         uint index,
-        [Out, MarshalAs(UnmanagedType.Interface)] out ISequentialOutStream stream,
+        out ISequentialOutStream stream,
         AskMode mode
     );
 
@@ -103,7 +103,7 @@ internal interface IArchiveExtractCallback
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    SevenZipCode PrepareOperation(AskMode mode);
+    int PrepareOperation(AskMode mode);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -119,5 +119,5 @@ internal interface IArchiveExtractCallback
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    SevenZipCode SetOperationResult(SevenZipCode code);
+    int SetOperationResult(SevenZipCode code);
 }

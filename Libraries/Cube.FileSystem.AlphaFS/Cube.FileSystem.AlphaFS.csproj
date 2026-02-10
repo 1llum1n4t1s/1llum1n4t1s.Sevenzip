@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <DisableStrongNamer>true</DisableStrongNamer>
         <PlatformTarget>x64</PlatformTarget>
@@ -7,7 +7,7 @@
         <IsPackable>false</IsPackable>
     </PropertyGroup>
     <ItemGroup>
-      <PackageReference Include="1llum1n4t1s.AlphaFS" Version="1.0.20" />
+      <PackageReference Include="1llum1n4t1s.AlphaFS" Version="1.0.30" />
     </ItemGroup>
     <ItemGroup>
         <ProjectReference Include="..\Cube.Core\Cube.Core.csproj" />

@@ -61,23 +61,26 @@ internal struct PropVariant
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    public object Object
+    public object Object => VarType switch
     {
-        get
-        {
-            switch (VarType)
-            {
-                case VarEnum.VT_EMPTY:
-                    return null;
-                case VarEnum.VT_FILETIME:
-                    return DateTime.FromFileTime(_v64);
-                default:
-                    var h = GCHandle.Alloc(this, GCHandleType.Pinned);
-                    try { return Marshal.GetObjectForNativeVariant(h.AddrOfPinnedObject()); }
-                    finally { h.Free(); }
-            }
-        }
-    }
+        VarEnum.VT_EMPTY   => null,
+        VarEnum.VT_BOOL    => _v64u != 0,
+        VarEnum.VT_I1      => (sbyte)_v64,
+        VarEnum.VT_UI1     => (byte)_v64u,
+        VarEnum.VT_I2      => (short)_v64,
+        VarEnum.VT_UI2     => (ushort)_v64u,
+        VarEnum.VT_I4 or VarEnum.VT_INT => (int)_v32u,
+        VarEnum.VT_UI4 or VarEnum.VT_UINT => _v32u,
+        VarEnum.VT_I8      => _v64,
+        VarEnum.VT_UI8     => _v64u,
+        VarEnum.VT_R4      => BitConverter.Int32BitsToSingle((int)_v32u),
+        VarEnum.VT_R8      => BitConverter.Int64BitsToDouble(_v64),
+        VarEnum.VT_BSTR    => _vstr != IntPtr.Zero ? Marshal.PtrToStringBSTR(_vstr) : null,
+        VarEnum.VT_LPWSTR  => _vstr != IntPtr.Zero ? Marshal.PtrToStringUni(_vstr) : null,
+        VarEnum.VT_LPSTR   => _vstr != IntPtr.Zero ? Marshal.PtrToStringAnsi(_vstr) : null,
+        VarEnum.VT_FILETIME => DateTime.FromFileTime(_v64),
+        _                  => null,
+    };
 
     #endregion
 

@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -28,7 +28,7 @@ namespace Cube.FileSystem.SevenZip.Ole32;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-internal static class NativeMethods
+internal static partial class NativeMethods
 {
     #region Methods
 
@@ -41,8 +41,8 @@ internal static class NativeMethods
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [DllImport(LibName)]
-    public static extern int PropVariantClear(ref PropVariant pvar);
+    [LibraryImport(LibName)]
+    public static partial int PropVariantClear(ref PropVariant pvar);
 
     #endregion
 

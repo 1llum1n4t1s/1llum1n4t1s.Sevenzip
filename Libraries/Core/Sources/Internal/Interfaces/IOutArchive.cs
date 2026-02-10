@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -18,6 +18,7 @@
 /* ------------------------------------------------------------------------- */
 using System;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -29,10 +30,9 @@ namespace Cube.FileSystem.SevenZip;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-[ComImport]
+[GeneratedComInterface]
 [Guid("23170F69-40C1-278A-0000-000600A00000")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IOutArchive
+internal partial interface IOutArchive
 {
     /* --------------------------------------------------------------------- */
     ///
@@ -52,11 +52,7 @@ internal interface IOutArchive
     ///
     /* --------------------------------------------------------------------- */
     [PreserveSig]
-    int UpdateItems(
-        [MarshalAs(UnmanagedType.Interface)] ISequentialOutStream stream,
-        uint count,
-        [MarshalAs(UnmanagedType.Interface)] IArchiveUpdateCallback callback
-    );
+    int UpdateItems(ISequentialOutStream stream, uint count, IArchiveUpdateCallback callback);
 
     /* --------------------------------------------------------------------- */
     ///

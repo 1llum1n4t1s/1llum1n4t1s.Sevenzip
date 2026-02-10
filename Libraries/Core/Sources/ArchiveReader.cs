@@ -145,19 +145,24 @@ public sealed class ArchiveReader : DisposableBase
         Format  = format;
         Options = options;
         _password  = password;
-        _core   = Hook(new SevenZipLibrary()).GetInArchive(format);
+        var lib = Hook(new SevenZipLibrary());
+        _core = lib.GetInArchive(format);
 
         var cb = Hook(new OpenCallback(src) { Password = _password });
         var ss = new ArchiveStreamReader(Io.Open(src));
         cb.Streams.Add(ss);
+
+        // Keep managed references alive to prevent GC from collecting
+        // objects whose CCWs are held by native 7-Zip.
+        _openStream   = ss;
+        _openCallback = cb;
+
         var code = _core.Open(ss, IntPtr.Zero, cb);
-
         GC.KeepAlive(cb);
-
+        GC.KeepAlive(ss);
         if (code != 0) Logger.Warn($"[Open] Code:{code}");
 
-        var n = (int)_core.GetNumberOfItems();
-        Items = new ArchiveCollection(_core, n, src);
+        Items = new ArchiveCollection(_core, (int)_core.GetNumberOfItems(), src);
     }
 
     #endregion
@@ -265,16 +270,19 @@ public sealed class ArchiveReader : DisposableBase
     /// <param name="progress">Progress object.</param>
     ///
     /* --------------------------------------------------------------------- */
-    public void Save(string dest, uint[] src, IProgress<Report> progress)
+    public unsafe void Save(string dest, uint[] src, IProgress<Report> progress)
     {
         try
         {
             using var cb = CreateCallback(dest, src, progress);
-
             var n    = (uint?)src?.Length ?? uint.MaxValue;
             var test = dest.HasValue() ? 0 : 1;
-            var code = _core.Extract(src, n , test, cb);
 
+            int code;
+            fixed (uint* p = src)
+            {
+                code = _core.Extract(p, n, test, cb);
+            }
             GC.KeepAlive(cb);
 
             Logger.Debug($"Code:{code}");
@@ -306,8 +314,10 @@ public sealed class ArchiveReader : DisposableBase
         if (_core != null)
         {
             _core.Close();
-            System.Runtime.InteropServices.Marshal.ReleaseComObject(_core);
+            SevenZipLibrary.ReleaseComWrapper(_core);
         }
+        _openStream   = null;
+        _openCallback = null;
         _disposable.Dispose();
     }
 
@@ -360,5 +370,8 @@ public sealed class ArchiveReader : DisposableBase
     private readonly IInArchive _core;
     private readonly PasswordQuery _password;
     private readonly DisposableContainer _disposable = new();
+    // Prevent GC from collecting stream/callback whose CCWs are held by native 7-Zip.
+    private object _openStream;
+    private object _openCallback;
     #endregion
 }

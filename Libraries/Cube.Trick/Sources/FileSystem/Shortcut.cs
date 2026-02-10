@@ -17,10 +17,9 @@
 /* ------------------------------------------------------------------------- */
 using Cube.Text.Extensions;
 using System;
-using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
-using System.Text;
+using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem;
 
 /* ------------------------------------------------------------------------- */
@@ -32,7 +31,7 @@ namespace Cube.FileSystem;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-public class Shortcut
+public partial class Shortcut
 {
     #region Properties
 
@@ -236,18 +235,22 @@ public class Shortcut
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [UnconditionalSuppressMessage("Trimming", "IL2072:Target parameter argument does not satisfy 'DynamicallyAccessedMembersAttribute' in call to target method. The return value of the source method does not have matching annotations.", Justification = "COM object creation from CLSID is inherently dynamic.")]
+    private static readonly StrategyBasedComWrappers s_comWrappers = new();
+
     private static void Invoke(Action<IShellLink> action)
     {
-        var guid = new Guid("00021401-0000-0000-C000-000000000046");
-        var type = Type.GetTypeFromCLSID(guid);
-
-        if (Activator.CreateInstance(type!) is IShellLink sh)
-        {
-            try { action(sh); }
-            finally { _ = Marshal.ReleaseComObject(sh); }
-        }
+        var clsid = new Guid("00021401-0000-0000-C000-000000000046");
+        var iid = typeof(IShellLink).GUID;
+        var hr = CoCreateInstance(ref clsid, IntPtr.Zero, 1 /* CLSCTX_INPROC_SERVER */, ref iid, out var ptr);
+        if (hr != 0) Marshal.ThrowExceptionForHR(hr);
+        // UniqueInstance takes ownership of the COM reference from CoCreateInstance
+        var sh = (IShellLink)s_comWrappers
+            .GetOrCreateObjectForComInstance(ptr, CreateObjectFlags.UniqueInstance);
+        action(sh);
     }
+
+    [LibraryImport("ole32.dll")]
+    private static partial int CoCreateInstance(ref Guid rclsid, IntPtr pUnkOuter, uint dwClsContext, ref Guid riid, out nint ppv);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -258,11 +261,11 @@ public class Shortcut
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    private static string GetTarget(IShellLink src)
+    private static unsafe string GetTarget(IShellLink src)
     {
-        var dest = GetBuffer();
-        src.GetPath(dest, dest.Capacity, IntPtr.Zero, 0x0004);
-        return dest.ToString();
+        var buf = stackalloc char[65536];
+        src.GetPath(buf, 65536, IntPtr.Zero, 0x0004);
+        return new string(buf);
     }
 
     /* --------------------------------------------------------------------- */
@@ -274,11 +277,11 @@ public class Shortcut
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    private static string GetArguments(IShellLink src)
+    private static unsafe string GetArguments(IShellLink src)
     {
-        var dest = GetBuffer();
-        src.GetArguments(dest, dest.Capacity);
-        return dest.ToString();
+        var buf = stackalloc char[65536];
+        src.GetArguments(buf, 65536);
+        return new string(buf);
     }
 
     /* --------------------------------------------------------------------- */
@@ -290,12 +293,12 @@ public class Shortcut
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    private static string GetIconLocation(IShellLink src)
+    private static unsafe string GetIconLocation(IShellLink src)
     {
-        var path = GetBuffer();
-        src.GetIconLocation(path, path.Capacity, out var index);
-        if (index > 0) _ = path.Append($",{index}");
-        return path.ToString();
+        var buf = stackalloc char[65536];
+        src.GetIconLocation(buf, 65536, out var index);
+        var path = new string(buf);
+        return index > 0 ? $"{path},{index}" : path;
     }
 
     /* --------------------------------------------------------------------- */
@@ -307,19 +310,21 @@ public class Shortcut
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    private static IPersistFile GetPersistFile(IShellLink src) => src as IPersistFile;
-
-    /* --------------------------------------------------------------------- */
-    ///
-    /// GetBuffer
-    ///
-    /// <summary>
-    /// Creates a new instance of the StringBuilder class with a
-    /// specific capacity.
-    /// </summary>
-    ///
-    /* --------------------------------------------------------------------- */
-    private static StringBuilder GetBuffer() => new(65536);
+    private static IPersistFile GetPersistFile(IShellLink src)
+    {
+        if (!ComWrappers.TryGetComInstance(src, out var unkPtr)) return null;
+        try
+        {
+            var iid = typeof(IPersistFile).GUID;
+            var hr = Marshal.QueryInterface(unkPtr, in iid, out var ptr);
+            if (hr != 0 || ptr == IntPtr.Zero) return null;
+            // IPersistFile is a legacy [ComImport] interface, so we use Marshal.GetObjectForIUnknown
+            // This is acceptable as IPersistFile is a system interface that won't change
+            try { return (IPersistFile)Marshal.GetObjectForIUnknown(ptr); }
+            finally { Marshal.Release(ptr); }
+        }
+        finally { Marshal.Release(unkPtr); }
+    }
 
     #endregion
 
