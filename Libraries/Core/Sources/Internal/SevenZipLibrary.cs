@@ -76,7 +76,7 @@ internal sealed class SevenZipLibrary : DisposableBase
     /// <returns>InArchive object.</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public IInArchive GetInArchive(Format format) => GetInArchive(format.ToClassId());
+    public IInArchive GetInArchive(Format format) => GetArchive<IInArchive>(format.ToClassId());
 
     /* --------------------------------------------------------------------- */
     ///
@@ -91,15 +91,7 @@ internal sealed class SevenZipLibrary : DisposableBase
     /// <returns>InArchive object.</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public IInArchive GetInArchive(Guid clsid)
-    {
-        var iid = typeof(IInArchive).GUID;
-        var ptr = CreateObject(ref clsid, ref iid);
-        var obj = s_comWrappers
-            .GetOrCreateObjectForComInstance(ptr, CreateObjectFlags.UniqueInstance);
-        Track(obj);
-        return (IInArchive)obj;
-    }
+    public IInArchive GetInArchive(Guid clsid) => GetArchive<IInArchive>(clsid);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -114,7 +106,7 @@ internal sealed class SevenZipLibrary : DisposableBase
     /// <returns>OutArchive object.</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public IOutArchive GetOutArchive(Format format) => GetOutArchive(format.ToClassId());
+    public IOutArchive GetOutArchive(Format format) => GetArchive<IOutArchive>(format.ToClassId());
 
     /* --------------------------------------------------------------------- */
     ///
@@ -129,15 +121,7 @@ internal sealed class SevenZipLibrary : DisposableBase
     /// <returns>OutArchive object.</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public IOutArchive GetOutArchive(Guid clsid)
-    {
-        var iid = typeof(IOutArchive).GUID;
-        var ptr = CreateObject(ref clsid, ref iid);
-        var obj = s_comWrappers
-            .GetOrCreateObjectForComInstance(ptr, CreateObjectFlags.UniqueInstance);
-        Track(obj);
-        return (IOutArchive)obj;
-    }
+    public IOutArchive GetOutArchive(Guid clsid) => GetArchive<IOutArchive>(clsid);
 
     /* --------------------------------------------------------------------- */
     ///
@@ -236,6 +220,26 @@ internal sealed class SevenZipLibrary : DisposableBase
     ///
     /* --------------------------------------------------------------------- */
     private void Track(object comWrapper) => _tracked.Add(comWrapper);
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// GetArchive
+    ///
+    /// <summary>
+    /// Creates a COM archive object with the specified class ID and
+    /// wraps it as the specified interface type.
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    private T GetArchive<T>(Guid clsid) where T : class
+    {
+        var iid = typeof(T).GUID;
+        var ptr = CreateObject(ref clsid, ref iid);
+        var obj = s_comWrappers
+            .GetOrCreateObjectForComInstance(ptr, CreateObjectFlags.UniqueInstance);
+        Track(obj);
+        return (T)obj;
+    }
 
     /* --------------------------------------------------------------------- */
     ///

@@ -71,5 +71,28 @@ internal static class CallbackExtension
         new OperationCanceledException("", src.Exceptions.Pop()) :
         new OperationCanceledException();
 
+    /* --------------------------------------------------------------------- */
+    ///
+    /// ThrowIfError
+    ///
+    /// <summary>
+    /// 7-Zip 操作の結果コードを検査し、エラーの場合は適切な例外をスローします。
+    /// </summary>
+    ///
+    /// <param name="src">コールバックオブジェクト。</param>
+    /// <param name="code">操作結果コード。</param>
+    /// <param name="checkPassword">
+    /// WrongPassword コードを EncryptionException に変換するかどうか。
+    /// </param>
+    ///
+    /* --------------------------------------------------------------------- */
+    public static void ThrowIfError(this CallbackBase src, int code, bool checkPassword = false)
+    {
+        if (code == (int)SevenZipCode.Success) return;
+        if (checkPassword && code == (int)SevenZipCode.WrongPassword) throw new EncryptionException();
+        if (code == (int)SevenZipCode.Cancel) throw src.GetCancelException();
+        throw src.GetException(code);
+    }
+
     #endregion
 }

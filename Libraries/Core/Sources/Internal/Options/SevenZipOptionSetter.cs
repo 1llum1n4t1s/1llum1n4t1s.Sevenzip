@@ -17,7 +17,6 @@
 //
 /* ------------------------------------------------------------------------- */
 using System.Collections.Generic;
-using System.Linq;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -60,15 +59,15 @@ internal class SevenZipOptionSetter : CompressionOptionSetter
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    public static CompressionMethod[] SupportedMethods => new[]
-    {
+    public static CompressionMethod[] SupportedMethods { get; } =
+    [
         CompressionMethod.Lzma,
         CompressionMethod.Lzma2,
         CompressionMethod.Ppmd,
         CompressionMethod.BZip2,
         CompressionMethod.Deflate,
         CompressionMethod.Copy,
-    };
+    ];
 
     #endregion
 
@@ -87,30 +86,8 @@ internal class SevenZipOptionSetter : CompressionOptionSetter
     /* --------------------------------------------------------------------- */
     protected override void Invoke(IDictionary<string, PropVariant> dest)
     {
-        AddCompressionMethod(dest);
+        AddCompressionMethod(dest, "0", CompressionMethod.Lzma, SupportedMethods);
         base.Invoke(dest);
-    }
-
-    #endregion
-
-    #region Implementations
-
-    /* --------------------------------------------------------------------- */
-    ///
-    /// AddCompressionMethod
-    ///
-    /// <summary>
-    /// Adds the specified compression method.
-    /// </summary>
-    ///
-    /* --------------------------------------------------------------------- */
-    private void AddCompressionMethod(IDictionary<string, PropVariant> dest)
-    {
-        var m = Options.CompressionMethod == CompressionMethod.Default ?
-                CompressionMethod.Lzma :
-                Options.CompressionMethod;
-        if (!SupportedMethods.Contains(m)) return;
-        dest.Add("0", PropVariant.Create(m.ToString()));
     }
 
     #endregion

@@ -369,9 +369,7 @@ public sealed class ArchiveWriter : DisposableBase
 
         GC.KeepAlive(cb);
 
-        if (code == (int)SevenZipCode.Success) return;
-        if (code == (int)SevenZipCode.Cancel) throw cb.GetCancelException();
-        throw cb.GetException(code);
+        cb.ThrowIfError(code);
     }
 
     #endregion

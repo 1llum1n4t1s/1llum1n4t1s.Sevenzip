@@ -17,7 +17,6 @@
 //
 /* ------------------------------------------------------------------------- */
 using System.Collections.Generic;
-using System.Linq;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -60,15 +59,15 @@ internal class ZipOptionSetter : CompressionOptionSetter
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    public static CompressionMethod[] SupportedMethods => new[]
-    {
+    public static CompressionMethod[] SupportedMethods { get; } =
+    [
         CompressionMethod.Copy,
         CompressionMethod.Deflate,
         CompressionMethod.Deflate64,
         CompressionMethod.BZip2,
         CompressionMethod.Lzma,
         CompressionMethod.Ppmd,
-    };
+    ];
 
     #endregion
 
@@ -87,7 +86,7 @@ internal class ZipOptionSetter : CompressionOptionSetter
     /* --------------------------------------------------------------------- */
     protected override void Invoke(IDictionary<string, PropVariant> dest)
     {
-        AddCompressionMethod(dest);
+        AddCompressionMethod(dest, "m", CompressionMethod.Deflate, SupportedMethods);
         AddEncryptionMethod(dest);
         base.Invoke(dest);
     }
@@ -95,24 +94,6 @@ internal class ZipOptionSetter : CompressionOptionSetter
     #endregion
 
     #region Implementations
-
-    /* --------------------------------------------------------------------- */
-    ///
-    /// AddCompressionMethod
-    ///
-    /// <summary>
-    /// Adds the compression method.
-    /// </summary>
-    ///
-    /* --------------------------------------------------------------------- */
-    private void AddCompressionMethod(IDictionary<string, PropVariant> dest)
-    {
-        var m = Options.CompressionMethod == CompressionMethod.Default ?
-                CompressionMethod.Deflate :
-                Options.CompressionMethod;
-        if (!SupportedMethods.Contains(m)) return;
-        dest.Add("m", PropVariant.Create(m.ToString()));
-    }
 
     /* --------------------------------------------------------------------- */
     ///

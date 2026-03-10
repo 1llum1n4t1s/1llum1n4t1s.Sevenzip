@@ -142,5 +142,35 @@ internal class CompressionOptionSetter
         }
     }
 
+    /* --------------------------------------------------------------------- */
+    ///
+    /// AddCompressionMethod
+    ///
+    /// <summary>
+    /// 圧縮メソッドを設定に追加します。指定されたメソッドがサポート対象外の
+    /// 場合は何もしません。
+    /// </summary>
+    ///
+    /// <param name="dest">設定コレクション。</param>
+    /// <param name="key">プロパティキー。</param>
+    /// <param name="defaultMethod">
+    /// CompressionMethod.Default の場合に使用するメソッド。
+    /// </param>
+    /// <param name="supported">サポートされる圧縮メソッドの配列。</param>
+    ///
+    /* --------------------------------------------------------------------- */
+    protected void AddCompressionMethod(
+        IDictionary<string, PropVariant> dest,
+        string key,
+        CompressionMethod defaultMethod,
+        CompressionMethod[] supported)
+    {
+        var m = Options.CompressionMethod == CompressionMethod.Default ?
+                defaultMethod :
+                Options.CompressionMethod;
+        if (!supported.Contains(m)) return;
+        dest.Add(key, PropVariant.Create(m.ToString()));
+    }
+
     #endregion
 }

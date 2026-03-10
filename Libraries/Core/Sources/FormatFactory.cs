@@ -59,15 +59,15 @@ public static class FormatFactory
             var count = src.Read(bytes, 0, 16);
             if (count <= 0) return Format.Unknown;
 
-            var cvt = BitConverter.ToString(bytes, 0, count);
-            foreach (var cmp in GetSignatureMap())
+            var span = bytes.AsSpan(0, count);
+            foreach (var (sig, fmt) in s_signature.Value)
             {
-                if (cvt.StartsWith(cmp.Key, StringComparison.OrdinalIgnoreCase)) return cmp.Value;
+                if (span.StartsWith(sig)) return fmt;
             }
 
-            // for special signature
-            if (Match(src, 0x101, 5, "75-73-74-61-72")) return Format.Tar;
-            if (Match(src, 0x002, 3, "2D-6C-68")) return Format.Lzh;
+            // 特殊シグネチャ（先頭以外のオフセット位置にある）
+            if (Match(src, 0x101, "ustar"u8)) return Format.Tar;
+            if (Match(src, 0x002, "-lh"u8)) return Format.Lzh;
 
             return Format.Unknown;
         }
@@ -116,7 +116,7 @@ public static class FormatFactory
     ///
     /* --------------------------------------------------------------------- */
     public static Format FromExtension(string src) =>
-        GetExtensionMap().TryGetValue(src.ToLowerInvariant(), out var dest) ?
+        s_extension.Value.TryGetValue(src.ToLowerInvariant(), out var dest) ?
         dest :
         Format.Unknown;
 
@@ -129,57 +129,53 @@ public static class FormatFactory
     /// Match
     ///
     /// <summary>
-    /// Gets the value indicating whether bytes that are read from
-    /// the stream matches the specified signature.
+    /// ストリームの指定オフセットからバイト列を読み取り、期待されるシグネチャと
+    /// 一致するかどうかを返します。
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    private static bool Match(Stream stream, int offset, int count, string compared)
+    private static bool Match(Stream stream, int offset, ReadOnlySpan<byte> expected)
     {
-        var bytes = new byte[count];
+        Span<byte> bytes = stackalloc byte[expected.Length];
         _ = stream.Seek(offset, SeekOrigin.Begin);
-        if (stream.Read(bytes, 0, count) < count) return false;
-        return BitConverter.ToString(bytes).StartsWith(compared, StringComparison.OrdinalIgnoreCase);
+        if (stream.Read(bytes) < expected.Length) return false;
+        return bytes.SequenceEqual(expected);
     }
 
     /* --------------------------------------------------------------------- */
     ///
-    /// GetExtensionMap
+    /// CreateExtensionMap
     ///
     /// <summary>
-    /// Gets the collection that represents the relation of file extension
-    /// and archive format.
+    /// ファイル拡張子とアーカイブ形式の対応辞書を生成します。
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    private static IDictionary<string, Format> GetExtensionMap()
+    private static Dictionary<string, Format> CreateExtensionMap()
     {
-        if (_extension == null)
+        var dest = new Dictionary<string, Format>
         {
-            _extension = new()
-            {
-                { ".7z",   Format.SevenZip },
-                { ".bz",   Format.BZip2    },
-                { ".bz2",  Format.BZip2    },
-                { ".tbz",  Format.BZip2    },
-                { ".tb2",  Format.BZip2    },
-                { ".tbz2", Format.BZip2    },
-                { ".gz",   Format.GZip     },
-                { ".tgz",  Format.GZip     },
-                { ".xz",   Format.XZ       },
-                { ".txz",  Format.XZ       },
-                { ".z",    Format.Lzw      },
-                { ".zst",  Format.Zstd     },
-            };
+            { ".7z",   Format.SevenZip },
+            { ".bz",   Format.BZip2    },
+            { ".bz2",  Format.BZip2    },
+            { ".tbz",  Format.BZip2    },
+            { ".tb2",  Format.BZip2    },
+            { ".tbz2", Format.BZip2    },
+            { ".gz",   Format.GZip     },
+            { ".tgz",  Format.GZip     },
+            { ".xz",   Format.XZ       },
+            { ".txz",  Format.XZ       },
+            { ".z",    Format.Lzw      },
+            { ".zst",  Format.Zstd     },
+        };
 
-            foreach (var item in Enum.GetValues<Format>())
-            {
-                var ext = $".{item.ToString().ToLowerInvariant()}";
-                if (!_extension.ContainsKey(ext)) _extension.Add(ext, item);
-            }
-
+        foreach (var item in Enum.GetValues<Format>())
+        {
+            var ext = $".{item.ToString().ToLowerInvariant()}";
+            if (!dest.ContainsKey(ext)) dest.Add(ext, item);
         }
-        return _extension;
+
+        return dest;
     }
 
     /* --------------------------------------------------------------------- */
@@ -187,42 +183,41 @@ public static class FormatFactory
     /// CreateSignatureMap
     ///
     /// <summary>
-    /// Gets the collection that represents the relation of byte
-    /// signature and archive format.
+    /// バイトシグネチャとアーカイブ形式の対応配列を生成します。
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    private static IDictionary<string, Format> GetSignatureMap() => _signature ??= new()
-    {
-        { "50-4B-03-04",                Format.Zip      },
-        { "42-5A-68",                   Format.BZip2    },
-        { "52-61-72-21-1A-07-00",       Format.Rar      },
-        { "60-EA",                      Format.Arj      },
-        { "1F-9D-90",                   Format.Lzw      },
-        { "37-7A-BC-AF-27-1C",          Format.SevenZip },
-        { "4D-53-43-46",                Format.Cab      },
-        { "5D-00-00-40-00",             Format.Lzma     },
-        { "FD-37-7A-58-5A",             Format.XZ       },
-        { "52-61-72-21-1A-07-01-00",    Format.Rar5     },
-        { "46-4C-56",                   Format.Flv      },
-        { "46-57-53",                   Format.Swf      },
-        { "63-6F-6E-65-63-74-69-78",    Format.Vhd      },
-        { "4D-5A",                      Format.PE       },
-        { "7F-45-4C-46",                Format.Elf      },
-        { "78-61-72-21",                Format.Xar      },
-        { "78",                         Format.Dmg      },
-        { "4D-53-57-49-4D-00-00-00",    Format.Wim      },
-        { "43-44-30-30-31",             Format.Iso      },
-        { "49-54-53-46",                Format.Chm      },
-        { "ED-AB-EE-DB",                Format.Rpm      },
-        { "1F-8B-08",                   Format.GZip     },
-        { "28-B5-2F-FD",                Format.Zstd     },
-    };
+    private static (byte[] Signature, Format Format)[] CreateSignatureMap() =>
+    [
+        ([0x50, 0x4B, 0x03, 0x04],                         Format.Zip),
+        ([0x42, 0x5A, 0x68],                                Format.BZip2),
+        ([0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00],       Format.Rar),
+        ([0x60, 0xEA],                                      Format.Arj),
+        ([0x1F, 0x9D, 0x90],                                Format.Lzw),
+        ([0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C],             Format.SevenZip),
+        ([0x4D, 0x53, 0x43, 0x46],                          Format.Cab),
+        ([0x5D, 0x00, 0x00, 0x40, 0x00],                    Format.Lzma),
+        ([0xFD, 0x37, 0x7A, 0x58, 0x5A],                    Format.XZ),
+        ([0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01, 0x00], Format.Rar5),
+        ([0x46, 0x4C, 0x56],                                Format.Flv),
+        ([0x46, 0x57, 0x53],                                Format.Swf),
+        ([0x63, 0x6F, 0x6E, 0x65, 0x63, 0x74, 0x69, 0x78], Format.Vhd),
+        ([0x4D, 0x5A],                                      Format.PE),
+        ([0x7F, 0x45, 0x4C, 0x46],                          Format.Elf),
+        ([0x78, 0x61, 0x72, 0x21],                          Format.Xar),
+        ([0x78],                                            Format.Dmg),
+        ([0x4D, 0x53, 0x57, 0x49, 0x4D, 0x00, 0x00, 0x00], Format.Wim),
+        ([0x43, 0x44, 0x30, 0x30, 0x31],                    Format.Iso),
+        ([0x49, 0x54, 0x53, 0x46],                          Format.Chm),
+        ([0xED, 0xAB, 0xEE, 0xDB],                          Format.Rpm),
+        ([0x1F, 0x8B, 0x08],                                Format.GZip),
+        ([0x28, 0xB5, 0x2F, 0xFD],                          Format.Zstd),
+    ];
 
     #endregion
 
     #region Fields
-    private static Dictionary<string, Format> _signature;
-    private static Dictionary<string, Format> _extension;
+    private static readonly Lazy<(byte[] Signature, Format Format)[]> s_signature = new(CreateSignatureMap);
+    private static readonly Lazy<Dictionary<string, Format>> s_extension = new(CreateExtensionMap);
     #endregion
 }

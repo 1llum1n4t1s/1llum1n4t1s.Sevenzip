@@ -41,7 +41,7 @@ internal partial class ArchiveStreamWriter : ArchiveStreamBase, IOutStream
     /// ArchiveStreamWriter
     ///
     /// <summary>
-    /// Initializes a new instance of the ArchiveStreamReader class
+    /// Initializes a new instance of the ArchiveStreamWriter class
     /// with the specified stream. BaseStream is disposed when disposed.
     /// </summary>
     ///
@@ -55,7 +55,7 @@ internal partial class ArchiveStreamWriter : ArchiveStreamBase, IOutStream
     /// ArchiveStreamWriter
     ///
     /// <summary>
-    /// Initializes a new instance of the ArchiveStreamReader class
+    /// Initializes a new instance of the ArchiveStreamWriter class
     /// with the specified arguments.
     /// </summary>
     ///

@@ -286,10 +286,7 @@ public sealed class ArchiveReader : DisposableBase
             GC.KeepAlive(cb);
 
             Logger.Debug($"Code:{code}");
-            if (code == (int)SevenZipCode.Success) return;
-            if (code == (int)SevenZipCode.WrongPassword) throw new EncryptionException();
-            if (code == (int)SevenZipCode.Cancel) throw cb.GetCancelException();
-            else throw cb.GetException(code);
+            cb.ThrowIfError(code, checkPassword: true);
         }
         finally { _password.Reset(); }
     }
