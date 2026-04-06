@@ -84,11 +84,8 @@ public static class Methods
     /// <returns>Combined string.</returns>
     ///
     /* --------------------------------------------------------------------- */
-    public static string Join(this IEnumerable<string> src, string separator)
-    {
-        var cvt = src as string[] ?? src.ToArray();
-        return cvt.Any() ? cvt.Aggregate((x, y) => x + separator + y) : string.Empty;
-    }
+    public static string Join(this IEnumerable<string> src, string separator) =>
+        string.Join(separator, src);
 
     #endregion
 

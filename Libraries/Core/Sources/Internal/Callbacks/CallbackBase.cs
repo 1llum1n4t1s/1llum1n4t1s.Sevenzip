@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -21,91 +21,49 @@ using System;
 using System.Collections.Generic;
 namespace Cube.FileSystem.SevenZip;
 
-/* ------------------------------------------------------------------------- */
-///
-/// CallbackBase
-///
 /// <summary>
-/// Provides functionality to report the progress of compression or
-/// extraction process.
+/// 圧縮・解凍処理の進捗報告機能を提供する基底クラス。
 /// </summary>
-///
-/* ------------------------------------------------------------------------- */
 internal abstract class CallbackBase : DisposableBase
 {
     #region Constructors
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// CallbackBase
-    ///
     /// <summary>
-    /// Initializes a new instance of the CallbackBase class with the
-    /// specified arguments.
+    /// 指定した引数で CallbackBase クラスの新しいインスタンスを初期化する。
     /// </summary>
-    ///
-    /// <param name="aggregator">User object to report the progress.</param>
-    ///
-    /* --------------------------------------------------------------------- */
+    /// <param name="aggregator">進捗報告を受け取るオブジェクト。null の場合は報告しない。</param>
     protected CallbackBase(IProgress<Report> aggregator) => _inner = aggregator;
 
     #endregion
 
     #region Properties
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// Count
-    ///
     /// <summary>
-    /// Gets or sets the number of processed files.
+    /// 処理済みファイル数を取得または設定する。
     /// </summary>
-    ///
-    /* --------------------------------------------------------------------- */
     public long Count { get; protected set; }
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// TotalCount
-    ///
     /// <summary>
-    /// Gets or sets the number of files to be processed.
+    /// 処理対象の総ファイル数を取得または設定する。
     /// </summary>
-    ///
-    /* --------------------------------------------------------------------- */
     public long TotalCount { get; protected set; }
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// Bytes
-    ///
     /// <summary>
-    /// Gets or sets the number of processed bytes.
+    /// 処理済みバイト数を取得または設定する。
     /// </summary>
-    ///
-    /* --------------------------------------------------------------------- */
     public long Bytes { get; protected set; }
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// TotalBytes
-    ///
     /// <summary>
-    /// Gets or sets the number of bytes to be processed.
+    /// 処理対象の総バイト数を取得または設定する。
     /// </summary>
-    ///
-    /* --------------------------------------------------------------------- */
     public long TotalBytes { get; protected set; }
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// Exceptions
-    ///
     /// <summary>
-    /// Gets exceptions occurred during processing.
+    /// 処理中に発生した例外のスタックを取得する。
     /// </summary>
-    ///
-    /* --------------------------------------------------------------------- */
+    /// <remarks>
+    /// 例外は LIFO 順で積まれる。呼び出し元は ThrowIfError() 等で確認すること。
+    /// </remarks>
     public Stack<Exception> Exceptions { get; } = new();
 
     #endregion
@@ -114,62 +72,40 @@ internal abstract class CallbackBase : DisposableBase
 
     #region Report
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// Report
-    ///
     /// <summary>
-    /// Reports the progress with the specified arguments.
+    /// 指定した引数で進捗を報告する。
     /// </summary>
-    ///
-    /// <param name="state">Progress state.</param>
-    /// <param name="entity">Processing item.</param>
-    ///
+    /// <param name="state">進捗の状態。</param>
+    /// <param name="entity">処理対象のアイテム。</param>
     /// <returns>
-    /// Cancel if the Report.Cancel property is set to true; otherwise None.
+    /// <see cref="Report.Cancel"/> が true の場合は Cancel コード；それ以外は None。
     /// </returns>
-    ///
-    /* --------------------------------------------------------------------- */
     protected int Report(ProgressState state, Entity entity) =>
         Report(Make(state, entity, null));
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// Report
-    ///
     /// <summary>
-    /// Reports the progress with the specified arguments.
+    /// エラー情報を含む進捗を報告する。
     /// </summary>
-    ///
-    /// <param name="error">Exception object.</param>
-    /// <param name="entity">Processing item.</param>
-    ///
+    /// <param name="error">発生した例外オブジェクト。</param>
+    /// <param name="entity">処理対象のアイテム。</param>
     /// <returns>
-    /// Cancel if the Report.Cancel property is set to true; otherwise None.
+    /// <see cref="Report.Cancel"/> が true の場合は Cancel コード；それ以外は None。
     /// </returns>
-    ///
-    /* --------------------------------------------------------------------- */
     protected int Report(Exception error, Entity entity) =>
         Report(Make(ProgressState.Failed, entity, error));
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// Report
-    ///
     /// <summary>
-    /// Notifies the specified report.
+    /// 指定した Report オブジェクトで進捗を報告する。
     /// </summary>
-    ///
-    /// <param name="src">Report object.</param>
-    ///
+    /// <param name="src">報告するレポートオブジェクト。</param>
     /// <returns>
-    /// Cancel if the Report.Cancel property is set to true; otherwise None.
+    /// <see cref="Report.Cancel"/> が true の場合は Cancel コード；それ以外は Success。
     /// </returns>
-    ///
-    /* --------------------------------------------------------------------- */
     protected int Report(Report src)
     {
+        // null チェックにより aggregator が設定されていない場合は何もしない
         _inner?.Report(src);
+        // キャンセル要求があれば Cancel コードを返し、7-zip に処理中断を伝える
         return (int)(src.Cancel ? SevenZipCode.Cancel : SevenZipCode.Success);
     }
 
@@ -177,57 +113,47 @@ internal abstract class CallbackBase : DisposableBase
 
     #region Run
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// Run
-    ///
     /// <summary>
-    /// Invokes the specified function and report the progress.
+    /// 指定した関数を実行し、進捗を報告する。
     /// </summary>
-    ///
-    /// <param name="func">User function.</param>
-    /// <param name="state">Progress state.</param>
-    /// <param name="entity">Processing item.</param>
-    ///
+    /// <param name="func">実行するユーザー関数。</param>
+    /// <param name="state">完了時に報告する進捗の状態。</param>
+    /// <param name="entity">処理対象のアイテム。</param>
     /// <returns>
-    /// Cancel if the Report.Cancel property is set to true;
-    /// otherwise the value returned by the specified function.
+    /// キャンセル要求があった場合は Cancel コード；
+    /// それ以外は <paramref name="func"/> の戻り値。
     /// </returns>
-    ///
-    /* --------------------------------------------------------------------- */
     protected int Run(Func<int> func, ProgressState state, Entity entity) =>
         Run(func, state, () => entity);
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// Run
-    ///
     /// <summary>
-    /// Invokes the specified function and report the progress.
+    /// 指定した関数を実行し、進捗を報告する。
     /// </summary>
-    ///
-    /// <param name="func">User function.</param>
-    /// <param name="state">Progress state.</param>
-    /// <param name="entity">Function to get the processing item.</param>
-    ///
+    /// <param name="func">実行するユーザー関数。</param>
+    /// <param name="state">完了時に報告する進捗の状態。</param>
+    /// <param name="entity">処理対象アイテムを返す関数（遅延評価）。</param>
     /// <returns>
-    /// Cancel if the Report.Cancel property is set to true;
-    /// otherwise the value returned by the specified function.
+    /// キャンセル要求があった場合は Cancel コード；
+    /// それ以外は <paramref name="func"/> の戻り値。
     /// </returns>
-    ///
-    /* --------------------------------------------------------------------- */
     protected int Run(Func<int> func, ProgressState state, Func<Entity> entity)
     {
         try
         {
+            // ユーザー関数を実行して 7-zip の操作結果コードを取得する
             var c0 = func();
+            // 完了を報告してキャンセルコードを取得する
             var c1 = Report(state, entity());
+            // キャンセルが優先される（ユーザーが中断要求した場合はキャンセルを伝播する）
             return c1 == (int)SevenZipCode.Cancel ? c1 : c0;
         }
         catch (Exception e)
         {
+            // 例外をスタックに積んでおく（呼び出し元が後で確認できるように）
             Exceptions.Push(e);
+            // aggregator が存在する場合は失敗を報告してコールバックを継続させる
             if (_inner is not null) return Report(e, entity());
+            // aggregator なしの場合は例外の種類に応じたエラーコードを返す
             if (e is SevenZipException se) return (int)se.Code;
             return (int)SevenZipCode.UnknownError;
         }
@@ -235,47 +161,33 @@ internal abstract class CallbackBase : DisposableBase
 
     #endregion
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// Combine
-    ///
     /// <summary>
-    /// Combines the specified paths
+    /// 2つのパスを結合する。
     /// </summary>
-    ///
-    /// <param name="s0">First path.</param>
-    /// <param name="s1">Second path.</param>
-    ///
-    /// <returns>Combined path.</returns>
-    ///
-    /* --------------------------------------------------------------------- */
+    /// <param name="s0">基準となるパス（空の場合は <paramref name="s1"/> をそのまま返す）。</param>
+    /// <param name="s1">結合するパス。</param>
+    /// <returns>結合されたパス。</returns>
     protected string Combine(string s0, string s1) => !s0.HasValue() ? s1 : Io.Combine(s0, s1);
 
     #endregion
 
     #region Implementations
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// Make
-    ///
     /// <summary>
-    /// Creates a new report with the specified arguments.
+    /// 指定した引数から Report オブジェクトを生成する。
     /// </summary>
-    ///
-    /// <param name="state">Progress state.</param>
-    /// <param name="entity">Processing item.</param>
-    /// <param name="error">Exception object.</param>
-    ///
-    /// <returns>Report object.</returns>
-    ///
-    /* --------------------------------------------------------------------- */
+    /// <param name="state">進捗の状態。</param>
+    /// <param name="entity">処理対象のアイテム。</param>
+    /// <param name="error">発生した例外。null の場合はエラーなし。</param>
+    /// <returns>現在の進捗情報を含む Report オブジェクト。</returns>
     private Report Make(ProgressState state, Entity entity, Exception error) => new()
     {
+        // Failed 状態の場合はキャンセルフラグを立てて処理を中断させる
         Cancel     = state == ProgressState.Failed,
         State      = state,
         Exception  = error,
         Target     = entity,
+        // 現在の進捗カウンタのスナップショットをレポートに埋め込む
         Bytes      = Bytes,
         Count      = Count,
         TotalBytes = TotalBytes,
@@ -285,6 +197,7 @@ internal abstract class CallbackBase : DisposableBase
     #endregion
 
     #region Fields
+    // 進捗通知の受信者。null の場合は報告をスキップする。
     private readonly IProgress<Report> _inner;
     #endregion
 }

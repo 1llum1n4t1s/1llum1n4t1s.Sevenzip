@@ -7,7 +7,7 @@
         <IsPackable>false</IsPackable>
     </PropertyGroup>
     <ItemGroup>
-      <PackageReference Include="1llum1n4t1s.AlphaFS" Version="1.0.30" />
+      <PackageReference Include="1llum1n4t1s.AlphaFS" Version="1.0.36" />
     </ItemGroup>
     <ItemGroup>
         <ProjectReference Include="..\Cube.Core\Cube.Core.csproj" />

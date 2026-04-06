@@ -8,6 +8,6 @@
     <ItemGroup>
         <ProjectReference Include="..\..\Libraries\Cube.Core\Cube.Core.csproj" />
         <ProjectReference Include="..\..\Libraries\Cube.Logging.NLog\Cube.Logging.NLog.csproj" />
-        <PackageReference Include="NUnit" Version="4.4.0" />
+        <PackageReference Include="NUnit" Version="4.5.1" />
     </ItemGroup>
 </Project>

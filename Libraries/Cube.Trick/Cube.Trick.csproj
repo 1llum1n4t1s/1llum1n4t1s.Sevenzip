@@ -7,6 +7,6 @@
     </PropertyGroup>
     <ItemGroup>
         <ProjectReference Include="..\Cube.Core\Cube.Core.csproj" />
-        <PackageReference Include="System.Drawing.Common" Version="10.0.2" />
+        <PackageReference Include="System.Drawing.Common" Version="10.0.5" />
     </ItemGroup>
 </Project>

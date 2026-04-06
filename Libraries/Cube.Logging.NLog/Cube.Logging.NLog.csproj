@@ -6,6 +6,6 @@
     </PropertyGroup>
     <ItemGroup>
         <ProjectReference Include="..\Cube.Core\Cube.Core.csproj" />
-        <PackageReference Include="NLog" Version="6.1.0" />
+        <PackageReference Include="NLog" Version="6.1.2" />
     </ItemGroup>
 </Project>

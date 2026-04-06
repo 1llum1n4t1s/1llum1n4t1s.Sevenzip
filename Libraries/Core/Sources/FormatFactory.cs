@@ -172,7 +172,7 @@ public static class FormatFactory
         foreach (var item in Enum.GetValues<Format>())
         {
             var ext = $".{item.ToString().ToLowerInvariant()}";
-            if (!dest.ContainsKey(ext)) dest.Add(ext, item);
+            dest.TryAdd(ext, item);
         }
 
         return dest;

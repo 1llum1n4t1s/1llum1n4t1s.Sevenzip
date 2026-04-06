@@ -420,12 +420,14 @@ public sealed class SafePath(string src)
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
+    private static readonly IEqualityComparer<string> _reservedCmp =
+        new LambdaEqualityComparer<string>((x, y) => x.FuzzyEquals(y));
+
     private static bool IsReserved(string src)
     {
         var index = src.IndexOf('.');
-        var name  = index < 0 ? src : src.Substring(0, index);
-        var cmp   = new LambdaEqualityComparer<string>((x, y) => x.FuzzyEquals(y));
-        return ReservedNames.Contains(name, cmp);
+        var name  = index < 0 ? src : src[..index];
+        return ReservedNames.Contains(name, _reservedCmp);
     }
 
     /* --------------------------------------------------------------------- */

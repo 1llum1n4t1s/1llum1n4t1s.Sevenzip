@@ -114,15 +114,15 @@ internal class ArchiveEntitySource : EntitySource
     /* --------------------------------------------------------------------- */
     public override void Setup()
     {
-        Crc            = _core.Get<uint>(Index, ItemPropId.Crc);
-        Encrypted      = _core.Get<bool>(Index, ItemPropId.Encrypted);
+        Crc            = _core.GetUInt32(Index, ItemPropId.Crc);
+        Encrypted      = _core.GetBool(Index, ItemPropId.Encrypted);
         Exists         = true;
-        IsDirectory    = _core.Get<bool>(Index, ItemPropId.IsDirectory);
-        Attributes     = (FileAttributes)_core.Get<uint>(Index, ItemPropId.Attributes);
-        Length         = (long)_core.Get<ulong>(Index, ItemPropId.Size);
-        CreationTime   = _core.Get<DateTime>(Index, ItemPropId.CreationTime);
-        LastWriteTime  = _core.Get<DateTime>(Index, ItemPropId.LastWriteTime);
-        LastAccessTime = _core.Get<DateTime>(Index, ItemPropId.LastAccessTime);
+        IsDirectory    = _core.GetBool(Index, ItemPropId.IsDirectory);
+        Attributes     = (FileAttributes)_core.GetUInt32(Index, ItemPropId.Attributes);
+        Length         = (long)_core.GetUInt64(Index, ItemPropId.Size);
+        CreationTime   = _core.GetDateTime(Index, ItemPropId.CreationTime);
+        LastWriteTime  = _core.GetDateTime(Index, ItemPropId.LastWriteTime);
+        LastAccessTime = _core.GetDateTime(Index, ItemPropId.LastAccessTime);
 
         var pathValue = _path.Value;
         if (!pathValue.HasValue()) return;

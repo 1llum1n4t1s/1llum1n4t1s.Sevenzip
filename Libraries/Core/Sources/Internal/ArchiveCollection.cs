@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -20,74 +20,65 @@ using Cube.Collections;
 using System.Collections.Generic;
 namespace Cube.FileSystem.SevenZip;
 
-/* ------------------------------------------------------------------------- */
-///
-/// ArchiveCollection
-///
 /// <summary>
-/// Represents the collection of items in the provided archive.
+/// 提供されたアーカイブ内のアイテムコレクションを表す。
 /// </summary>
-///
-/* ------------------------------------------------------------------------- */
+/// <remarks>
+/// インデクサアクセスは遅延評価かつキャッシュ付きで実装されており、
+/// 同一インデックスへの複数アクセスで COM プロパティ取得が繰り返されない。
+/// </remarks>
 internal sealed class ArchiveCollection : EnumerableBase<ArchiveEntity>, IReadOnlyList<ArchiveEntity>
 {
     #region Constructors
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// ArchiveCollection
-    ///
     /// <summary>
-    /// Initializes a new instance of the ArchiveCollection class with
-    /// the specified controller.
+    /// 指定したコントローラーで ArchiveCollection クラスの新しいインスタンスを初期化する。
     /// </summary>
-    ///
-    /// <param name="core">7-zip core object.</param>
-    /// <param name="count">Number of items in the archive.</param>
-    /// <param name="path">Path of the archive file.</param>
-    ///
-    /* --------------------------------------------------------------------- */
+    /// <param name="core">7-zip COM コアオブジェクト。プロパティ取得に使用する。</param>
+    /// <param name="count">アーカイブ内のアイテム数。</param>
+    /// <param name="path">アーカイブファイルのパス。TAR 判定に使用する。</param>
     public ArchiveCollection(IInArchive core, int count, string path)
     {
         _core = core;
         _path = path;
         Count = count;
+        // キャッシュ配列は最初のアクセス時に遅延生成する（_cache ??= ... を使用）
     }
 
     #endregion
 
     #region Properties
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// Count
-    ///
     /// <summary>
-    /// Gets the number of items.
+    /// アイテム数を取得する。
     /// </summary>
-    ///
-    /* --------------------------------------------------------------------- */
     public int Count { get; }
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// Item
-    ///
     /// <summary>
-    /// Gets the element at the specified index
+    /// 指定したインデックスの要素を取得する。
     /// </summary>
-    ///
-    /// <param name="index">Index of the element to get.</param>
-    ///
-    /// <returns>ArchiveItem object.</returns>
-    ///
-    /* --------------------------------------------------------------------- */
+    /// <param name="index">取得する要素のインデックス。</param>
+    /// <returns>ArchiveEntity オブジェクト。</returns>
+    /// <remarks>
+    /// 初回アクセス時に COM レイヤーからプロパティを取得してキャッシュする。
+    /// 2回目以降はキャッシュから返す。
+    /// </remarks>
     public ArchiveEntity this[int index]
     {
         get
         {
-            using var src = new ArchiveEntitySource(_core, index, _path);
-            return new(src);
+            // キャッシュ配列を遅延初期化する（Count 分確保）
+            _cache ??= new ArchiveEntity[Count];
+
+            if (_cache[index] is null)
+            {
+                // COM 経由でプロパティを取得し ArchiveEntitySource 経由で ArchiveEntity を生成する。
+                // using で囲んで PropVariant バッファを確実に解放する。
+                using var src = new ArchiveEntitySource(_core, index, _path);
+                _cache[index] = new(src);
+            }
+            // キャッシュ済みのインスタンスを返す
+            return _cache[index];
         }
     }
 
@@ -95,45 +86,39 @@ internal sealed class ArchiveCollection : EnumerableBase<ArchiveEntity>, IReadOn
 
     #region Methods
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// GetEnumerator
-    ///
     /// <summary>
-    /// Returns an enumerator that iterates through a collection.
+    /// コレクションを反復処理する列挙子を返す。
     /// </summary>
-    ///
-    /// <returns>
-    /// Enumerator that can be used to iterate through the collection.
-    /// </returns>
-    ///
-    /* --------------------------------------------------------------------- */
+    /// <returns>コレクションを反復処理するために使用できる列挙子。</returns>
     public override IEnumerator<ArchiveEntity> GetEnumerator()
     {
+        // インデクサを介してキャッシュを活用しながら順に列挙する
         for (var i = 0; i < Count; ++i) yield return this[i];
     }
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// Dispose
-    ///
     /// <summary>
-    /// Releases the unmanaged resources used by the object
-    /// and optionally releases the managed resources.
+    /// オブジェクトが使用するリソースを解放する。
     /// </summary>
-    ///
     /// <param name="disposing">
-    /// true to release both managed and unmanaged resources;
-    /// false to release only unmanaged resources.
+    /// マネージドリソースとアンマネージドリソースの両方を解放する場合は true；
+    /// アンマネージドリソースのみを解放する場合は false。
     /// </param>
-    ///
-    /* --------------------------------------------------------------------- */
-    protected override void Dispose(bool disposing) => _core = null;
+    protected override void Dispose(bool disposing)
+    {
+        // キャッシュ配列を null にして GC がエントリを回収できるようにする
+        _cache = null;
+        // COM オブジェクトへの参照を切る（ReleaseComWrapper は呼び出し元が担当）
+        _core = null;
+    }
 
     #endregion
 
     #region Fields
+    // 7-zip COM アーカイブオブジェクト（Dispose 後は null になる）
     private IInArchive _core;
+    // アーカイブファイルのパス（TAR 判定用）
     private readonly string _path;
+    // ArchiveEntity のキャッシュ配列（初回アクセス時に生成）
+    private ArchiveEntity[] _cache;
     #endregion
 }

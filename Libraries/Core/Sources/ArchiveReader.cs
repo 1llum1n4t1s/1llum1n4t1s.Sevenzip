@@ -145,7 +145,7 @@ public sealed class ArchiveReader : DisposableBase
         Format  = format;
         Options = options;
         _password  = password;
-        var lib = Hook(new SevenZipLibrary());
+        var lib = Hook(SevenZipLibrary.Acquire());
         _core = lib.GetInArchive(format);
 
         var cb = Hook(new OpenCallback(src) { Password = _password });

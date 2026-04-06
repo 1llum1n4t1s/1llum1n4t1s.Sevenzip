@@ -372,10 +372,11 @@ public class OrderedDictionary<TKey, TValue> :
     /// </returns>
     ///
     /* --------------------------------------------------------------------- */
-    public override IEnumerator<KeyValuePair<TKey, TValue>> GetEnumerator() =>
-        _core.Cast<DictionaryEntry>()
-             .Select(e => new KeyValuePair<TKey, TValue>((TKey)e.Key, (TValue)e.Value))
-             .GetEnumerator();
+    public override IEnumerator<KeyValuePair<TKey, TValue>> GetEnumerator()
+    {
+        foreach (DictionaryEntry e in _core)
+            yield return new KeyValuePair<TKey, TValue>((TKey)e.Key, (TValue)e.Value);
+    }
 
     #endregion
 

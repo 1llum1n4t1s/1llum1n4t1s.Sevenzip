@@ -32,7 +32,7 @@ namespace Cube;
 /// </summary>
 ///
 /* ------------------------------------------------------------------------- */
-public class SoftwareVersion
+public partial class SoftwareVersion
 {
     #region Constructors
 
@@ -98,11 +98,7 @@ public class SoftwareVersion
     {
         if (!src.HasValue()) return;
 
-        var match = Regex.Match(
-            src,
-            @"(?<prefix>.*?)(?<number>[0-9]+(\.[0-9]+){1,3})(?<suffix>.*)",
-            RegexOptions.Singleline
-        );
+        var match = VersionPattern().Match(src);
 
         Prefix = match.Groups["prefix"].Value;
         Suffix = match.Groups["suffix"].Value;
@@ -228,6 +224,18 @@ public class SoftwareVersion
         if (digit <= 3) return;
         dest.Append($".{Number.Revision}");
     }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// VersionPattern
+    ///
+    /// <summary>
+    /// バージョン文字列解析用のコンパイル済み正規表現を返す。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [GeneratedRegex(@"(?<prefix>.*?)(?<number>[0-9]+(\.[0-9]+){1,3})(?<suffix>.*)", RegexOptions.Singleline)]
+    private static partial Regex VersionPattern();
 
     #endregion
 }
