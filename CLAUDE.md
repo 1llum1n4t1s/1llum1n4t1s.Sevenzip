@@ -27,6 +27,10 @@ rtk dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Pla
 
 **重要**: Platform は常に `x64` を指定する。出力先は `bin\x64\$(Configuration)\`。
 
+## バージョン管理
+
+バージョンは `Directory.Build.props` の `<Version>` タグで一元管理（全プロジェクト共通）。
+
 ## アーキテクチャ
 
 ### プロジェクト構成
@@ -50,6 +54,23 @@ Sources/
     ├── Callbacks/    # COM コールバック実装（[GeneratedComClass]）
     └── ...           # ヘルパー、ネイティブ呼び出し
 ```
+
+### ファイルI/O基盤（Cube.Core）
+
+`Io` 静的クラス → `IoController` でファイル操作を提供。`Io.Open()` には2つのオーバーロードがある:
+
+- `Io.Open(path)` — `File.OpenRead()` 相当（`FileShare.Read`）
+- `Io.Open(path, share)` — 任意の `FileShare` モードで開く
+
+### ロック中ファイルの自動コピー機能
+
+圧縮時に他プロセスがロックしているファイルを自動的に一時コピーして処理する:
+
+1. `ArchiveWriter.AddItem()` — 事前チェックで `Io.Open()` 失敗時、`Io.Open(path, FileShare.ReadWrite | FileShare.Delete)` でフォールバック確認
+2. `UpdateCallback.Open()` — `Save()` 時に `Io.Open()` 失敗なら `CopyLockedFile()` で `%TEMP%\SevenZip_{GUID}\` に一時コピーし、コピーを開く
+3. `UpdateCallback.Dispose()` — 一時ディレクトリを削除
+
+ロック判定は `IsFileLocked()` で HResult（`ERROR_SHARING_VIOLATION` = `0x80070020`、`ERROR_LOCK_VIOLATION` = `0x80070021`）を確認。
 
 ### NativeAOT 対応の規約
 
