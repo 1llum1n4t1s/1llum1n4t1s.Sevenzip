@@ -120,6 +120,41 @@ internal class ArchiveReaderTest : FileFixture
         archive.Test();
     }, $"{filename}, {password}");
 
+    /* --------------------------------------------------------------------- */
+    ///
+    /// Extract_WithCodePage
+    ///
+    /// <summary>
+    /// CodePage を指定して ZIP アーカイブを開き、CJK ファイル名が
+    /// 正しくデコードされることを確認する。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [TestCase(CodePage.Utf8)]
+    [TestCase(CodePage.Japanese)]
+    public void Extract_WithCodePage(CodePage cp)
+    {
+        var name = "日本語のファイル名.txt";
+        var src  = Get(name);
+        var zip  = Get($"{nameof(Extract_WithCodePage)}{cp}.zip");
+        var dest = Get(nameof(Extract_WithCodePage), $"{cp}");
+
+        Io.Copy(GetSource("Sample.txt"), src, true);
+
+        // Writer 側で同じ CodePage を指定して ZIP を作成
+        using (var writer = new ArchiveWriter(Format.Zip, new() { CodePage = cp }))
+        {
+            writer.Add(src);
+            writer.Save(zip);
+        }
+
+        // Reader 側で CodePage を指定して開く
+        using var reader = new ArchiveReader(zip, "", new() { CodePage = cp });
+        Assert.That(reader.Items.Count, Is.GreaterThan(0));
+        Assert.That(reader.Items[0].FullName, Does.Contain("日本語"));
+        reader.Save(dest);
+    }
+
     #endregion
 
     #region TestCases
@@ -282,8 +317,9 @@ internal class ArchiveReaderTest : FileFixture
     ///
     /// <remarks>
     /// ロケールが日本語以外の環境で失敗するテストに関しては、現時点
-    /// では無視しています。将来的には CodePage を指定可能な形に修正
-    /// する事で対応する予定です。
+    /// では無視しています。ArchiveOption.CodePage で明示的にコード
+    /// ページを指定可能になったため、新規テストではそちらを使用する
+    /// ことを推奨します。
     /// </remarks>
     ///
     /* --------------------------------------------------------------------- */

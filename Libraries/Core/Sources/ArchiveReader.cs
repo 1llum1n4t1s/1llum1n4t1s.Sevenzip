@@ -19,6 +19,7 @@
 using Cube.Text.Extensions;
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -147,6 +148,34 @@ public sealed class ArchiveReader : DisposableBase
         _password  = password;
         var lib = Hook(SevenZipLibrary.Acquire());
         _core = lib.GetInArchive(format);
+
+        // Open() 前にコードページを設定する（7z.dll が ZIP ファイル名のデコードに使用）
+        // ZIP 形式かつ OEM（デフォルト）以外が指定された場合のみ SetProperties を呼ぶ
+        if (format == Format.Zip && options.CodePage != CodePage.Oem)
+        {
+            ISetProperties setProps = null;
+            try
+            {
+                setProps = lib.QueryInterface<ISetProperties>(_core);
+                if (setProps is not null)
+                {
+                    var keys = new[] { "cp" };
+                    var vals = new[] { PropVariant.Create((uint)options.CodePage) };
+                    var pin = GCHandle.Alloc(vals, GCHandleType.Pinned);
+                    try
+                    {
+                        var hr = setProps.SetProperties(keys, pin.AddrOfPinnedObject(), (uint)keys.Length);
+                        if (hr != 0) throw new System.IO.IOException(
+                            $"コードページ {options.CodePage} の設定に失敗しました (HRESULT: 0x{hr:X8})");
+                    }
+                    finally { pin.Free(); }
+                }
+            }
+            finally
+            {
+                SevenZipLibrary.ReleaseComWrapper(setProps);
+            }
+        }
 
         var cb = Hook(new OpenCallback(src) { Password = _password });
         var ss = new ArchiveStreamReader(Io.Open(src));
