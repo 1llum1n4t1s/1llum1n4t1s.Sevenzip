@@ -111,6 +111,22 @@ public static class Io
 
     /* --------------------------------------------------------------------- */
     ///
+    /// Open
+    ///
+    /// <summary>
+    /// 指定された共有モードでファイルを読み取り専用で開く。
+    /// </summary>
+    ///
+    /// <param name="path">開くファイルのパス。</param>
+    /// <param name="share">他プロセスとの共有モード。</param>
+    ///
+    /// <returns>読み取り専用ストリーム。</returns>
+    ///
+    /* --------------------------------------------------------------------- */
+    public static FileStream Open(string path, FileShare share) => _controller.Open(path, share);
+
+    /* --------------------------------------------------------------------- */
+    ///
     /// Create
     ///
     /// <summary>

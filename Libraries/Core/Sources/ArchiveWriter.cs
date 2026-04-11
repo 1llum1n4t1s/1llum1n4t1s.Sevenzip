@@ -511,8 +511,18 @@ public sealed class ArchiveWriter : DisposableBase
             {
                 // ファイルが読み取り可能かどうかを事前に確認する（フェイルファスト）
                 // アーカイブ作成時ではなく追加時にエラーを検出することで早期通知できる
-                using var stream = Io.Open(src.FullName);
-                if (stream is null) throw new ArgumentNullException(nameof(stream));
+                try
+                {
+                    using var stream = Io.Open(src.FullName);
+                    if (stream is null) throw new ArgumentNullException(nameof(stream));
+                }
+                catch (IOException ex) when (IsFileLocked(ex))
+                {
+                    // ロック中 → FileShare.ReadWrite で読めることだけ確認する
+                    // 実際のコピーは Save() 時に UpdateCallback.Open() 内で行う
+                    using var stream = Io.Open(src.FullName,
+                        FileShare.ReadWrite | FileShare.Delete);
+                }
             }
             _items.Add(src);
         }
@@ -522,6 +532,16 @@ public sealed class ArchiveWriter : DisposableBase
             Logger.Debug($"Path:{src.FullName.Quote()}, Error:{e.Message} ({e.GetType().Name})");
             throw new AccessException(src.RawName, e);
         }
+    }
+
+    /// <summary>
+    /// 例外がファイルロック（共有違反）によるものかを判定する。
+    /// </summary>
+    private static bool IsFileLocked(IOException ex)
+    {
+        const int SharingViolation = unchecked((int)0x80070020);
+        const int LockViolation = unchecked((int)0x80070021);
+        return ex.HResult == SharingViolation || ex.HResult == LockViolation;
     }
 
     /// <summary>

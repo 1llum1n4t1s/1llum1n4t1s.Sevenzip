@@ -102,6 +102,18 @@ public class IoController : FileSystem.IoController
 
     /* --------------------------------------------------------------------- */
     ///
+    /// Open
+    ///
+    /// <summary>
+    /// 指定された共有モードでファイルを読み取り専用で開く（AlphaFS 長パス対応版）。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    public override FileStream Open(string path, FileShare share) =>
+        File.Open(path, FileMode.Open, FileAccess.Read, share);
+
+    /* --------------------------------------------------------------------- */
+    ///
     /// Create
     ///
     /// <summary>

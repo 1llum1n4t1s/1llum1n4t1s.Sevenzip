@@ -96,6 +96,24 @@ public class IoController
 
     /* --------------------------------------------------------------------- */
     ///
+    /// Open
+    ///
+    /// <summary>
+    /// 指定された共有モードでファイルを読み取り専用で開く。
+    /// ロック中のファイルを <c>FileShare.ReadWrite</c> で読む場合などに使用する。
+    /// </summary>
+    ///
+    /// <param name="path">開くファイルのパス。</param>
+    /// <param name="share">他プロセスとの共有モード。</param>
+    ///
+    /// <returns>読み取り専用ストリーム。</returns>
+    ///
+    /* --------------------------------------------------------------------- */
+    public virtual FileStream Open(string path, FileShare share) =>
+        new(path, FileMode.Open, FileAccess.Read, share);
+
+    /* --------------------------------------------------------------------- */
+    ///
     /// Create
     ///
     /// <summary>

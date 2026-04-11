@@ -19,6 +19,7 @@
 using Cube.Text.Extensions;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
@@ -359,6 +360,13 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         // 全ての読み取りストリームを解放する
         foreach (var stream in _streams) stream.Dispose();
         _streams.Clear();
+
+        // ロック中ファイルの一時コピーを削除する
+        if (_tempDir is not null && Directory.Exists(_tempDir))
+        {
+            try { Directory.Delete(_tempDir, recursive: true); }
+            catch { /* クリーンアップ失敗は無視 */ }
+        }
     }
 
     #endregion
@@ -367,16 +375,74 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
 
     /// <summary>
     /// 指定したエンティティのファイルを開いて読み取りストリームを返す。
+    /// ファイルが他プロセスにロックされている場合は一時コピーを作成して開く。
     /// </summary>
     private ArchiveStreamReader Open(Entity src)
     {
         // ディレクトリまたは存在しないファイルはストリーム不要
         if (!src.Exists || src.IsDirectory) return null;
 
+        Stream stream;
+        try
+        {
+            // まず通常モード（FileShare.Read）で開く
+            stream = Io.Open(src.FullName);
+        }
+        catch (IOException ex) when (IsFileLocked(ex))
+        {
+            // ロック中 → 一時コピーを作成してコピーを開く
+            var tempPath = CopyLockedFile(src.FullName);
+            stream = File.OpenRead(tempPath);
+        }
+
         // ストリームを開き、Dispose 時に解放できるようリストに登録する
-        var dest = new ArchiveStreamReader(Io.Open(src.FullName));
+        var dest = new ArchiveStreamReader(stream);
         _streams.Add(dest);
         return dest;
+    }
+
+    /// <summary>
+    /// 例外がファイルロック（共有違反）によるものかを判定する。
+    /// </summary>
+    private static bool IsFileLocked(IOException ex)
+    {
+        const int SharingViolation = unchecked((int)0x80070020);
+        const int LockViolation = unchecked((int)0x80070021);
+        return ex.HResult == SharingViolation || ex.HResult == LockViolation;
+    }
+
+    /// <summary>
+    /// ロック中のファイルを一時ディレクトリにコピーし、コピー先パスを返す。
+    /// FileShare.ReadWrite で開くことでロック中でも読み取れる。
+    /// </summary>
+    private string CopyLockedFile(string sourcePath)
+    {
+        // 一時ディレクトリを遅延作成（乱数名で衝突回避）
+        if (_tempDir is null)
+        {
+            _tempDir = Path.Combine(Path.GetTempPath(), $"SevenZip_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(_tempDir);
+        }
+
+        // GUID プレフィックスで同名ファイルの衝突を防止
+        var tempFileName = $"{Guid.NewGuid():N}_{Path.GetFileName(sourcePath)}";
+        var tempPath = Path.Combine(_tempDir, tempFileName);
+
+        using var src = Io.Open(sourcePath, FileShare.ReadWrite | FileShare.Delete);
+        using var dst = new FileStream(tempPath, FileMode.Create, FileAccess.Write,
+            FileShare.None, bufferSize: 4096);
+
+        var srcLength = src.Length;
+        if (srcLength > 0)
+        {
+            dst.SetLength(srcLength);
+            src.CopyTo(dst);
+            // ソースが縮小した場合に末尾ゼロ埋めを除去
+            if (dst.Position != srcLength)
+                dst.SetLength(dst.Position);
+        }
+
+        return tempPath;
     }
 
     /// <summary>
@@ -433,6 +499,8 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     private readonly UpdatePlan _plan;
     // 現在処理中のアイテムを指す _items インデックス（未処理は -1）
     private int _index = -1;
+    // ロック中ファイルの一時コピー先ディレクトリ（遅延作成、Dispose 時に削除）
+    private string _tempDir;
     // 最後に処理したコールバックインデックス（UpdateItemProgress の重複検出用）
     private int _processedItemIndex = -1;
     // 7-zip のバイト報告がリセットされた場合の累積バイト数
