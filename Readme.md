@@ -8,7 +8,10 @@
 > - CI を AppVeyor から **GitHub Actions** に移行
 > - NuGet パッケージ名を **1llum1n4t1s.Sevenzip** として公開
 > - **NativeAOT 対応**（COM Interop を `[GeneratedComInterface]` に、P/Invoke を `[LibraryImport]` に全面移行）
-> - [Cube.Core](https://github.com/cube-soft/cube.core) や Cube.FileSystem.AlphaFS、Cube.Logging.NLog、Cube.Forms などを NuGet 参照ではなく **ソリューション内のプロジェクトとして組み込み**
+> - [Cube.Core](https://github.com/cube-soft/cube.core) をソリューション内のプロジェクトとして直接組み込み（NuGet 参照ではなく NuGet パッケージに DLL を同梱）
+> - **7-Zip 本家 26.00** のネイティブバイナリを直接 vendor（`Cube.Native.SevenZip` 依存を除去）
+> - **Windows x64 限定** — `<RuntimeIdentifiers>win-x64</RuntimeIdentifiers>` を NuGet メタデータで宣言し、ランタイムでも `PlatformNotSupportedException` でガード
+> - **NLog から SuperLightLogger への移行**（テストハーネス用）
 > - **アーカイブ更新機能** — `ArchiveWriter.Update()` / `Remove()` で既存アーカイブのファイル追加・置換・削除が可能
 > - **ロック中ファイル自動コピー** — 他プロセスがロック中のファイルを一時コピーして圧縮に含める
 > - **CodePage サポート** — ZIP ファイル名のエンコーディングを `ArchiveOption.CodePage` で指定可能（Reader / Writer 両対応）
@@ -17,7 +20,7 @@
 
 ---
 
-[1llum1n4t1s.Sevenzip](https://github.com/1llum1n4t1s/1llum1n4t1s.Sevenzip) は [7-Zip](http://www.7-zip.org/) の COM インターフェースを利用したラッパーライブラリです。アーカイブの圧縮・解凍を行う [CubeICE](https://www.cube-soft.jp/cubeice/) アプリケーションも含みます。ライブラリおよびアプリケーションは .NET 10 をターゲットとしています。ライセンスはプロジェクトにより GNU LGPLv3 または Apache 2.0 です。詳細は [License.md](https://github.com/1llum1n4t1s/1llum1n4t1s.Sevenzip/blob/main/License.md) を参照してください。
+[1llum1n4t1s.Sevenzip](https://github.com/1llum1n4t1s/1llum1n4t1s.Sevenzip) は [7-Zip](http://www.7-zip.org/) の COM インターフェースを利用した .NET 10 向けラッパーライブラリです。Windows x64 のみをサポートします。ライセンスはプロジェクトにより GNU LGPLv3 または Apache 2.0 です。詳細は [License.md](https://github.com/1llum1n4t1s/1llum1n4t1s.Sevenzip/blob/main/License.md) を参照してください。
 
 ## Usage
 
@@ -170,14 +173,9 @@ upstream では `SetTotal` コールバックで `ProgressState.Prepare` が報�
 
 COM オブジェクトの生成・解放を `StrategyBasedComWrappers` + `CreateObjectFlags.UniqueInstance` による明示的管理に変更しました。これにより、ネイティブ DLL アンロード後の GC ファイナライザによるクラッシュが防止されます。消費者側のコードに変更は不要です。
 
-### DataContract（レジストリシリアライズ）の AOT 互換性
-
-`Cube.DataContract` の `RegistrySerializer` / `RegistryDeserializer` はリフレクションベースの実装であり、NativeAOT と完全には互換しません。`[RequiresUnreferencedCode]` / `[RequiresDynamicCode]` 属性で警告されています。SevenZip のアーカイブ操作（圧縮・解凍）はこのコードパスを通らないため、**SevenZip ライブラリとしての AOT 利用には影響ありません。**
-
 ## Dependencies
 
-* [7-Zip](https://www.7-zip.org/) … [Cube.Native.SevenZip](https://github.com/cube-soft/Cube.Native.SevenZip) は日本語エンコーディングに最適化されています。
-* [AlphaFS](https://alphafs.alphaleonis.com/) … 本ソリューション内の Cube.FileSystem.AlphaFS プロジェクトが AlphaFS をラップしています（長いパス対応など）。
+* [7-Zip](https://www.7-zip.org/) … 本家 26.00 の `7z.dll` / `7z.sfx` を `Libraries/Core/Native/x64/` に vendor して NuGet パッケージに同梱しています (x64 限定)。
 
 ## License
 
@@ -185,7 +183,7 @@ COM オブジェクトの生成・解放を `StrategyBasedComWrappers` + `Create
 
 | 由来 | リポジトリ | ライセンス |
 |------|------------|------------|
-| 7-Zip ラッパー・CubeICE | [cube-soft/cube.filesystem.sevenzip](https://github.com/cube-soft/cube.filesystem.sevenzip) | コアライブラリ: [GNU LGPLv3](https://www.gnu.org/licenses/lgpl-3.0.html)、その他: [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
+| 7-Zip ラッパー | [cube-soft/cube.filesystem.sevenzip](https://github.com/cube-soft/cube.filesystem.sevenzip) | コアライブラリ: [GNU LGPLv3](https://www.gnu.org/licenses/lgpl-3.0.html)、その他: [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
 | ユーティリティ・MVVM 等 | [cube-soft/cube.core](https://github.com/cube-soft/cube.core) | [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
 
 各プロジェクトのライセンス表記および条件は、本リポジトリ内の [License.md](https://github.com/1llum1n4t1s/1llum1n4t1s.Sevenzip/blob/main/License.md) およびソリューション内の各ライセンスファイルを参照してください。  

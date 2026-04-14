@@ -8,13 +8,7 @@
   <Project Path="Libraries/Cube.Core/Cube.Core.csproj">
     <Platform Project="x64" />
   </Project>
-  <Project Path="Libraries/Cube.FileSystem.AlphaFS/Cube.FileSystem.AlphaFS.csproj">
-    <Platform Project="x64" />
-  </Project>
-  <Project Path="Libraries/Cube.Logging.NLog/Cube.Logging.NLog.csproj">
-    <Platform Project="x64" />
-  </Project>
-  <Project Path="Libraries/Cube.Trick/Cube.Trick.csproj">
+  <Project Path="Libraries/Cube.Logging/Cube.Logging.csproj">
     <Platform Project="x64" />
   </Project>
   <Project Path="Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj">

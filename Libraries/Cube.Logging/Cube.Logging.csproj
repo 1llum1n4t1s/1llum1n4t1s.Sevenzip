@@ -1,11 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
-        <Description>Wraps the NLog package compatible with the Cube.ILoggerSource interface.</Description>
+        <Description>Wraps the SuperLightLogger package compatible with the Cube.ILoggerSource interface.</Description>
         <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
         <IsPackable>false</IsPackable>
     </PropertyGroup>
     <ItemGroup>
         <ProjectReference Include="..\Cube.Core\Cube.Core.csproj" />
-        <PackageReference Include="NLog" Version="6.1.2" />
+        <PackageReference Include="SuperLightLogger" Version="1.0.4" />
     </ItemGroup>
 </Project>

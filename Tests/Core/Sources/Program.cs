@@ -15,7 +15,7 @@
 // limitations under the License.
 //
 /* ------------------------------------------------------------------------- */
-using Cube.Logging.NLog;
+using Cube.Logging;
 using NUnit.Framework;
 using System;
 namespace Cube.FileSystem.SevenZip.Tests;
@@ -44,7 +44,7 @@ internal static class Program
     [OneTimeSetUp]
     public static void OneTimeSetup()
     {
-        Logger.Configure(new LoggerSource());
+        Logger.Configure(new LoggerSource("Cube.FileSystem.SevenZip.Tests.log"));
         Logger.ObserveTaskException();
         Logger.Info(typeof(Program).Assembly);
     }

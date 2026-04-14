@@ -75,6 +75,16 @@ internal sealed class SevenZipLibrary : IDisposable
     /// </remarks>
     private SevenZipLibrary()
     {
+        // 本ライブラリは win-x64 の 7z.dll のみ同梱しているため、
+        // 他のアーキテクチャでは明示的に PlatformNotSupportedException を投げる。
+        // OS 縛りは TargetFramework=net10.0-windows8 により型読み込み時に強制されるため、
+        // ここではアーキテクチャのみをチェックする。
+        if (RuntimeInformation.ProcessArchitecture != Architecture.X64)
+        {
+            throw new PlatformNotSupportedException(
+                $"1llum1n4t1s.Sevenzip only supports Windows x64. Current process architecture: {RuntimeInformation.ProcessArchitecture}.");
+        }
+
         // アセンブリと同じディレクトリから 7z.dll を探す
         var dll = Io.Combine(GetType().Assembly.GetDirectoryName(), "7z.dll");
         _handle = NativeMethods.LoadLibrary(dll);

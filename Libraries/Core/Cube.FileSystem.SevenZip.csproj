@@ -2,15 +2,20 @@
     <PropertyGroup>
         <PackageId>1llum1n4t1s.Sevenzip</PackageId>
         <Company></Company>
-        <Description>7-Zip wrapper library for .NET.</Description>
-        <PackageTags>Cube;7-Zip;7z;SevenZip;Zip</PackageTags>
+        <Description>7-Zip wrapper library for .NET. Windows x64 only (bundles 7-Zip 26.00 native binaries).</Description>
+        <PackageTags>Cube;7-Zip;7z;SevenZip;Zip;x64;win-x64</PackageTags>
         <PackageLicenseExpression>LGPL-3.0-or-later</PackageLicenseExpression>
         <PackageIcon>images\Icon.png</PackageIcon>
         <PackageReadmeFile>README.md</PackageReadmeFile>
+        <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     </PropertyGroup>
     <ItemGroup>
         <ProjectReference Include="..\Cube.Core\Cube.Core.csproj" PrivateAssets="all" />
-        <PackageReference Include="Cube.Native.SevenZip" Version="25.1.1" />
+    </ItemGroup>
+    <ItemGroup>
+        <!-- 本家 7-Zip 26.00 のネイティブアセット (https://www.7-zip.org/) -->
+        <None Include="Native\x64\7z.dll" Link="7z.dll" CopyToOutputDirectory="PreserveNewest" Pack="true" PackagePath="runtimes\win-x64\native\7z.dll" />
+        <None Include="Native\x64\7z.sfx" Link="7z.sfx" CopyToOutputDirectory="PreserveNewest" Pack="true" PackagePath="runtimes\win-x64\native\7z.sfx" />
     </ItemGroup>
     <ItemGroup>
         <None Include="..\..\icon\app_icon.png" Pack="true" PackagePath="images\Icon.png" />

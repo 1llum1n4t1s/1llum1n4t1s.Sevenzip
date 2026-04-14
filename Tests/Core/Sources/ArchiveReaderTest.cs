@@ -22,6 +22,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 namespace Cube.FileSystem.SevenZip.Tests;
 
@@ -59,7 +60,7 @@ internal class ArchiveReaderTest : FileFixture
 
         foreach (var cmp in GetAnswer(filename))
         {
-            var fi = new Entity(Io.Combine(dest, cmp.Key));
+            var fi = FindEntity(dest, cmp.Key);
 
             Assert.That(fi.Exists,         Is.True, cmp.Key);
             Assert.That(fi.Length,         Is.EqualTo(cmp.Value.Length), cmp.Key);
@@ -122,14 +123,76 @@ internal class ArchiveReaderTest : FileFixture
 
     /* --------------------------------------------------------------------- */
     ///
-    /// Extract_WithCodePage
+    /// Extract_ZipSlipWin
     ///
     /// <summary>
-    /// CodePage を指定して ZIP アーカイブを開き、CJK ファイル名が
-    /// 正しくデコードされることを確認する。
+    /// バックスラッシュを含む zip-slip エントリ名が destDir 外に漏洩しないこと
+    /// を検証する。25.01 時代はエントリ名が "Temp\evil.txt" として保存されたが、
+    /// 26.00 は Windows 禁止文字を Private Use Area にエスケープする。本テストは
+    /// ファイル名のフォーマットに依存せず、次の 2 点だけを検証する：
+    ///   1. 抽出操作が例外なく完了すること。
+    ///   2. destDir の外に副作用（エスケープされたファイル）が作られないこと。
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
+    [TestCase("ZipSlipWin.zip")]
+    [TestCase("ZipSlipWin.tar")]
+    public void Extract_ZipSlipWin(string filename)
+    {
+        var src  = GetSource(filename);
+        var dest = Get(nameof(Extract_ZipSlipWin), filename);
+
+        using var archive = new ArchiveReader(src, "");
+        archive.Save(dest);
+
+        // 全てのエントリが destDir 配下に収まっていること (zip-slip 防止の本質的検証)
+        var destFull = Path.GetFullPath(dest);
+        var files    = Io.GetFiles(dest, "*", SearchOption.AllDirectories).ToList();
+        Assert.That(files, Is.Not.Empty, $"No files extracted for {filename}");
+        foreach (var entry in files)
+        {
+            Assert.That(Path.GetFullPath(entry), Does.StartWith(destFull),
+                $"Entry escaped destDir: {entry}");
+        }
+
+        // 既知の良性ファイル good.txt は名前変更なく残っているはず
+        Assert.That(new Entity(Io.Combine(dest, "good.txt")).Exists, Is.True,
+            "good.txt should be preserved");
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// Extract_SampleUnixSjis
+    ///
+    /// <summary>
+    /// Unix 系ツールで作成された SJIS エンコードのファイル名を含む ZIP を
+    /// CodePage.Japanese 指定で開き、日本語ファイル名が復元されることを確認する。
+    /// </summary>
+    ///
+    /// <remarks>
+    /// 7-Zip 本家 26.00 は bit11 (EFS) が立っていない ZIP について、システム
+    /// ロケールに応じた自動デコードを行わない。Cube フォーク版 (Babel) では
+    /// 自動検出されていたが、本家切り替えに伴い明示的な指定が必須となった。
+    /// </remarks>
+    ///
+    /* --------------------------------------------------------------------- */
+    [Test]
+    public void Extract_SampleUnixSjis()
+    {
+        var src  = GetSource("SampleUnixSjis.zip");
+        var dest = Get(nameof(Extract_SampleUnixSjis));
+
+        using var archive = new ArchiveReader(src, "", new() { CodePage = CodePage.Japanese });
+        archive.Save(dest);
+
+        foreach (var cmp in GetAnswer("SampleUnixSjis.zip"))
+        {
+            var fi = FindEntity(dest, cmp.Key);
+            Assert.That(fi.Exists, Is.True, cmp.Key);
+            Assert.That(fi.Length, Is.EqualTo(cmp.Value.Length), cmp.Key);
+        }
+    }
+
     [TestCase(CodePage.Utf8)]
     [TestCase(CodePage.Japanese)]
     public void Extract_WithCodePage(CodePage cp)
@@ -181,7 +244,7 @@ internal class ArchiveReaderTest : FileFixture
             yield return new TestCaseData("SampleMac.zip", "");
             yield return new TestCaseData("SampleUtf8.zip", "");
             yield return new TestCaseData("SampleKanji.zip", "");
-            yield return new TestCaseData("SampleUnixSjis.zip", "");
+            // SampleUnixSjis.zip は CodePage 指定が必須のため Extract_SampleUnixSjis で個別に扱う。
             yield return new TestCaseData("Sample 2018.02.13.zip", "");
             yield return new TestCaseData("Sample..DoubleDot.zip", "");
             yield return new TestCaseData("Sample.tar", "");
@@ -218,8 +281,9 @@ internal class ArchiveReaderTest : FileFixture
             yield return new TestCaseData("InvalidReserved.zip", "");
             yield return new TestCaseData("ZipSlip.zip", "");
             yield return new TestCaseData("ZipSlip.tar", "");
-            yield return new TestCaseData("ZipSlipWin.zip", "");
-            yield return new TestCaseData("ZipSlipWin.tar", "");
+            // ZipSlipWin.{zip,tar} は 26.00 がサニタイズ後のファイル名を
+            // Private Use Area (U+F02F/U+F05C) にエスケープするため期待値と一致しない。
+            // destDir 外への漏洩防止のみを Extract_ZipSlipWin で検証する。
         }
     }
 
@@ -266,6 +330,34 @@ internal class ArchiveReaderTest : FileFixture
             });
         }
         return dest;
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// FindEntity
+    ///
+    /// <summary>
+    /// Mac 製 ZIP (SampleMac.zip) は Unicode NFD でファイル名を格納し、
+    /// NTFS はその形式をそのまま保存する。期待値が NFC の場合、単純な
+    /// <see cref="Entity.Exists"/> チェックは失敗するため、NFD 形式で
+    /// フォールバック検索する。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    private static Entity FindEntity(string dest, string key)
+    {
+        var fi = new Entity(Io.Combine(dest, key));
+        if (fi.Exists) return fi;
+
+        var nfd = key.Normalize(NormalizationForm.FormD);
+        if (nfd != key)
+        {
+            var alt = new Entity(Io.Combine(dest, nfd));
+            if (alt.Exists) return alt;
+        }
+
+        // どの形式でも見つからなかった場合はオリジナルのキーで返し、呼び出し側で Assert を失敗させる。
+        return fi;
     }
 
     /// <summary>
