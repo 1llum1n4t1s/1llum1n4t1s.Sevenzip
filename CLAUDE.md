@@ -49,16 +49,11 @@ rtk dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Pla
 
 `7z.dll` は `SevenZipLibrary` (Libraries/Core/Sources/Internal/SevenZipLibrary.cs) がアセンブリ隣から `LoadLibrary` で読み込む。.NET SDK の runtime asset 規約により、実行時の RID に応じて `runtimes/win-{rid}/native/7z.dll` が自動的にアセンブリ隣に配置される。x64 / arm64 以外のプロセスでは構築時に `PlatformNotSupportedException` を投げる（ランタイムガード）。
 
-### ビルド時 Auto-update 機構 (v1.0.58〜)
+### ネイティブバイナリの配置
 
-ソースは `buildTransitive/` に配置（`build/` にすると `.gitignore` の `[Bb]uild/` に引っかかるため）。NuGet パッケージの `buildTransitive/` に以下を同梱し、コンシューマープロジェクトのビルド時に最新の 7-Zip バイナリを自動取得する:
-- `1llum1n4t1s.Sevenzip.props` — デフォルトプロパティ (`SevenZipAutoUpdate=true`)
-- `1llum1n4t1s.Sevenzip.targets` — 2 段階ターゲット (`_SevenZipCopyEmbedded` → `_SevenZipAutoFetch`)
-- `Fetch-SevenZip.ps1` — GitHub API で最新リリース取得、Authenticode 検証、抽出、キャッシュ管理
+NuGet パッケージの `runtimes/win-{x64,arm64}/native/7z.dll` として配布。`RuntimeIdentifier` 指定ビルドや `dotnet publish` ではアセンブリ直下に自動配置される。RID なしの `dotnet build` では `runtimes/{rid}/native/` サブディレクトリに配置されるため、`SevenZipLibrary` がフォールバック探索で対応する。
 
-Step 1 で常に埋め込み 7z.dll を `$(OutputPath)` にコピーした後、Step 2 で最新版のフェッチを試行する設計。フェッチが失敗しても Step 1 で配置された埋め込み版が残るため、オフライン環境でも動作する。コンシューマーは `<SevenZipAutoUpdate>false</SevenZipAutoUpdate>` で無効化可能。
-
-セキュリティ: HTTPS + ドメイン固定 (`github.com`) + Authenticode 署名検証 (`Igor Pavlov` 名義) + キャッシュ再読み込み時の再検証。いずれかが失敗したら silent fallback。
+7-Zip 本体の追従は `.github/workflows/update-7zip.yml` の週次 PR bot がメンテナ向けに自動 PR を作成し、レビュー後にリリースする運用。コンシューマのビルド時にネットワークアクセスは一切発生しない（決定論的ビルド保証）。
 
 ### 7-Zip COM Interop 構造（Libraries/Core）
 

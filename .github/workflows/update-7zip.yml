@@ -1,0 +1,146 @@
+# 7-Zip ネイティブバイナリの自動追従 PR bot
+#
+# 毎週月曜 9:00 JST に ip7z/7zip の最新リリースをチェックし、
+# 新バージョンがあれば x64 / arm64 の 7z.dll を更新する PR を自動作成する。
+#
+# PR はメンテナが内容を確認し merge → /vava で NuGet 公開する運用。
+# コンシューマのビルド時にネットワークアクセスは一切発生しない（決定論的ビルド保証）。
+name: Update 7-Zip native binaries
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'  # 毎週月曜 00:00 UTC (= 09:00 JST)
+  workflow_dispatch:       # 手動実行も可能
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-and-update:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get current vendored version
+        id: current
+        shell: pwsh
+        run: |
+          # Native/x64/7z.dll の FileVersion から現在のベンダードバージョンを取得
+          $dll = 'Libraries/Core/Native/x64/7z.dll'
+          if (Test-Path $dll) {
+            $ver = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path $dll)).FileVersion
+            "version=$ver" >> $env:GITHUB_OUTPUT
+            Write-Host "Current vendored version: $ver"
+          } else {
+            "version=0.0.0.0" >> $env:GITHUB_OUTPUT
+            Write-Host "No vendored dll found"
+          }
+
+      - name: Check latest 7-Zip release
+        id: latest
+        shell: pwsh
+        run: |
+          $release = Invoke-RestMethod 'https://api.github.com/repos/ip7z/7zip/releases/latest' `
+            -Headers @{ 'User-Agent' = '1llum1n4t1s.Sevenzip-bot/1.0' }
+          $tag = $release.tag_name
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "release_url=$($release.html_url)" >> $env:GITHUB_OUTPUT
+
+          # x64 / arm64 の asset URL を取得
+          $x64 = $release.assets | Where-Object { $_.name -like '7z*-x64.exe' -and $_.name -notlike '*msi*' } | Select-Object -First 1
+          $arm64 = $release.assets | Where-Object { $_.name -like '7z*-arm64.exe' -and $_.name -notlike '*msi*' } | Select-Object -First 1
+
+          if (-not $x64 -or -not $arm64) {
+            Write-Host "::error::Could not find x64/arm64 assets in release $tag"
+            exit 1
+          }
+
+          "x64_url=$($x64.browser_download_url)" >> $env:GITHUB_OUTPUT
+          "x64_name=$($x64.name)" >> $env:GITHUB_OUTPUT
+          "arm64_url=$($arm64.browser_download_url)" >> $env:GITHUB_OUTPUT
+          "arm64_name=$($arm64.name)" >> $env:GITHUB_OUTPUT
+          Write-Host "Latest release: $tag (x64=$($x64.name), arm64=$($arm64.name))"
+
+      - name: Compare versions
+        id: compare
+        shell: pwsh
+        run: |
+          $current = '${{ steps.current.outputs.version }}'
+          $tag = '${{ steps.latest.outputs.tag }}'
+          # タグから数字部分を抽出 (例: "26.00" → "26.00")
+          $latestNum = $tag -replace '[^0-9.]', ''
+          $currentMajor = ($current -split '\.')[0]
+
+          $needsUpdate = $currentMajor -ne $latestNum.Split('.')[0]
+          if (-not $needsUpdate) {
+            $currentMinor = ($current -split '\.')[1]
+            $latestMinor = $latestNum.Split('.')[1]
+            $needsUpdate = [int]$latestMinor -gt [int]$currentMinor
+          }
+
+          "needs_update=$($needsUpdate.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          Write-Host "Current=$current, Latest=$latestNum, NeedsUpdate=$needsUpdate"
+
+      - name: Download and verify
+        if: steps.compare.outputs.needs_update == 'true'
+        shell: pwsh
+        run: |
+          function Test-7zSignature {
+            param([string]$Path)
+            $sig = Get-AuthenticodeSignature -FilePath $Path
+            return ($sig.Status -eq 'Valid' -and $sig.SignerCertificate.Subject -like '*Igor Pavlov*')
+          }
+
+          # ダウンロード + Authenticode 検証
+          foreach ($arch in @('x64', 'arm64')) {
+            $url = if ($arch -eq 'x64') { '${{ steps.latest.outputs.x64_url }}' } else { '${{ steps.latest.outputs.arm64_url }}' }
+            $exe = "$env:TEMP\7z-$arch.exe"
+            Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
+
+            if (-not (Test-7zSignature $exe)) {
+              Write-Host "::error::Authenticode verification failed for $arch installer"
+              exit 1
+            }
+            Write-Host "$arch installer: Authenticode OK"
+
+            # 7z SFX 内の 7z アーカイブを展開して 7z.dll を取得
+            $extractDir = "$env:TEMP\extract-$arch"
+            # 7z.exe を使って展開 (GitHub Actions runner には 7-Zip がプリインストール)
+            & 7z x $exe -o"$extractDir" -y | Out-Null
+
+            $dll = Get-ChildItem -Path $extractDir -Filter '7z.dll' -Recurse | Select-Object -First 1
+            if (-not $dll) {
+              Write-Host "::error::7z.dll not found in $arch installer"
+              exit 1
+            }
+
+            Copy-Item $dll.FullName "Libraries/Core/Native/$arch/7z.dll" -Force
+            $hash = (Get-FileHash "Libraries/Core/Native/$arch/7z.dll" -Algorithm SHA256).Hash
+            Write-Host "$arch 7z.dll updated (SHA256: $hash)"
+            "$($arch)_sha256=$hash" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Create Pull Request
+        if: steps.compare.outputs.needs_update == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: chore/bump-7zip-${{ steps.latest.outputs.tag }}
+          title: "chore: 7-Zip ネイティブバイナリを ${{ steps.latest.outputs.tag }} に更新"
+          body: |
+            ## 更新内容
+
+            7-Zip 本家のネイティブバイナリ (`7z.dll`) を最新版に更新します。
+
+            - **バージョン**: ${{ steps.current.outputs.version }} → ${{ steps.latest.outputs.tag }}
+            - **リリースノート**: ${{ steps.latest.outputs.release_url }}
+            - **x64 installer**: `${{ steps.latest.outputs.x64_name }}`
+            - **arm64 installer**: `${{ steps.latest.outputs.arm64_name }}`
+
+            Authenticode 署名検証 (Igor Pavlov 名義) 済み。
+
+            ---
+            このPRは `.github/workflows/update-7zip.yml` により自動作成されました。
+          labels: dependencies
+          commit-message: "chore: 7-Zip ネイティブバイナリを ${{ steps.latest.outputs.tag }} に更新"

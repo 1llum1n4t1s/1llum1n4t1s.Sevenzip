@@ -86,9 +86,18 @@ internal sealed class SevenZipLibrary : IDisposable
                 $"1llum1n4t1s.Sevenzip supports Windows x64 / arm64 only. Current process architecture: {arch}.");
         }
 
-        // アセンブリと同じディレクトリから 7z.dll を探す
-        var dll = Io.Combine(GetType().Assembly.GetDirectoryName(), "7z.dll");
-        _handle = NativeMethods.LoadLibrary(dll);
+        // アセンブリと同じディレクトリから 7z.dll を探す。
+        // publish 済みや RuntimeIdentifier 指定ビルドではアセンブリ直下に配置される。
+        var dir = GetType().Assembly.GetDirectoryName();
+        _handle = NativeMethods.LoadLibrary(Io.Combine(dir, "7z.dll"));
+
+        // RID なしの dotnet build では NuGet の runtime asset resolution により
+        // runtimes/{rid}/native/ サブディレクトリに配置される。フォールバックで探す。
+        if (_handle.IsInvalid)
+        {
+            var rid = arch == Architecture.Arm64 ? "win-arm64" : "win-x64";
+            _handle = NativeMethods.LoadLibrary(Io.Combine(dir, "runtimes", rid, "native", "7z.dll"));
+        }
         if (_handle.IsInvalid) throw new Win32Exception("LoadLibrary");
 
         // "CreateObject" エクスポート関数のアドレスを取得する
