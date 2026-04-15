@@ -2,25 +2,41 @@
     <PropertyGroup>
         <PackageId>1llum1n4t1s.Sevenzip</PackageId>
         <Company></Company>
-        <Description>7-Zip wrapper library for .NET. Windows x64 only (bundles 7-Zip 26.00 native binaries).</Description>
-        <PackageTags>Cube;7-Zip;7z;SevenZip;Zip;x64;win-x64</PackageTags>
+        <Description>7-Zip wrapper library for .NET. Windows x64 / arm64 (bundles 7-Zip 26.00 native binaries + build-time auto-updater for consumers).</Description>
+        <PackageTags>Cube;7-Zip;7z;SevenZip;Zip;x64;arm64;win-x64;win-arm64</PackageTags>
         <PackageLicenseExpression>LGPL-3.0-or-later</PackageLicenseExpression>
         <PackageIcon>images\Icon.png</PackageIcon>
         <PackageReadmeFile>README.md</PackageReadmeFile>
-        <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+        <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+        <!-- NU5110/NU5111: Fetch-SevenZip.ps1 は MSBuild の Exec から呼ぶビルドタイム
+             スクリプトで、NuGet の install/uninstall 時には実行されない。警告は false positive。 -->
+        <NoWarn>$(NoWarn);NU5110;NU5111</NoWarn>
     </PropertyGroup>
     <ItemGroup>
         <ProjectReference Include="..\Cube.Core\Cube.Core.csproj" PrivateAssets="all" />
     </ItemGroup>
     <ItemGroup>
-        <!-- 本家 7-Zip 26.00 のネイティブアセット (https://www.7-zip.org/) -->
-        <None Include="Native\x64\7z.dll" Link="7z.dll" CopyToOutputDirectory="PreserveNewest" Pack="true" PackagePath="runtimes\win-x64\native\7z.dll" />
-        <None Include="Native\x64\7z.sfx" Link="7z.sfx" CopyToOutputDirectory="PreserveNewest" Pack="true" PackagePath="runtimes\win-x64\native\7z.sfx" />
+        <!-- 本家 7-Zip 26.00 のネイティブアセット (https://www.7-zip.org/)
+             Pack と CopyToOutputDirectory の関心を分離する:
+               - Pack 系: 常に x64 / arm64 の両方をパッケージに同梱する (Platform 非依存)
+               - Copy 系: ライブラリ自身のビルド出力 (tests / dev run) には現在の Platform に合う
+                          方のみをコピーする。両方コピーすると Link="7z.dll" が衝突するため。 -->
+        <None Include="Native\x64\7z.dll"   Pack="true" PackagePath="runtimes\win-x64\native\7z.dll"   Visible="false" />
+        <None Include="Native\arm64\7z.dll" Pack="true" PackagePath="runtimes\win-arm64\native\7z.dll" Visible="false" />
+        <None Include="Native\x64\7z.dll"   Link="7z.dll" CopyToOutputDirectory="PreserveNewest" Visible="false"
+              Condition="'$(Platform)' != 'arm64'" />
+        <None Include="Native\arm64\7z.dll" Link="7z.dll" CopyToOutputDirectory="PreserveNewest" Visible="false"
+              Condition="'$(Platform)' == 'arm64'" />
     </ItemGroup>
     <ItemGroup>
         <None Include="..\..\icon\app_icon.png" Pack="true" PackagePath="images\Icon.png" />
         <None Include="..\..\Readme.md" Pack="true" PackagePath="README.md" />
-        <None Include="..\Cube.Core\bin\x64\$(Configuration)\$(TargetFramework)\Cube.Core.dll" Pack="true" PackagePath="lib\$(TargetFramework)\Cube.Core.dll" Visible="false" Link="Cube.Core.dll" />
-        <None Include="bin\x64\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml" Pack="true" PackagePath="lib\$(TargetFramework)\$(AssemblyName).xml" Visible="false" Condition="Exists('bin\x64\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml')" />
+        <None Include="..\Cube.Core\bin\$(Configuration)\$(TargetFramework)\Cube.Core.dll" Pack="true" PackagePath="lib\$(TargetFramework)\Cube.Core.dll" Visible="false" Link="Cube.Core.dll" />
+        <None Include="bin\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml" Pack="true" PackagePath="lib\$(TargetFramework)\$(AssemblyName).xml" Visible="false" Condition="Exists('bin\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml')" />
+        <!-- Auto-fetch 機構: コンシューマーのビルド時に buildTransitive/ からインポートされる
+             (ソースディレクトリ名が `build/` だと `.gitignore` の `[Bb]uild/` に引っかかるため `buildTransitive/` に配置) -->
+        <None Include="..\..\buildTransitive\1llum1n4t1s.Sevenzip.props"    Pack="true" PackagePath="buildTransitive\1llum1n4t1s.Sevenzip.props" />
+        <None Include="..\..\buildTransitive\1llum1n4t1s.Sevenzip.targets"  Pack="true" PackagePath="buildTransitive\1llum1n4t1s.Sevenzip.targets" />
+        <None Include="..\..\buildTransitive\Fetch-SevenZip.ps1"            Pack="true" PackagePath="buildTransitive\Fetch-SevenZip.ps1" />
     </ItemGroup>
 </Project>

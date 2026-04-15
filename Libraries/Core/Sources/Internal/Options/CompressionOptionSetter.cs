@@ -89,7 +89,6 @@ internal class CompressionOptionSetter
     {
         Format.Zip      => new ZipOptionSetter(options),
         Format.SevenZip => new SevenZipOptionSetter(options),
-        Format.Sfx      => new SevenZipOptionSetter(options),
         Format.Tar      => null,
         _               => new CompressionOptionSetter(options),
     };

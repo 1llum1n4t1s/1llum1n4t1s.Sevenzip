@@ -65,7 +65,6 @@ internal class FormatTest : FileFixture
     [TestCase("Sample.txz",      ExpectedResult = Format.XZ)]
     [TestCase("Sample.xlsx",     ExpectedResult = Format.Zip)]
     [TestCase("Sample.zip",      ExpectedResult = Format.Zip)]
-    [TestCase("SampleSfx.exe",   ExpectedResult = Format.Sfx)]
     public Format Detect(string filename)
     {
         var dest = Get(Guid.NewGuid().ToString("N"));
@@ -84,7 +83,6 @@ internal class FormatTest : FileFixture
     /* --------------------------------------------------------------------- */
     [TestCase(Format.Zip,      ExpectedResult = true)]
     [TestCase(Format.SevenZip, ExpectedResult = true)]
-    [TestCase(Format.Sfx,      ExpectedResult = true)]
     [TestCase(Format.Tar,      ExpectedResult = false)]
     public bool IsEncryptionSupported(Format src) => src.IsEncryptionSupported();
 
@@ -119,7 +117,6 @@ internal class FormatTest : FileFixture
     [TestCase(Format.BZip2,    ExpectedResult = ".bz2")]
     [TestCase(Format.GZip,     ExpectedResult = ".gz")]
     [TestCase(Format.Lzw,      ExpectedResult = ".z")]
-    [TestCase(Format.Sfx,      ExpectedResult = ".exe")]
     [TestCase(Format.Unknown,  ExpectedResult = "")]
     public string ToExtension(Format format) => format.ToExtension();
 

@@ -115,8 +115,7 @@ public sealed class ArchiveWriter : DisposableBase
     public void Save(string dest, IProgress<Report> progress)
     {
         // フォーマットに応じた保存処理に振り分ける
-        if (Format == Format.Sfx) SaveAsSfx(dest, _items, progress);
-        else if (Format == Format.Tar) SaveAsTar(dest, _items, progress);
+        if (Format == Format.Tar) SaveAsTar(dest, _items, progress);
         else SaveAs(dest, _items, Format, progress);
     }
 
@@ -166,7 +165,7 @@ public sealed class ArchiveWriter : DisposableBase
     /// </param>
     /// <param name="progress">進捗を報告するオブジェクト。</param>
     /// <remarks>
-    /// TAR および SFX フォーマットはインプレース更新をサポートしないため例外をスローする。
+    /// TAR フォーマットはインプレース更新をサポートしないため例外をスローする。
     /// source と dest が同じパスを指す場合は一時ファイルを経由して安全に更新する。
     /// </remarks>
     public void Update(string source, string dest, string sourcePassword, IProgress<Report> progress)
@@ -174,8 +173,6 @@ public sealed class ArchiveWriter : DisposableBase
         // 更新非対応フォーマットは早期に例外をスローする
         if (Format == Format.Tar)
             throw new NotSupportedException("Update is not supported for TAR format.");
-        if (Format == Format.Sfx)
-            throw new NotSupportedException("Update is not supported for SFX format.");
 
         // 絶対パスに正規化してから同一ファイルかどうかを判定する
         var srcFull  = Path.GetFullPath(source);
@@ -427,34 +424,6 @@ public sealed class ArchiveWriter : DisposableBase
         {
             // 一時ディレクトリを削除する（失敗しても無視する）
             Logger.Try(() => Io.Delete(dir));
-        }
-    }
-
-    /// <summary>
-    /// 自己展開型アーカイブを作成して指定したパスに保存する。
-    /// </summary>
-    private void SaveAsSfx(string dest, IList<RawEntity> src, IProgress<Report> progress)
-    {
-        // SFX モジュールの存在を確認する
-        var sfx = (Options as SfxOption)?.Module;
-        if (!Io.Exists(sfx)) throw new FileNotFoundException("SFX");
-
-        var tmp = Io.Combine(Io.GetDirectoryName(dest), Guid.NewGuid().ToString("N"));
-
-        try
-        {
-            // 7-zip 形式で圧縮データを一時ファイルに書き出す
-            SaveAs(tmp, src, Format.SevenZip, progress);
-
-            // SFX モジュール + 圧縮データを結合して最終ファイルを生成する
-            using var ds = Io.Create(dest);
-            using (var ss = Io.Open(sfx)) ss.CopyTo(ds); // SFX スタブを先頭に書き込む
-            using (var ss = Io.Open(tmp)) ss.CopyTo(ds); // 圧縮データを末尾に追記する
-        }
-        finally
-        {
-            // 一時ファイルを削除する（失敗しても無視する）
-            Logger.Try(() => Io.Delete(tmp));
         }
     }
 

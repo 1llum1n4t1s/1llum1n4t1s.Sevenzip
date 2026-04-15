@@ -10,7 +10,9 @@
 > - **NativeAOT 対応**（COM Interop を `[GeneratedComInterface]` に、P/Invoke を `[LibraryImport]` に全面移行）
 > - [Cube.Core](https://github.com/cube-soft/cube.core) をソリューション内のプロジェクトとして直接組み込み（NuGet 参照ではなく NuGet パッケージに DLL を同梱）
 > - **7-Zip 本家 26.00** のネイティブバイナリを直接 vendor（`Cube.Native.SevenZip` 依存を除去）
-> - **Windows x64 限定** — `<RuntimeIdentifiers>win-x64</RuntimeIdentifiers>` を NuGet メタデータで宣言し、ランタイムでも `PlatformNotSupportedException` でガード
+> - **Windows x64 / arm64 対応** — `<RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>` を宣言。Managed アセンブリは AnyCPU で単一、ネイティブ 7z.dll のみ RID で分岐
+> - **ビルド時 Auto-update 機構** — コンシューマープロジェクトのビルド時に GitHub Releases (ip7z/7zip) から最新 7-Zip バイナリを自動取得する仕組み（Authenticode 署名検証付き、24h キャッシュ、opt-out 可）
+> - **SFX (自己展開書庫) 機能の削除** — `SfxOption` / `Format.Sfx` / `7z.sfx` 同梱を廃止。自己展開書庫が必要な場合は別途 SFX モジュールを用意する必要あり（**breaking change**, v1.0.58）
 > - **NLog から SuperLightLogger への移行**（テストハーネス用）
 > - **アーカイブ更新機能** — `ArchiveWriter.Update()` / `Remove()` で既存アーカイブのファイル追加・置換・削除が可能
 > - **ロック中ファイル自動コピー** — 他プロセスがロック中のファイルを一時コピーして圧縮に含める
@@ -20,7 +22,7 @@
 
 ---
 
-[1llum1n4t1s.Sevenzip](https://github.com/1llum1n4t1s/1llum1n4t1s.Sevenzip) は [7-Zip](http://www.7-zip.org/) の COM インターフェースを利用した .NET 10 向けラッパーライブラリです。Windows x64 のみをサポートします。ライセンスはプロジェクトにより GNU LGPLv3 または Apache 2.0 です。詳細は [License.md](https://github.com/1llum1n4t1s/1llum1n4t1s.Sevenzip/blob/main/License.md) を参照してください。
+[1llum1n4t1s.Sevenzip](https://github.com/1llum1n4t1s/1llum1n4t1s.Sevenzip) は [7-Zip](http://www.7-zip.org/) の COM インターフェースを利用した .NET 10 向けラッパーライブラリです。**Windows x64 / arm64** をサポートします。ライセンスはプロジェクトにより GNU LGPLv3 または Apache 2.0 です。詳細は [License.md](https://github.com/1llum1n4t1s/1llum1n4t1s.Sevenzip/blob/main/License.md) を参照してください。
 
 ## Usage
 
@@ -157,6 +159,80 @@ var options = new CompressionOption
 };
 ```
 
+#### ビルド時 Auto-update 機構 (v1.0.58〜)
+
+コンシューマープロジェクトがビルドされるたびに、GitHub Releases ([ip7z/7zip](https://github.com/ip7z/7zip/releases/latest)) から最新の 7-Zip ネイティブバイナリを自動取得する仕組みを NuGet パッケージに同梱しています。この仕組みにより、`1llum1n4t1s.Sevenzip` ライブラリ自体の更新が止まっていても、7-Zip のセキュリティ修正・機能追加には追従できます。
+
+##### 動作フロー
+
+```
+[コンシューマー dotnet build]
+       ↓
+[Step 1: _SevenZipCopyEmbedded]  (常時実行、ネット非依存)
+  NuGet 同梱の 7z.dll を $(OutputPath) にコピー (SkipUnchangedFiles)
+  → フォールバック基盤を確保
+       ↓
+[Step 2: _SevenZipAutoFetch]     (opt-out 可、Windows 限定)
+  ┌─ キャッシュ Hot (24h 以内) ─────────────────────┐
+  │ %LOCALAPPDATA%\1llum1n4t1s.Sevenzip\{rid}\ の │
+  │ installer.exe を再 Authenticode 検証           │
+  │   ↓                                            │
+  │ キャッシュ 7z.dll を $(OutputPath) に配置      │
+  │ (Length + LastWriteTime 一致なら no-op skip    │
+  │  → 下流の incremental build を無効化しない)   │
+  └────────────────────────────────────────────────┘
+  ┌─ キャッシュ Miss / 期限切れ ─────────────────────┐
+  │ GitHub API で最新 release 取得                  │
+  │   ↓                                            │
+  │ 7z{ver}-{rid}.exe を HTTPS 経由で DL           │
+  │   ↓                                            │
+  │ Authenticode 署名検証 (Igor Pavlov + Valid)    │
+  │   ↓                                            │
+  │ Cube.FileSystem.SevenZip の ArchiveReader で抽出 │
+  │   ↓                                            │
+  │ %LOCALAPPDATA%\1llum1n4t1s.Sevenzip\{rid}\ に  │
+  │ 7z.dll + installer.exe + lastcheck.txt を保存  │
+  │   ↓                                            │
+  │ $(OutputPath)\7z.dll を最新版で上書き          │
+  └────────────────────────────────────────────────┘
+```
+
+##### セキュリティ制御
+
+- **HTTPS 固定** — ダウンロード元を `github.com` / `objects.githubusercontent.com` に固定
+- **Authenticode 署名検証 ×2** — ダウンロード直後とキャッシュ再読み出し時の両方で `Get-AuthenticodeSignature` により検証。Subject に `"Igor Pavlov"` を含むことを必須とする
+- **検証失敗時は silent fallback** — キャッシュ汚染を避け、$(OutputPath) には Step 1 で配置した埋め込み版 7z.dll が残る
+- **ビルド失敗にしない** — ネット不可・検証失敗・展開失敗のいずれも `IgnoreExitCode` + `ContinueOnError` によりビルドを継続
+- **パッケージ不整合時の早期スキップ** — 埋め込み 7z.dll が存在しない場合（`Exists('$(_SevenZipEmbeddedDll)')` が false）は Step 2 自体を skip して `pwsh.exe` の起動コスト自体を省く
+
+##### インクリメンタルビルドとの相性
+
+キャッシュ Hot 経路では、既に配置済みの `7z.dll` が最新版キャッシュと Length + LastWriteTime 一致すれば **書き込みを行いません**。これにより `Copy-Item` によるタイムスタンプ更新がトリガーとなって下流の incremental build（ビルドアセット埋め込みパッケージャ等）を毎回 dirty 化する事故を防ぎます。
+
+##### 無効化 (opt-out)
+
+コンシューマー側でネットワーク接続を避けたい場合（オフラインビルド、エアギャップ環境、CI のサンドボックス等）は、以下のプロパティで無効化できます：
+
+```xml
+<PropertyGroup>
+  <SevenZipAutoUpdate>false</SevenZipAutoUpdate>
+</PropertyGroup>
+```
+
+無効化すると Step 2 がスキップされ、Step 1 でコピーされた NuGet 同梱版の 7z.dll がそのまま使われます。
+
+### SFX 機能の削除 (breaking change, v1.0.58)
+
+v1.0.58 で **自己展開書庫 (SFX) 関連の API をすべて削除**しました。Windows 11 以降は標準で ZIP 形式をサポートしており、SFX 形式の必要性が低下したことが理由です。
+
+削除された API:
+- `SfxOption` クラス
+- `Format.Sfx` 列挙値
+- `ArchiveWriter.SaveAsSfx()` （内部メソッド）
+- `7z.sfx` の NuGet パッケージ同梱
+
+v1.0.56 以前で `SfxOption` / `Format.Sfx` を使用していたコードはコンパイルエラーになります。自己展開書庫の生成が必要な場合は、7-Zip 公式配布の `7z.sfx` / `7zCon.sfx` を別途取得し、`ArchiveWriter` で作成した `.7z` アーカイブと連結してください。
+
 ### COM 例外の HRESULT 変更
 
 `[ComImport]` の CLR CCW は、マネージド例外をすべて `E_FAIL`（0x80004005）として返していました。`[GeneratedComInterface]` では例外ごとに固有の HRESULT が返されます（例: `KeyNotFoundException` → 0x80131577）。
@@ -175,7 +251,7 @@ COM オブジェクトの生成・解放を `StrategyBasedComWrappers` + `Create
 
 ## Dependencies
 
-* [7-Zip](https://www.7-zip.org/) … 本家 26.00 の `7z.dll` / `7z.sfx` を `Libraries/Core/Native/x64/` に vendor して NuGet パッケージに同梱しています (x64 限定)。
+* [7-Zip](https://www.7-zip.org/) … 本家 26.00 の `7z.dll` を `Libraries/Core/Native/x64/` および `Libraries/Core/Native/arm64/` に vendor して NuGet パッケージに同梱しています (Windows x64 / arm64 対応)。`runtimes/win-x64/native/` および `runtimes/win-arm64/native/` に配置されるため、.NET SDK のランタイム RID 解決により実行時に自動的に正しいバイナリが選択されます。コンシューマーのビルド時に GitHub Releases から最新版を自動取得する機構も同梱しています（`<SevenZipAutoUpdate>` プロパティで制御）。
 
 ## License
 

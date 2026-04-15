@@ -232,18 +232,6 @@ internal class ArchiveWriterTest : FileFixture
                     CompressionLevel  = CompressionLevel.Ultra,
                 }
             ).Returns(Format.XZ);
-
-            yield return new TestCaseData(
-                $"{n++:000}-Sfx.exe",
-                Format.Sfx,
-                new[] { "Sample.txt", "Sample 00..01" },
-                new SfxOption
-                {
-                    CompressionMethod = CompressionMethod.Lzma,
-                    CompressionLevel  = CompressionLevel.Ultra,
-                    Module = Io.Combine(typeof(ArchiveWriterTest).Assembly.GetDirectoryName(), "7z.sfx"),
-                }
-            ).Returns(Format.PE);
         }
     }
 

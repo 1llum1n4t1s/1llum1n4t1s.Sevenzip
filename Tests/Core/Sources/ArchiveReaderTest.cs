@@ -92,7 +92,6 @@ internal class ArchiveReaderTest : FileFixture
     [TestCase("Sample.nupkg",   ExpectedResult =  5)]
     [TestCase("Sample.pptx",    ExpectedResult = 40)]
     [TestCase("Sample.xlsx",    ExpectedResult = 14)]
-    [TestCase("SampleSfx.exe",  ExpectedResult =  4)]
     public int Extract_Lite(string filename)
     {
         var src  = GetSource(filename);

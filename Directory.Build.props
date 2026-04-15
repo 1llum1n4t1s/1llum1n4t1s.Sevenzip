@@ -1,8 +1,9 @@
 <Project>
     <PropertyGroup>
-        <Platform Condition="'$(Platform)' == ''">x64</Platform>
-        <Platforms>x64</Platforms>
-        <Version>1.0.56</Version>
+        <!-- Managed .NET アセンブリ自体はアーキ非依存。x64 / arm64 の差は同梱ネイティブ 7z.dll のみ。 -->
+        <Platform Condition="'$(Platform)' == ''">AnyCPU</Platform>
+        <Platforms>AnyCPU;x64;arm64</Platforms>
+        <Version>1.0.60</Version>
         <Authors>clown,cube-soft,ゆろち</Authors>
         <Copyright>Copyright © 2010 CubeSoft, Inc., 2026 ゆろち</Copyright>
         <TargetFramework>net10.0-windows8</TargetFramework>
@@ -19,8 +20,16 @@
         <RepositoryUrl>https://github.com/1llum1n4t1s/1llum1n4t1s.Sevenzip</RepositoryUrl>
         <PackageProjectUrl>https://github.com/1llum1n4t1s/1llum1n4t1s.Sevenzip</PackageProjectUrl>
     </PropertyGroup>
+    <PropertyGroup Condition=" '$(Platform)' == 'AnyCPU' ">
+        <OutputPath>bin\$(Configuration)\</OutputPath>
+        <DocumentationFile>bin\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml</DocumentationFile>
+    </PropertyGroup>
     <PropertyGroup Condition=" '$(Platform)' == 'x64' ">
         <OutputPath>bin\x64\$(Configuration)\</OutputPath>
         <DocumentationFile>bin\x64\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml</DocumentationFile>
+    </PropertyGroup>
+    <PropertyGroup Condition=" '$(Platform)' == 'arm64' ">
+        <OutputPath>bin\arm64\$(Configuration)\</OutputPath>
+        <DocumentationFile>bin\arm64\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml</DocumentationFile>
     </PropertyGroup>
 </Project>

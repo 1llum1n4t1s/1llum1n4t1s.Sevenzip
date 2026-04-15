@@ -74,7 +74,6 @@ public static class FormatExtension
         Format.GZip     => ".gz",
         Format.Lzw      => ".z",
         Format.Zstd     => ".zst",
-        Format.Sfx      => ".exe",
         Format.Unknown  => string.Empty,
         _               => $".{src.ToString().ToLowerInvariant()}",
     };
@@ -99,8 +98,7 @@ public static class FormatExtension
     internal static Guid ToClassId(this Format src)
     {
         if (src == Format.Unknown) return Guid.Empty;
-        var cvt = (src == Format.Sfx) ? Format.SevenZip : src;
-        return new($"23170f69-40c1-278a-1000-000110{(int)cvt:x2}0000");
+        return new($"23170f69-40c1-278a-1000-000110{(int)src:x2}0000");
     }
 
     /* --------------------------------------------------------------------- */
@@ -119,8 +117,7 @@ public static class FormatExtension
     /* --------------------------------------------------------------------- */
     public static bool IsEncryptionSupported(this Format src) =>
         src == Format.Zip ||
-        src == Format.SevenZip ||
-        src == Format.Sfx;
+        src == Format.SevenZip;
 
     #endregion
 }

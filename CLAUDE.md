@@ -4,30 +4,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## プロジェクト概要
 
-7-Zip COM インターフェースを利用した .NET 10 向け圧縮・解凍ラッパーライブラリ。[Cube.FileSystem.SevenZip](https://github.com/cube-soft/cube.filesystem.sevenzip) のフォークで、.NET 10 / NativeAOT 対応 + 本家 7-Zip 26.00 バイナリの vendoring が主な変更点。NuGet パッケージ ID は `1llum1n4t1s.Sevenzip`。**Windows x64 専用**。
+7-Zip COM インターフェースを利用した .NET 10 向け圧縮・解凍ラッパーライブラリ。[Cube.FileSystem.SevenZip](https://github.com/cube-soft/cube.filesystem.sevenzip) のフォークで、.NET 10 / NativeAOT 対応 + 本家 7-Zip 26.00 バイナリの vendoring が主な変更点。NuGet パッケージ ID は `1llum1n4t1s.Sevenzip`。**Windows x64 / arm64 専用**。v1.0.58 で AnyCPU 移行 + ARM64 対応 + ビルド時 auto-update 機構を追加、SFX 関連 API を削除した (breaking change)。
 
 ## ビルド・テストコマンド
 
 ```bash
-# ソリューション全体のビルド（Platform=x64 は必須）
-rtk dotnet build Cube.FileSystem.SevenZip.slnx -c Debug -p:Platform=x64
+# ソリューション全体のビルド（Managed DLL は AnyCPU、ネイティブ 7z.dll のみ RID で分岐）
+rtk dotnet build Cube.FileSystem.SevenZip.slnx -c Debug -p:Platform=AnyCPU
 
 # Release ビルド
-rtk dotnet build Cube.FileSystem.SevenZip.slnx -c Release -p:Platform=x64
+rtk dotnet build Cube.FileSystem.SevenZip.slnx -c Release -p:Platform=AnyCPU
 
 # テスト全実行（--no-build を付けるとビルドをスキップ）
-rtk dotnet test Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj -c Debug -p:Platform=x64 --no-build
+rtk dotnet test Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj -c Debug -p:Platform=AnyCPU --no-build
 
 # 単一テスト実行（FullyQualifiedName で絞り込み）
-rtk dotnet test Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj -c Debug -p:Platform=x64 --no-build --filter "FullyQualifiedName~TestMethodName"
+rtk dotnet test Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj -c Debug -p:Platform=AnyCPU --no-build --filter "FullyQualifiedName~TestMethodName"
 
 # NuGet パック（NoDefaultExcludes=true がないとネイティブアセットが packing されない）
-rtk dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Platform=x64 -o Libraries/Core/bin -p:NoDefaultExcludes=true
+rtk dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Platform=AnyCPU -o Libraries/Core/bin -p:NoDefaultExcludes=true
 ```
 
 **重要**:
-- Platform は常に `x64` を指定（`Directory.Build.props` で `<Platforms>x64</Platforms>` 縛り）。出力先は `bin\x64\$(Configuration)\`。
-- テスト実行時は Tests/Core が `RuntimeIdentifier=win-x64` を設定しているため、出力は `bin\x64\Debug\net10.0-windows8\win-x64\` に配置される。
+- Platform のデフォルトは `AnyCPU`（`Directory.Build.props` で `<Platforms>AnyCPU;x64;arm64</Platforms>`）。出力先は `bin\$(Configuration)\`。x64 / arm64 明示時は `bin\x64\...` / `bin\arm64\...` に分岐。
+- テスト実行時は Tests/Core が `RuntimeIdentifier=win-x64` を設定しているため、出力は `bin\Debug\net10.0-windows8\win-x64\` に配置される。
 
 ## バージョン管理
 
@@ -45,9 +45,20 @@ rtk dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Pla
 
 ### ベンダードネイティブバイナリ
 
-`Libraries/Core/Native/x64/7z.dll` (7-Zip 26.00) および `7z.sfx` を直接 vendor し、NuGet パッケージの `runtimes/win-x64/native/` に同梱する。これらは **`.gitignore` の `*.dll` / `*.sfx` ルール** に引っかかるため、`.gitignore` の末尾で例外ルール `!Libraries/Core/Native/**/*.dll` / `!Libraries/Core/Native/**/*.sfx` により明示的に追跡している。
+`Libraries/Core/Native/x64/7z.dll` および `Libraries/Core/Native/arm64/7z.dll` (7-Zip 26.00) を直接 vendor し、NuGet パッケージの `runtimes/win-x64/native/` と `runtimes/win-arm64/native/` に同梱する。これらは **`.gitignore` の `*.dll` ルール** に引っかかるため、末尾の例外ルール `!Libraries/Core/Native/**/*.dll` により明示的に追跡している。
 
-`7z.dll` は `SevenZipLibrary` (Libraries/Core/Sources/Internal/SevenZipLibrary.cs) がアセンブリ隣から `LoadLibrary` で読み込む。x64 以外のプロセスでは構築時に `PlatformNotSupportedException` を投げる（ランタイムガード）。
+`7z.dll` は `SevenZipLibrary` (Libraries/Core/Sources/Internal/SevenZipLibrary.cs) がアセンブリ隣から `LoadLibrary` で読み込む。.NET SDK の runtime asset 規約により、実行時の RID に応じて `runtimes/win-{rid}/native/7z.dll` が自動的にアセンブリ隣に配置される。x64 / arm64 以外のプロセスでは構築時に `PlatformNotSupportedException` を投げる（ランタイムガード）。
+
+### ビルド時 Auto-update 機構 (v1.0.58〜)
+
+ソースは `buildTransitive/` に配置（`build/` にすると `.gitignore` の `[Bb]uild/` に引っかかるため）。NuGet パッケージの `buildTransitive/` に以下を同梱し、コンシューマープロジェクトのビルド時に最新の 7-Zip バイナリを自動取得する:
+- `1llum1n4t1s.Sevenzip.props` — デフォルトプロパティ (`SevenZipAutoUpdate=true`)
+- `1llum1n4t1s.Sevenzip.targets` — 2 段階ターゲット (`_SevenZipCopyEmbedded` → `_SevenZipAutoFetch`)
+- `Fetch-SevenZip.ps1` — GitHub API で最新リリース取得、Authenticode 検証、抽出、キャッシュ管理
+
+Step 1 で常に埋め込み 7z.dll を `$(OutputPath)` にコピーした後、Step 2 で最新版のフェッチを試行する設計。フェッチが失敗しても Step 1 で配置された埋め込み版が残るため、オフライン環境でも動作する。コンシューマーは `<SevenZipAutoUpdate>false</SevenZipAutoUpdate>` で無効化可能。
+
+セキュリティ: HTTPS + ドメイン固定 (`github.com`) + Authenticode 署名検証 (`Igor Pavlov` 名義) + キャッシュ再読み込み時の再検証。いずれかが失敗したら silent fallback。
 
 ### 7-Zip COM Interop 構造（Libraries/Core）
 
@@ -57,7 +68,7 @@ Sources/
 ├── Format.cs                            # Zip/7z/Tar/Rar/Iso/Udf 等の列挙
 ├── ArchiveOption.cs                     # CodePage / Filter / ThreadCount など共通オプション
 ├── CompressionOption.cs                 # Writer 用: 圧縮レベル / メソッド / パスワード / EncryptionMethod
-├── Options/                             # SfxOption, TarOption 等
+├── Options/                             # TarOption 等 (v1.0.58 で SfxOption 削除)
 └── Internal/
     ├── Interfaces/   # COM インターフェース定義 ([GeneratedComInterface])
     ├── Callbacks/    # COM コールバック実装 ([GeneratedComClass])

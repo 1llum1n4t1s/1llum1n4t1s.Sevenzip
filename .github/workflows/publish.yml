@@ -22,10 +22,10 @@ jobs:
         run: dotnet restore Cube.FileSystem.SevenZip.slnx
       
       - name: Build Release
-        run: dotnet build Cube.FileSystem.SevenZip.slnx -c Release -p:Platform=x64 --no-restore
-      
+        run: dotnet build Cube.FileSystem.SevenZip.slnx -c Release -p:Platform=AnyCPU --no-restore
+
       - name: Pack
-        run: dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Platform=x64 --no-build -o Libraries/Core/bin -p:NoDefaultExcludes=true
+        run: dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Platform=AnyCPU --no-build -o Libraries/Core/bin -p:NoDefaultExcludes=true
       
       - name: Publish to NuGet
         run: |

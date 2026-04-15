@@ -152,27 +152,5 @@ internal class ArchiveWriterExTest : FileFixture
         obj.Add(GetSource("NotFound.txt"));
     }, Throws.TypeOf<FileNotFoundException>());
 
-    /* --------------------------------------------------------------------- */
-    ///
-    /// Save_SfxNotFound
-    ///
-    /// <summary>
-    /// Tests the Save method with an inexistent SFX file.
-    /// </summary>
-    ///
-    /* --------------------------------------------------------------------- */
-    [Test]
-    public void Save_SfxNotFound()
-    {
-        var dest = Get("SfxNotFound.exe");
-        var opts = new SfxOption { Module = "dummy.sfx" };
-
-        Assert.That(() => {
-            using var obj = new ArchiveWriter(Format.Sfx, opts);
-            obj.Add(GetSource("Sample.txt"));
-            obj.Save(dest);
-        }, Throws.TypeOf<FileNotFoundException>());
-    }
-
     #endregion
 }

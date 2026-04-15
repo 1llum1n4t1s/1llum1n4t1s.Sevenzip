@@ -31,8 +31,6 @@ public enum Format
 {
     /// <summary>Unknown</summary>
     Unknown = -1,
-    /// <summary>7z with SFX module</summary>
-    Sfx = -2,
     /// <summary>Open Zip archive format</summary>
     Zip = 0x01,
     /// <summary>Open BZip2 archive format</summary>

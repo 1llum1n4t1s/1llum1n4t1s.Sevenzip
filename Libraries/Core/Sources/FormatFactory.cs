@@ -18,7 +18,6 @@
 /* ------------------------------------------------------------------------- */
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 namespace Cube.FileSystem.SevenZip;
 
@@ -93,11 +92,7 @@ public static class FormatFactory
         {
             using var ss = Io.Open(src);
             var format = From(ss);
-            if (format != Format.Unknown)
-            {
-                var sfx = format == Format.PE && FileVersionInfo.GetVersionInfo(src).InternalName == "7z.sfx";
-                return sfx ? Format.Sfx : format;
-            }
+            if (format != Format.Unknown) return format;
         }
         return FromExtension(Io.GetExtension(src));
     }

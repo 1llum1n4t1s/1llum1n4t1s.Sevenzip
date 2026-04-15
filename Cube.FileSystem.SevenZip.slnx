@@ -1,20 +1,12 @@
 <Solution>
   <Configurations>
+    <Platform Name="AnyCPU" />
     <Platform Name="x64" />
+    <Platform Name="arm64" />
   </Configurations>
-  <Project Path="Libraries/Core/Cube.FileSystem.SevenZip.csproj">
-    <Platform Project="x64" />
-  </Project>
-  <Project Path="Libraries/Cube.Core/Cube.Core.csproj">
-    <Platform Project="x64" />
-  </Project>
-  <Project Path="Libraries/Cube.Logging/Cube.Logging.csproj">
-    <Platform Project="x64" />
-  </Project>
-  <Project Path="Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj">
-    <Platform Project="x64" />
-  </Project>
-  <Project Path="Tests/Private/Cube.Private.Tests.csproj">
-    <Platform Project="x64" />
-  </Project>
+  <Project Path="Libraries/Core/Cube.FileSystem.SevenZip.csproj" />
+  <Project Path="Libraries/Cube.Core/Cube.Core.csproj" />
+  <Project Path="Libraries/Cube.Logging/Cube.Logging.csproj" />
+  <Project Path="Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj" />
+  <Project Path="Tests/Private/Cube.Private.Tests.csproj" />
 </Solution>
