@@ -5,8 +5,8 @@
     プロジェクトでビルド時に自動的にインポート・実行される。
 
     2 段階構成:
-      [1] _SevenZipCopyEmbedded  -- 埋め込み 7z.dll を OutputPath にコピー (常時実行、ネット不要)
-      [2] _SevenZipAutoFetch     -- GitHub Releases から最新版を取得試行 (opt-out 可)
+      [1] _SevenZipCopyEmbedded  : 埋め込み 7z.dll を OutputPath にコピー (常時実行、ネット不要)
+      [2] _SevenZipAutoFetch     : GitHub Releases から最新版を取得試行 (opt-out 可)
 
     設計の肝:
       - Step 1 が必ず先に実行されるため、Step 2 が何らかの理由で失敗しても
