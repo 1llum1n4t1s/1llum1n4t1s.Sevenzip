@@ -132,7 +132,7 @@ jobs:
       - name: Create Pull Request
         if: steps.compare.outputs.needs_update == 'true'
         # P2-25: SHA 固定でサプライチェーン攻撃を防ぐ
-        uses: peter-evans/create-pull-request@67ccf781d68e04c81f3e2795bdf5bba7e30d4f7f # v7.0.8
+        uses: peter-evans/create-pull-request@271a8d0340265f705b14b6d32b9829c1cb33d45e # v7.0.8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: chore/bump-7zip-${{ steps.latest.outputs.tag }}
