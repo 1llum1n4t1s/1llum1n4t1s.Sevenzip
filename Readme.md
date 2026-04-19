@@ -4,21 +4,29 @@
 
 > **これは [Cube.FileSystem.SevenZip](https://github.com/cube-soft/cube.filesystem.sevenzip) のフォークです。** ソースコードは上記リポジトリで公開しています。  
 > 元リポジトリとの主な違いは以下のとおりです。
+>
+> **ランタイム / ビルド / 配布**
 > - **.NET 10** 対応（ターゲットを net10.0 / net10.0-windows に変更）
+> - **NativeAOT 対応**（COM Interop を `[GeneratedComInterface]` に、P/Invoke を `[LibraryImport]` に全面移行）
+> - **Windows x64 / arm64 対応** — `<RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>` を宣言。Managed アセンブリは AnyCPU で単一、ネイティブ 7z.dll のみ RID で分岐
+> - **7-Zip 本家 26.00** のネイティブバイナリを直接 vendor（`Cube.Native.SevenZip` 依存を除去）
+> - **ピン留めネイティブバイナリ配布** — NuGet パッケージに固定バージョンの 7z.dll を同梱。ビルド時のネットワークアクセスなし（決定論的ビルド保証）。7-Zip 本体の更新はメンテナ側の週次 PR bot で追従
+> - [Cube.Core](https://github.com/cube-soft/cube.core) をソリューション内のプロジェクトとして直接組み込み（NuGet 参照ではなく NuGet パッケージに DLL を同梱）
 > - CI を AppVeyor から **GitHub Actions** に移行
 > - NuGet パッケージ名を **1llum1n4t1s.Sevenzip** として公開
-> - **NativeAOT 対応**（COM Interop を `[GeneratedComInterface]` に、P/Invoke を `[LibraryImport]` に全面移行）
-> - [Cube.Core](https://github.com/cube-soft/cube.core) をソリューション内のプロジェクトとして直接組み込み（NuGet 参照ではなく NuGet パッケージに DLL を同梱）
-> - **7-Zip 本家 26.00** のネイティブバイナリを直接 vendor（`Cube.Native.SevenZip` 依存を除去）
-> - **Windows x64 / arm64 対応** — `<RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>` を宣言。Managed アセンブリは AnyCPU で単一、ネイティブ 7z.dll のみ RID で分岐
-> - **ピン留めネイティブバイナリ配布** — NuGet パッケージに固定バージョンの 7z.dll を同梱。ビルド時のネットワークアクセスなし（決定論的ビルド保証）。7-Zip 本体の更新はメンテナ側の週次 PR bot で追従
-> - **SFX (自己展開書庫) 機能の削除** — `SfxOption` / `Format.Sfx` / `7z.sfx` 同梱を廃止。自己展開書庫が必要な場合は別途 SFX モジュールを用意する必要あり（**breaking change**, v1.0.58）
 > - **NLog から SuperLightLogger への移行**（テストハーネス用）
+>
+> **API / 機能追加**
 > - **アーカイブ更新機能** — `ArchiveWriter.Update()` / `Remove()` で既存アーカイブのファイル追加・置換・削除が可能
 > - **ロック中ファイル自動コピー** — 他プロセスがロック中のファイルを一時コピーして圧縮に含める
-> - **CodePage サポート** — ZIP ファイル名のエンコーディングを `ArchiveOption.CodePage` で指定可能（Reader / Writer 両対応）
-> - **EncryptionMethod** — `CompressionOption.EncryptionMethod` で暗号化方式（Aes256, ZipCrypto 等）を選択可能
-> - **IoController FileShare オーバーロード** — `Io.Open(path, FileShare)` でロックモード指定に対応
+> - **ZIP エントリ名の Reader 側 CodePage 対応** — `ArchiveOption.CodePage` が展開側でも機能（本家は Writer 側のみ）。さらに v1.0.66 から `ArchiveOption.Encoding` で任意 `Encoding` を直接指定可能
+> - **Stream ベース API**（v1.0.66〜） — `ArchiveReader(Stream)` / `ArchiveWriter.Save(Stream)` / `Update(Stream, Stream, renameMap)` / `Extract(int, Stream)` / `Add(Stream, name)` など、ファイルシステムを介さない読み書き
+> - **per-file 進捗イベント**（v1.0.66〜） — `FileExtracting` / `FileExtracted` / `FileCompressing` / `FileCompressed` + `ArchiveFileEventArgs` で個別エントリの進捗とキャンセルに対応
+> - **柔軟な圧縮オプション**（v1.0.66〜） — `CustomParameters`（7z.dll `ISetProperties` への任意キー注入）/ `VolumeSize`（分割書き出し）/ `IncludeEmptyDirectories`（空ディレクトリ除外）
+> - **追加メタデータ型**（v1.0.66〜） — `ZipArchiveEntity`（ZIP 固有メタデータ）/ `AsyncPasswordQuery`（非同期パスワード問い合わせ）/ `ArchiveEntity.IsUnicodeText`（ヒューリスティック Unicode 判定）
+>
+> **削除（breaking change）**
+> - **SFX (自己展開書庫) 機能の削除**（v1.0.58） — `SfxOption` / `Format.Sfx` / `7z.sfx` 同梱を廃止。自己展開書庫が必要な場合は別途 SFX モジュールを用意する必要あり
 
 ---
 
@@ -108,10 +116,7 @@ ArchiveWriter および ArchiveReader は、生成から破棄まで同一スレ
 | `ArchiveReader.Save(string, uint[], IProgress<Report>)` | `unsafe` 修飾子が追加 | **呼び出し側への影響なし。** C# では `unsafe` メソッドの呼び出しに `unsafe` コンテキストは不要です。`AllowUnsafeBlocks` はライブラリ側のビルドにのみ必要で、消費者側のプロジェクトには不要です。 |
 | `ArchiveWriter.Update(...)` | **新規追加** — 既存アーカイブのファイル追加・置換 | 4 つのオーバーロード。`sourcePassword` で暗号化アーカイブの更新にも対応。 |
 | `ArchiveWriter.Remove(string)` | **新規追加** — アーカイブ内の指定アイテムを削除 | `Update()` と組み合わせて使用。 |
-| `ArchiveOption.CodePage` | **新規追加** — ZIP ファイル名エンコーディング指定 | `init` プロパティ。デフォルトは `CodePage.Oem`。Reader / Writer 両対応。 |
-| `CodePage` enum | **新規追加** — `Oem`, `Utf8`, `Japanese` (932) 等 | ZIP 形式限定。7z 等は UTF-16 ネイティブのため不要。 |
-| `EncryptionMethod` enum | **新規追加** — 暗号化方式の選択 | `Aes128`, `Aes192`, `Aes256`, `ZipCrypto`, `Default` |
-| `CompressionOption.EncryptionMethod` | **新規追加** — 暗号化方式プロパティ | `init` プロパティ。デフォルトは `EncryptionMethod.Default`。 |
+| `ArchiveReader` での `ArchiveOption.CodePage` 対応 | **挙動拡張** — 本家は Writer 側のみの対応だったが、Reader 側でも `CodePage` が反映されるよう修正 | ZIP ファイル名デコードに使用。既存の `CodePage` enum (`Oem`/`Utf8`/`Japanese` 等) はそのまま利用可能。 |
 | `Io.Open(string, FileShare)` | **新規追加** — FileShare 指定付きオープン | Cube.Core の `IoController` にも対応オーバーロード追加。 |
 | `ArchiveReader(Stream, ...)` 等 | **v1.0.66 で追加** — Stream ベース API | path 版と並列運用。`leaveOpen` で所有権制御。 |
 | `ArchiveReader.Extract(int, Stream)` | **v1.0.66** — 単一エントリを直接 Stream に展開 | 辞書版 `Extract(IReadOnlyDictionary<int, Stream>)` も提供。 |
@@ -147,30 +152,18 @@ using (var writer = new ArchiveWriter(Format.Zip))
 
 圧縮時に他プロセスがロック中のファイルを自動検出し、`%TEMP%\SevenZip_{GUID}\` に一時コピーして処理します。`ERROR_SHARING_VIOLATION` (0x80070020) および `ERROR_LOCK_VIOLATION` (0x80070021) を検出対象とし、一時ファイルは `Dispose` 時に自動削除されます。呼び出し側のコード変更は不要です。
 
-#### CodePage サポート
+#### ZIP エントリ名の Reader 側 CodePage 対応
 
-`ArchiveOption.CodePage` で ZIP ファイル名のデコードに使用するコードページを指定できます。古いツールが Shift-JIS で作成した ZIP の文字化けを防ぐ場合などに利用します。7z 形式は UTF-16 ネイティブのため、この設定は ZIP 形式でのみ有効です。
+`ArchiveOption.CodePage` を **展開時 (ArchiveReader)** にも反映するようになりました（本家は Writer 側のみ対応）。古いツールが Shift-JIS で作成した ZIP の文字化けを防ぐ場合などに利用します。7z 形式は UTF-16 ネイティブのため、この設定は ZIP 形式でのみ有効です。
 
 ```cs
-// Reader: Shift-JIS でエンコードされた ZIP を正しく読む
+// Reader: Shift-JIS でエンコードされた ZIP を正しく読む（フォーク独自）
 var options = new ArchiveOption { CodePage = CodePage.Japanese };
 using var reader = new ArchiveReader(@"path\to\sjis.zip", "", options);
 
-// Writer: UTF-8 でファイル名をエンコードして ZIP を作成
-var compOpts = new CompressionOption { CodePage = CodePage.Utf8 };
-using var writer = new ArchiveWriter(Format.Zip, compOpts);
-```
-
-#### EncryptionMethod
-
-`CompressionOption.EncryptionMethod` で暗号化方式を選択できます。選択肢は `Aes128`, `Aes192`, `Aes256`, `ZipCrypto`, `Default` です。
-
-```cs
-var options = new CompressionOption
-{
-    EncryptionMethod = EncryptionMethod.Aes256,
-    Password         = "password",
-};
+// v1.0.66 以降は任意の Encoding を直接指定可能（CP437 等にも対応）
+var utf8Options = new ArchiveOption { Encoding = System.Text.Encoding.UTF8 };
+using var reader2 = new ArchiveReader(@"path\to\utf8.zip", "", utf8Options);
 ```
 
 ### SFX 機能の削除 (breaking change, v1.0.58)
