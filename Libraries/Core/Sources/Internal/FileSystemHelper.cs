@@ -45,4 +45,49 @@ internal static class FileSystemHelper
         const int LockViolation    = unchecked((int)0x80070021);
         return ex.HResult == SharingViolation || ex.HResult == LockViolation;
     }
+
+    /// <summary>
+    /// 指定したパスのファイルに対して <c>FlushFileBuffers</c> 相当の
+    /// ディスク同期フラッシュを実行する。
+    /// </summary>
+    /// <param name="path">フラッシュ対象のファイルパス。</param>
+    /// <remarks>
+    /// 書き込み済みファイルを短時間 FileShare.Read で開き直し、<see cref="FileStream.Flush(bool)"/>
+    /// を <c>flushToDisk: true</c> で呼ぶことで NTFS 等のファイルキャッシュをディスクに書き出す。
+    /// ファイルが存在しない場合やロックされている場合は黙って失敗する (クリティカルではない)。
+    /// </remarks>
+    public static void FlushFile(string path)
+    {
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return;
+        try
+        {
+            // FileMode.Open + FileAccess.Write で開くと truncate されないため安全。
+            // SeekOrigin.End に進めてから Flush を呼ぶ。書き込み先は空でも OK。
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Write,
+                FileShare.Read, bufferSize: 1);
+            fs.Flush(flushToDisk: true);
+        }
+        catch { /* クリティカルではないので握り潰す (ログは呼び出し側の責務) */ }
+    }
+
+    /// <summary>
+    /// 渡された Stream が FileStream の場合、ディスク同期フラッシュを実行する。
+    /// </summary>
+    /// <param name="stream">フラッシュ対象の Stream。</param>
+    /// <remarks>
+    /// MemoryStream / NetworkStream など FileStream でない場合は通常の <see cref="Stream.Flush"/> のみ呼ぶ。
+    /// </remarks>
+    public static void FlushToDiskIfFileStream(Stream stream)
+    {
+        if (stream is null) return;
+        if (stream is FileStream fs)
+        {
+            try { fs.Flush(flushToDisk: true); }
+            catch { /* クリティカルではないので握り潰す */ }
+        }
+        else
+        {
+            try { stream.Flush(); } catch { /* 同上 */ }
+        }
+    }
 }

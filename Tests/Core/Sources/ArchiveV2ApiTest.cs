@@ -386,4 +386,207 @@ internal class ArchiveV2ApiTest : FileFixture
         Assert.That(File.Exists(dest), Is.True, "単一ファイルが生成される");
         Assert.That(File.Exists($"{dest}.001"), Is.False, "分割ファイルは生成されない");
     }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// FlushToDisk_PathBasedSave_Completes
+    ///
+    /// <summary>
+    /// FlushToDisk=true を指定した path ベース Save が正常完了し、
+    /// 生成されたアーカイブが読み取れることを確認する。
+    /// (fsync 実行時の副作用で壊れない回帰テスト)
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [Test]
+    public void FlushToDisk_PathBasedSave_Completes()
+    {
+        var srcTxt = GetSource("Sample.txt");
+        var dest = Get(nameof(FlushToDisk_PathBasedSave_Completes), "out.zip");
+
+        var opt = new CompressionOption { FlushToDisk = true };
+        using (var w = new ArchiveWriter(Format.Zip, opt))
+        {
+            w.Add(srcTxt);
+            w.Save(dest);
+        }
+
+        Assert.That(File.Exists(dest), Is.True);
+        using var r = new ArchiveReader(dest);
+        Assert.That(r.Items.Count, Is.GreaterThan(0), "FlushToDisk 後のアーカイブが読める");
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// AtomicSave_NewFile_Completes
+    ///
+    /// <summary>
+    /// AtomicSave=true で新規ファイルを保存した場合、tmp → dest のリネームが
+    /// 正しく行われ、dest が有効なアーカイブになる。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [Test]
+    public void AtomicSave_NewFile_Completes()
+    {
+        var srcTxt = GetSource("Sample.txt");
+        var destDir = Get(nameof(AtomicSave_NewFile_Completes));
+        Io.CreateDirectory(destDir);
+        var dest = Path.Combine(destDir, "out.zip");
+
+        var opt = new CompressionOption
+        {
+            AtomicSave  = true,
+            FlushToDisk = true,
+        };
+        using (var w = new ArchiveWriter(Format.Zip, opt))
+        {
+            w.Add(srcTxt);
+            w.Save(dest);
+        }
+
+        Assert.That(File.Exists(dest), Is.True, "dest が作成されている");
+        // .tmp / .bak 残骸が無いこと
+        var leftovers = Directory.GetFiles(destDir, "*.tmp").Length
+                      + Directory.GetFiles(destDir, "*.bak").Length;
+        Assert.That(leftovers, Is.EqualTo(0), "tmp/bak 残骸が残っていない");
+
+        using var r = new ArchiveReader(dest);
+        Assert.That(r.Items.Count, Is.GreaterThan(0));
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// AtomicSave_Overwrite_KeepsBackup
+    ///
+    /// <summary>
+    /// AtomicSave=true + KeepBackupOnUpdate=true で既存 dest を上書きした場合、
+    /// .bak ファイルが残り LastBackupPath でパスが公開される。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [Test]
+    public void AtomicSave_Overwrite_KeepsBackup()
+    {
+        var srcTxt = GetSource("Sample.txt");
+        var destDir = Get(nameof(AtomicSave_Overwrite_KeepsBackup));
+        Io.CreateDirectory(destDir);
+        var dest = Path.Combine(destDir, "out.zip");
+
+        // Step 1: 初回保存 (上書き元の dest 準備)
+        using (var w1 = new ArchiveWriter(Format.Zip))
+        {
+            w1.Add(srcTxt);
+            w1.Save(dest);
+        }
+        Assert.That(File.Exists(dest), Is.True);
+        var initialSize = new FileInfo(dest).Length;
+
+        // Step 2: AtomicSave + KeepBackupOnUpdate で上書き
+        var srcBin = GetSource("Sample.tar");  // 別ファイルで上書き
+        var opt = new CompressionOption
+        {
+            AtomicSave          = true,
+            KeepBackupOnUpdate  = true,
+            FlushToDisk         = true,
+        };
+        string backupPath;
+        using (var w2 = new ArchiveWriter(Format.Zip, opt))
+        {
+            w2.Add(srcBin);
+            w2.Save(dest);
+            backupPath = w2.LastBackupPath;
+        }
+
+        // LastBackupPath が設定され、.bak ファイルが実在すること
+        Assert.That(backupPath, Is.Not.Null, "LastBackupPath が設定されている");
+        Assert.That(File.Exists(backupPath), Is.True, $".bak ファイル {backupPath} が実在する");
+        Assert.That(new FileInfo(backupPath).Length, Is.EqualTo(initialSize),
+            ".bak は元の dest のサイズと一致する (中身が保存されている)");
+
+        // dest は新しい内容に上書きされていること
+        using var r = new ArchiveReader(dest);
+        Assert.That(r.Items.Any(e => e.FullName.Contains("Sample.tar")), Is.True,
+            "dest は新しい内容で上書きされている");
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// AtomicSave_Overwrite_DeletesBackupByDefault
+    ///
+    /// <summary>
+    /// AtomicSave=true かつ KeepBackupOnUpdate=false (デフォルト) で上書きした場合、
+    /// .bak は自動削除されて LastBackupPath は null のままになる。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [Test]
+    public void AtomicSave_Overwrite_DeletesBackupByDefault()
+    {
+        var srcTxt = GetSource("Sample.txt");
+        var destDir = Get(nameof(AtomicSave_Overwrite_DeletesBackupByDefault));
+        Io.CreateDirectory(destDir);
+        var dest = Path.Combine(destDir, "out.zip");
+
+        using (var w1 = new ArchiveWriter(Format.Zip))
+        {
+            w1.Add(srcTxt);
+            w1.Save(dest);
+        }
+
+        var opt = new CompressionOption { AtomicSave = true };  // KeepBackupOnUpdate=false がデフォルト
+        using (var w2 = new ArchiveWriter(Format.Zip, opt))
+        {
+            w2.Add(srcTxt);
+            w2.Save(dest);
+            Assert.That(w2.LastBackupPath, Is.Null, "デフォルトでは LastBackupPath は null");
+        }
+
+        var leftovers = Directory.GetFiles(destDir, "*.bak").Length;
+        Assert.That(leftovers, Is.EqualTo(0), ".bak は自動削除される");
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// Update_SelfUpdate_KeepBackup
+    ///
+    /// <summary>
+    /// Update(string src, string dest) で src==dest の自己更新時に
+    /// KeepBackupOnUpdate=true を指定すると .bak が保持される。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [Test]
+    public void Update_SelfUpdate_KeepBackup()
+    {
+        var srcTxt = GetSource("Sample.txt");
+        var destDir = Get(nameof(Update_SelfUpdate_KeepBackup));
+        Io.CreateDirectory(destDir);
+        var archive = Path.Combine(destDir, "test.zip");
+
+        // 初回作成
+        using (var w = new ArchiveWriter(Format.Zip))
+        {
+            w.Add(srcTxt);
+            w.Save(archive);
+        }
+
+        // 自己更新 (KeepBackupOnUpdate=true)
+        var opt = new CompressionOption { KeepBackupOnUpdate = true };
+        string backupPath;
+        using (var w = new ArchiveWriter(Format.Zip, opt))
+        {
+            w.Remove("Sample.txt");
+            w.Add(GetSource("Sample.tar"));
+            w.Update(archive, archive);
+            backupPath = w.LastBackupPath;
+        }
+
+        Assert.That(backupPath, Is.Not.Null, "LastBackupPath が設定されている");
+        Assert.That(File.Exists(backupPath), Is.True, ".bak が実在する");
+
+        // dest は更新後の内容
+        using var r = new ArchiveReader(archive);
+        Assert.That(r.Items.Any(e => e.FullName.Contains("Sample.tar")), Is.True);
+    }
 }

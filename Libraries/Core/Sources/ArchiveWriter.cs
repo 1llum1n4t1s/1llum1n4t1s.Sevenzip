@@ -107,6 +107,22 @@ public sealed class ArchiveWriter : DisposableBase
     /// </summary>
     public CompressionOption Options { get; }
 
+    /// <summary>
+    /// 直近の <see cref="Save(string)"/> / <see cref="Update(string, string)"/> で生成された
+    /// バックアップファイル (.bak) のパスを取得する。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="CompressionOption.KeepBackupOnUpdate"/> が <c>true</c> の場合のみ値が設定される。
+    /// <c>false</c> または .bak が生成されなかった場合 (新規 Save 等) は null。
+    /// </para>
+    /// <para>
+    /// 呼び出し側はこのパスのファイルを任意のタイミングで削除する責任を持つ。
+    /// 複数回 Save / Update を呼ぶと値は最後の操作のもので上書きされる。
+    /// </para>
+    /// </remarks>
+    public string LastBackupPath { get; private set; }
+
     #endregion
 
     #region Methods
@@ -219,12 +235,20 @@ public sealed class ArchiveWriter : DisposableBase
         var dir = Io.GetDirectoryName(dest);
         Io.CreateDirectory(dir);
 
+        // AtomicSave モード: tmp file → atomic rename で書き出す (VolumeSize=0 時のみ)
+        if (Options.AtomicSave && Options.VolumeSize == 0)
+        {
+            SaveAtomic(dest, progress);
+            return;
+        }
+
         // フォーマットに応じた保存処理に振り分ける
         if (Format == Format.Tar)
         {
             if (Options.VolumeSize > 0)
                 Logger.Warn("[Save] VolumeSize is ignored for Format.Tar");
             SaveAsTar(dest, FilterItems(_items), progress);
+            if (Options.FlushToDisk) FileSystemHelper.FlushFile(dest);
             return;
         }
 
@@ -243,6 +267,8 @@ public sealed class ArchiveWriter : DisposableBase
                 Logger.Warn(
                     "[Save] VolumeSize with Format.Zip produces binary-split (.001/.002) files, " +
                     "not ZIP-native multi-volume (.z01/.z02/.zip). Other tools may not recognize them.");
+            if (Options.AtomicSave)
+                Logger.Warn("[Save] AtomicSave is ignored when VolumeSize > 0.");
 
             var tempPath = Path.Combine(Path.GetTempPath(),
                 $"SevenZipVol_{Guid.NewGuid():N}.tmp");
@@ -259,8 +285,90 @@ public sealed class ArchiveWriter : DisposableBase
         }
 
         // 通常モード: dest を直接開いて 7z.dll に渡す
-        using var single = new ArchiveStreamWriter(Io.Create(dest));
-        SaveAs(single, FilterItems(_items), Format, dest, progress);
+        using (var single = new ArchiveStreamWriter(Io.Create(dest)))
+        {
+            SaveAs(single, FilterItems(_items), Format, dest, progress);
+        }
+        if (Options.FlushToDisk) FileSystemHelper.FlushFile(dest);
+    }
+
+    /// <summary>
+    /// AtomicSave モード: tmp file → atomic rename で dest を書き出す。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 書き込み途中のクラッシュで元 dest が破損しないことを保証する。
+    /// dest と同一ディレクトリに <c>{GUID}.ext</c> tmp を作成 → 書き込み完了 →
+    /// 既存 dest があれば <c>{GUID}.bak</c> に退避 → tmp を dest へリネームの順。
+    /// </para>
+    /// <para>
+    /// FlushToDisk=true の場合、tmp 書き込み直後に <c>FlushFileBuffers</c> を呼んでから rename する。
+    /// </para>
+    /// </remarks>
+    private void SaveAtomic(string dest, IProgress<Report> progress)
+    {
+        var destDir  = Io.GetDirectoryName(dest) ?? ".";
+        var destExt  = Path.GetExtension(dest);
+        var tempPath = Path.Combine(destDir, $"{Guid.NewGuid():N}{destExt}.tmp");
+        var backup   = Io.Exists(dest)
+            ? Path.Combine(destDir, $"{Guid.NewGuid():N}.bak")
+            : null;
+
+        // LastBackupPath はこのメソッドが完全成功した場合のみ有効。開始時にクリア。
+        LastBackupPath = null;
+
+        try
+        {
+            // Step 1: tmp に全内容を書き込む
+            if (Format == Format.Tar)
+            {
+                SaveAsTar(tempPath, FilterItems(_items), progress);
+            }
+            else
+            {
+                using var single = new ArchiveStreamWriter(Io.Create(tempPath));
+                SaveAs(single, FilterItems(_items), Format, tempPath, progress);
+            }
+
+            // Step 2: tmp をディスクにフラッシュ (クラッシュ耐性強化)
+            if (Options.FlushToDisk) FileSystemHelper.FlushFile(tempPath);
+
+            // Step 3: 既存 dest を .bak に退避 (atomic rename)
+            if (backup is not null) Io.Move(dest, backup, false);
+
+            // Step 4: tmp を dest へ移動 (atomic rename)
+            try { Io.Move(tempPath, dest, false); }
+            catch
+            {
+                // rename 失敗時は .bak から元ファイルを復元してから再スロー
+                if (backup is not null)
+                {
+                    try { Io.Move(backup, dest, false); }
+                    catch (Exception restoreEx)
+                    {
+                        throw new ArchiveUpdateException(
+                            $"Failed to restore original archive. Backup is at: {backup}",
+                            originalPath: dest,
+                            backupPath:   backup,
+                            restoreEx);
+                    }
+                }
+                throw;
+            }
+
+            // Step 5: .bak のクリーンアップ (または保持)
+            if (backup is not null)
+            {
+                if (Options.KeepBackupOnUpdate) LastBackupPath = backup;
+                else Logger.Try(() => Io.Delete(backup));
+            }
+        }
+        catch
+        {
+            // tmp が残っていれば削除してクリーンアップする
+            Logger.Try(() => Io.Delete(tempPath));
+            throw;
+        }
     }
 
     /// <summary>
@@ -280,6 +388,9 @@ public sealed class ArchiveWriter : DisposableBase
         // 呼び出し側が設定値を設定していた場合は無視するがサイレントだと気づけないため警告。
         if (Options.VolumeSize > 0)
             Logger.Warn("[Save] VolumeSize is not supported for Stream output; the option is ignored.");
+        // Stream 版では AtomicSave も無効 (rename 対象のパスが無いため)。
+        if (Options.AtomicSave)
+            Logger.Warn("[Save] AtomicSave is not supported for Stream output; the option is ignored.");
 
         if (Format == Format.Tar)
         {
@@ -290,7 +401,7 @@ public sealed class ArchiveWriter : DisposableBase
             {
                 SaveAsTar(tempPath, FilterItems(_items), progress);
                 using var fs = Io.Open(tempPath);
-                // P3: 大型アーカイブを効率的に書き戻すため 1MB バッファで CopyTo
+                // 大型アーカイブを効率的に書き戻すため 1MB バッファで CopyTo
                 fs.CopyTo(dest, bufferSize: FileSystemHelper.DefaultBufferSize);
             }
             finally { Logger.Try(() => Io.Delete(tempPath)); }
@@ -300,6 +411,10 @@ public sealed class ArchiveWriter : DisposableBase
             using var ss = new ArchiveStreamWriter(dest, dispose: !leaveOpen);
             SaveAs(ss, FilterItems(_items), Format, string.Empty, progress);
         }
+
+        // FlushToDisk: 渡された dest が FileStream 等であればディスク同期する。
+        // それ以外 (MemoryStream / NetworkStream 等) は通常の Flush のみ。
+        if (Options.FlushToDisk) FileSystemHelper.FlushToDiskIfFileStream(dest);
     }
 
     /// <summary>
@@ -381,6 +496,9 @@ public sealed class ArchiveWriter : DisposableBase
             ? Path.Combine(Path.GetDirectoryName(destFull), Guid.NewGuid().ToString("N") + ".bak")
             : null;
 
+        // LastBackupPath は正常完了時のみ設定する。開始時にクリア。
+        LastBackupPath = null;
+
         try
         {
             // 保存先ディレクトリを事前に作成する
@@ -403,6 +521,10 @@ public sealed class ArchiveWriter : DisposableBase
                 outStream.Dispose();
                 inStream.Dispose();
             }
+
+            // 書き込み完了後にディスクフラッシュ (sameFile でも非 sameFile でも実施)。
+            // rename 前に tmp ファイルの内容がディスクメディアに到達していることを保証する。
+            if (Options.FlushToDisk) FileSystemHelper.FlushFile(actualDest);
 
             if (sameFile)
             {
@@ -430,8 +552,10 @@ public sealed class ArchiveWriter : DisposableBase
                     }
                     throw; // Move 失敗の元例外を再スローする
                 }
-                // 正常完了後はバックアップを削除する（失敗しても無視する）
-                Logger.Try(() => Io.Delete(backup));
+                // KeepBackupOnUpdate の場合はバックアップを保持し LastBackupPath で公開する。
+                // それ以外は従来通り削除する (失敗しても無視)。
+                if (Options.KeepBackupOnUpdate) LastBackupPath = backup;
+                else Logger.Try(() => Io.Delete(backup));
             }
         }
         catch
@@ -562,6 +686,10 @@ public sealed class ArchiveWriter : DisposableBase
             UpdateCore(inStream, outStream, string.Empty, string.Empty,
                 sourcePassword ?? Options.Password, progress, renameMap);
         }
+
+        // FlushToDisk: dest が FileStream ならディスク同期を行う。
+        // 自己参照ケースでも通常ケースでも共通で適用 (書き戻し完了後の最終フラッシュ)。
+        if (Options.FlushToDisk) FileSystemHelper.FlushToDiskIfFileStream(dest);
     }
 
     /// <summary>
