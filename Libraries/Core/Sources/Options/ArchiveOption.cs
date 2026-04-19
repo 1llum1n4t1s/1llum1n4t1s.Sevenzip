@@ -17,6 +17,7 @@
 //
 /* ------------------------------------------------------------------------- */
 using System;
+using System.Text;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -52,6 +53,45 @@ public class ArchiveOption
     ///
     /* --------------------------------------------------------------------- */
     public CodePage CodePage { get; init; } = CodePage.Oem;
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// Encoding
+    ///
+    /// <summary>
+    /// ZIP エントリ名のデコードに使用する任意の Encoding を取得する。
+    /// </summary>
+    /// <remarks>
+    /// 非 null の場合、<see cref="CodePage"/> より優先される。
+    /// CP437 や Shift_JIS など <see cref="SevenZip.CodePage"/> enum に含まれない
+    /// コードページを指定したい場合に使う（例: <c>Encoding.GetEncoding(437)</c>）。
+    /// </remarks>
+    /* --------------------------------------------------------------------- */
+    public Encoding Encoding { get; init; }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// ResolveCodePage
+    ///
+    /// <summary>
+    /// <see cref="Encoding"/> が指定されていればそのコードページを、
+    /// それ以外は <see cref="CodePage"/> を uint として返す。
+    /// </summary>
+    /// <returns>7z.dll の "cp" プロパティに渡すコードページ番号。</returns>
+    /* --------------------------------------------------------------------- */
+    internal uint ResolveCodePage() =>
+        Encoding is not null ? (uint)Encoding.CodePage : (uint)CodePage;
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// IsDefaultCodePage
+    ///
+    /// <summary>
+    /// コードページ指定がデフォルト (Oem かつ Encoding 未指定) かどうかを返す。
+    /// </summary>
+    /* --------------------------------------------------------------------- */
+    internal bool IsDefaultCodePage() =>
+        Encoding is null && CodePage == CodePage.Oem;
 
     /* --------------------------------------------------------------------- */
     ///

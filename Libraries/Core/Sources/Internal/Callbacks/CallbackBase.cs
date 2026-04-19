@@ -169,6 +169,33 @@ internal abstract class CallbackBase : DisposableBase
     /// <returns>結合されたパス。</returns>
     protected string Combine(string s0, string s1) => !s0.HasValue() ? s1 : Io.Combine(s0, s1);
 
+
+    /// <summary>
+    /// per-file イベントを発火し、ハンドラからキャンセル要求があれば true を返す共通ヘルパー。
+    /// </summary>
+    /// <param name="handler">発火するハンドラ (null なら何もしない)。</param>
+    /// <param name="target">イベント対象の Entity。</param>
+    /// <param name="index">エントリのインデックス (不明時は -1)。</param>
+    /// <returns>ハンドラが Cancel=true を設定した場合、または例外をスローした場合 true。</returns>
+    protected bool FireFileEvent(System.Action<ArchiveFileEventArgs> handler, Entity target, int index)
+    {
+        if (handler is null) return false;
+        var args = new ArchiveFileEventArgs
+        {
+            Target     = target,
+            Index      = index,
+            Count      = Count,
+            TotalCount = TotalCount,
+        };
+        try { handler(args); }
+        catch (System.Exception ex)
+        {
+            Exceptions.Push(ex);
+            return true;
+        }
+        return args.Cancel;
+    }
+
     #endregion
 
     #region Implementations

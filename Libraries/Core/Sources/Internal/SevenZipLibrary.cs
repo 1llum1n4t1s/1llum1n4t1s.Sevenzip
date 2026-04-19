@@ -210,25 +210,34 @@ internal sealed class SevenZipLibrary : IDisposable
     /// </remarks>
     public void Dispose()
     {
+        // P2-28: FinalRelease はロック外で呼ぶ。ロック保持のままネイティブへ遷移すると、
+        // ネイティブ→マネージド再入時の `lock (_lock)` で別スレッドが解放待ちに入り
+        // デッドロックが発生する可能性がある。
+        List<object> toRelease = null;
+        SafeHandle handleToClose = null;
+
         lock (_lock)
         {
             // 参照カウントを減らし、まだ参照している呼び出し元がいる場合は何もしない
             if (--_refCount > 0) return;
 
-            // DLL アンロード前に全追跡 COM ラッパーを解放する。
-            // GC の Finalize がアンロード済み DLL の vtable を呼ぶことを防ぐ。
-            // 注意: ReleaseComWrapper は _tracked.Remove を呼ぶため foreach 中に使用不可
-            foreach (var obj in _tracked)
-            {
-                if (obj is ComObject co) co.FinalRelease();
-            }
+            // 解放対象をローカルリストに取り出してから lock を抜ける
+            toRelease = [.. _tracked];
             _tracked.Clear();
 
-            // ネイティブ DLL ハンドルを解放する
-            if (_handle != null && !_handle.IsClosed) _handle.Close();
+            // ネイティブ DLL ハンドルも lock 外で Close する
+            if (_handle != null && !_handle.IsClosed) handleToClose = _handle;
+
             // 共有インスタンスをクリアして次回 Acquire 時に再生成させる
             _shared = null;
         }
+
+        // lock を抜けた後に FinalRelease / Close を実行する
+        foreach (var obj in toRelease)
+        {
+            if (obj is ComObject co) co.FinalRelease();
+        }
+        handleToClose?.Close();
     }
 
     #endregion

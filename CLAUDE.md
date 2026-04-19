@@ -59,19 +59,27 @@ NuGet パッケージの `runtimes/win-{x64,arm64}/native/7z.dll` として配�
 
 ```
 Sources/
-├── ArchiveReader.cs, ArchiveWriter.cs   # 公開 API (sealed クラス)
+├── ArchiveReader.cs, ArchiveWriter.cs   # 公開 API (sealed クラス / Stream 版オーバーロード v1.0.66)
+├── ArchiveEntity.cs                     # アーカイブエントリ (継承可 / IsUnicodeText v1.0.66)
+├── ZipArchiveEntity.cs                  # ZIP 固有エントリ (Method / HostOS 等 v1.0.66)
+├── ArchiveFileEventArgs.cs              # per-file イベント引数 (v1.0.66)
+├── AsyncPasswordQuery.cs                # 非同期パスワード問い合わせ (v1.0.66)
 ├── Format.cs                            # Zip/7z/Tar/Rar/Iso/Udf 等の列挙
-├── ArchiveOption.cs                     # CodePage / Filter / ThreadCount など共通オプション
-├── CompressionOption.cs                 # Writer 用: 圧縮レベル / メソッド / パスワード / EncryptionMethod
-├── Options/                             # TarOption 等 (v1.0.58 で SfxOption 削除)
+├── Options/
+│   ├── ArchiveOption.cs                 # CodePage / Encoding / Filter / ThreadCount など共通オプション
+│   └── CompressionOption.cs             # Writer 用: 圧縮レベル / メソッド / パスワード / CustomParameters / VolumeSize / IncludeEmptyDirectories
 └── Internal/
-    ├── Interfaces/   # COM インターフェース定義 ([GeneratedComInterface])
-    ├── Callbacks/    # COM コールバック実装 ([GeneratedComClass])
-    │   ├── UpdateCallback.cs   # 圧縮時: IArchiveUpdateCallback + ICryptoGetTextPassword2
+    ├── Interfaces/          # COM インターフェース定義 ([GeneratedComInterface])
+    ├── Callbacks/           # COM コールバック実装 ([GeneratedComClass])
+    │   ├── UpdateCallback.cs   # 圧縮時: IArchiveUpdateCallback + ICryptoGetTextPassword2 + per-file イベント
+    │   ├── ExtractCallback.cs  # 展開時: IArchiveExtractCallback + StreamOutputs 分岐
     │   ├── OpenCallback.cs     # 解凍時のオープン処理
-    │   └── PasswordCallback.cs
-    ├── Options/      # CompressionOptionSetter 系（Format 別に `em`/`cp`/`m` プロパティを 7z.dll に注入）
-    └── SevenZipLibrary.cs       # 7z.dll の参照カウント付き singleton + CreateObject 関数ポインタ
+    │   ├── PasswordCallback.cs
+    │   └── CallbackBase.cs     # 共通進捗報告 + FireFileEvent ヘルパー
+    ├── Options/             # CompressionOptionSetter 系 (既知キー + CustomParameters merge)
+    ├── UpdatePlan.cs        # 更新プラン (Keep / Replace / Add / Rename / Remove)
+    ├── FileSystemHelper.cs  # IsFileLocked 共通化 (v1.0.66)
+    └── SevenZipLibrary.cs   # 7z.dll の参照カウント付き singleton + CreateObject 関数ポインタ
 ```
 
 ### ファイルI/O基盤（Cube.Core）

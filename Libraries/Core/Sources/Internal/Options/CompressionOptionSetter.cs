@@ -16,7 +16,6 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
 /* ------------------------------------------------------------------------- */
-using Cube.Collections.Extensions;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -108,14 +107,35 @@ internal class CompressionOptionSetter
     {
         if (dest == null) return;
 
+        // 1. フォーマット固有の既知キー (cp / m / em / 0 など) を集める
         var src = new Dictionary<string, PropVariant>();
         Invoke(src);
 
-        var k = src.Keys.Concat("x", "mt").ToArray();
-        var v = src.Values.Concat(
-            PropVariant.Create((uint)Options.CompressionLevel),
-            PropVariant.Create((uint)Options.ThreadCount)
-        ).ToArray();
+        // 2. 共通キー x (CompressionLevel) / mt (ThreadCount) を追加
+        src["x"]  = PropVariant.Create((uint)Options.CompressionLevel);
+        src["mt"] = PropVariant.Create((uint)Options.ThreadCount);
+
+        // 3. CustomParameters をマージ（ユーザー指定が既知キーより優先）
+        //    全ての値は BSTR (文字列) として注入する。7z.dll 側が必要に応じて数値解釈する。
+        var custom = Options.CustomParameters;
+        if (custom is not null)
+        {
+            foreach (var kv in custom)
+            {
+                if (string.IsNullOrEmpty(kv.Key)) continue;
+                src[kv.Key] = PropVariant.Create(kv.Value ?? string.Empty);
+            }
+        }
+
+        var k = new string[src.Count];
+        var v = new PropVariant[src.Count];
+        var idx = 0;
+        foreach (var kv in src)
+        {
+            k[idx] = kv.Key;
+            v[idx] = kv.Value;
+            idx++;
+        }
 
         var obj = GCHandle.Alloc(v, GCHandleType.Pinned);
         try { _ = dest.SetProperties(k, obj.AddrOfPinnedObject(), (uint)k.Length); }
@@ -135,9 +155,10 @@ internal class CompressionOptionSetter
     /* --------------------------------------------------------------------- */
     protected virtual void Invoke(IDictionary<string, PropVariant> dest)
     {
-        if (Options.CodePage != CodePage.Oem)
+        // Encoding が指定されていれば優先、それ以外は CodePage enum を使用
+        if (!Options.IsDefaultCodePage())
         {
-            dest.Add("cp", PropVariant.Create((uint)Options.CodePage));
+            dest.Add("cp", PropVariant.Create(Options.ResolveCodePage()));
         }
     }
 

@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -16,31 +16,27 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
 /* ------------------------------------------------------------------------- */
+using System.IO;
 namespace Cube.FileSystem.SevenZip;
 
-/* ------------------------------------------------------------------------- */
-///
-/// EncryptionMethod
-///
 /// <summary>
-/// Specifies encryption methods.
+/// ファイル I/O に関する共通ヘルパー。
 /// </summary>
-///
-/* ------------------------------------------------------------------------- */
-public enum EncryptionMethod
+/// <remarks>
+/// P2-17: <c>ArchiveWriter</c> と <c>UpdateCallback</c> に重複していた
+/// <c>IsFileLocked</c> を共通化。
+/// </remarks>
+internal static class FileSystemHelper
 {
-    /// <summary>AES 128bit</summary>
-    Aes128,
-    /// <summary>AES 192bit</summary>
-    Aes192,
-    /// <summary>AES 256bit</summary>
-    Aes256,
     /// <summary>
-    /// Legacy PKZIP Stream Cipher (ZipCrypto).
-    /// <b>暗号学的に脆弱 (Known-Plaintext Attack に対して壊れている) ため非推奨。</b>
-    /// 互換性目的でのみ使用すること。新規アーカイブには <see cref="Aes256"/> を推奨する。
+    /// HResult が共有違反 (Sharing/Lock Violation) かどうかを判定する。
     /// </summary>
-    ZipCrypto,
-    /// <summary>Default settings</summary>
-    Default,
+    /// <param name="ex">捕捉した IOException。</param>
+    /// <returns>他プロセスがファイルをロックしている場合は true。</returns>
+    public static bool IsFileLocked(IOException ex)
+    {
+        const int SharingViolation = unchecked((int)0x80070020);
+        const int LockViolation    = unchecked((int)0x80070021);
+        return ex.HResult == SharingViolation || ex.HResult == LockViolation;
+    }
 }

@@ -69,6 +69,26 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
     /// </remarks>
     public Predicate<Entity> Filter { get; init; }
 
+    /// <summary>
+    /// インデックス毎に外部 Stream へ展開するマップを取得または設定する。
+    /// </summary>
+    /// <remarks>
+    /// キーが <see cref="ArchiveEntity.Index"/> と一致するエントリは、
+    /// <see cref="Destination"/> 配下にファイルを作成する代わりに対応する
+    /// Stream へ直接書き込む（Stream 自体は呼び出し側で所有する）。
+    /// </remarks>
+    public IReadOnlyDictionary<int, System.IO.Stream> StreamOutputs { get; init; }
+
+    /// <summary>
+    /// ファイル展開開始時に呼び出されるイベントハンドラ。null の場合は発火しない。
+    /// </summary>
+    public Action<ArchiveFileEventArgs> OnFileStarted { get; init; }
+
+    /// <summary>
+    /// ファイル展開終了時に呼び出されるイベントハンドラ。null の場合は発火しない。
+    /// </summary>
+    public Action<ArchiveFileEventArgs> OnFileFinished { get; init; }
+
     #endregion
 
     #region IProgress
@@ -153,6 +173,11 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
         _mode = mode;
         // Skip の場合は進捗報告しない（カウントにも含めない）
         if (mode == AskMode.Skip) return (int)SevenZipCode.Success;
+
+        // FileExtracting イベントを発火する（Extract / Test モードのみ）
+        var cancelled = FireFileEvent(OnFileStarted, Current(), Current()?.Index ?? -1);
+        if (cancelled) return (int)SevenZipCode.Cancel;
+
         return Report(ProgressState.Progress, Current());
     }
 
@@ -176,6 +201,14 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
             // Extract モードの場合、ストリームを閉じてファイル属性を設定する
             if (_mode == AskMode.Extract) Finalize(_iterator.Current);
             Count++;
+
+            // FileExtracted イベントを発火する（Extract モードのみ、成功・失敗問わず）
+            if (_mode == AskMode.Extract)
+            {
+                var cancelled = FireFileEvent(OnFileFinished, _iterator.Current, _iterator.Current?.Index ?? -1);
+                if (cancelled) return (int)SevenZipCode.Cancel;
+            }
+
             return Report(code, null);
         }
         catch (Exception e) { return Report(code, e); }
@@ -218,6 +251,17 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
         if (!_iterator.Valid || mode != AskMode.Extract) return null;
 
         var e = _iterator.Current;
+
+        // StreamOutputs に一致するエントリは外部 Stream へ直接書き込む
+        if (StreamOutputs is not null && StreamOutputs.TryGetValue(e.Index, out var external) && external is not null)
+        {
+            // 外部 Stream は呼び出し側が所有するため dispose=false で包む
+            var w = new ArchiveStreamWriter(external, dispose: false);
+            _streams.Add(e.Index, w);
+            _streamOutputIndices.Add(e.Index);
+            return w;
+        }
+
         if (e.FullName.HasValue())
         {
             if (Filter?.Invoke(e) ?? false)
@@ -227,11 +271,14 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
             }
             else if (e.IsDirectory)
             {
-                // ディレクトリはファイルシステム上に作成するだけで、ストリームは不要
-                e.CreateDirectory(Destination);
+                // Destination が空（Stream 出力専用モードなど）の場合はディレクトリ作成をスキップする
+                if (Destination.HasValue()) e.CreateDirectory(Destination);
             }
             else
             {
+                // Destination が空の場合、path ベース出力先は無いので null を返す（該当エントリはスキップされる）
+                if (!Destination.HasValue()) return null;
+
                 // ファイルの場合は書き込みストリームを生成して辞書に登録する
                 var stream = Io.Create(Combine(Destination, e.FullName));
                 var dest   = new ArchiveStreamWriter(stream);
@@ -249,14 +296,20 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
     {
         if (src is null) return;
 
+        // 外部 Stream 出力のエントリは属性設定スキップ対象としてマーク
+        var streamOutput = _streamOutputIndices.Contains(src.Index);
+
         if (_streams.TryGetValue(src.Index, out var obj))
         {
-            // ストリームをフラッシュして閉じる
+            // ストリームをフラッシュして閉じる（外部 Stream は dispose=false のため実 Stream は閉じない）
             obj?.Dispose();
             _ = _streams.Remove(src.Index);
         }
 
         Logger.Trace($"[{nameof(Finalize)}] Index:{src.Index}, Name:{src.FullName.Quote()}");
+
+        // 外部 Stream 出力の場合または Destination 未指定の場合はファイル属性設定をスキップする
+        if (streamOutput || !Destination.HasValue()) return;
         // 元のファイル属性（更新日時など）をコピーして設定する
         src.SetAttributes(Destination);
     }
@@ -290,6 +343,11 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
     /// </summary>
     private ArchiveEntity Current() => _iterator.Valid ? _iterator.Current : null;
 
+    /// <summary>
+    /// per-file イベントを発火し、ハンドラからキャンセル要求があれば true を返す。
+    /// </summary>
+    
+
     #endregion
 
     #region Fields
@@ -297,6 +355,8 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
     private readonly ArchiveEnumerator _iterator;
     // インデックス → 書き込みストリームのマップ（Finalize まで保持する）
     private readonly Dictionary<int, ArchiveStreamWriter> _streams = new();
+    // 外部 Stream 出力対象となったエントリのインデックス（属性設定スキップ用）
+    private readonly HashSet<int> _streamOutputIndices = new();
     // 現在の操作モード（Extract / Test / Skip）
     private AskMode _mode = AskMode.Extract;
     // 複数回 Extract を呼んだ場合のバイトオフセット補正値

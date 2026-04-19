@@ -38,9 +38,23 @@ internal sealed class ArchiveCollection : EnumerableBase<ArchiveEntity>, IReadOn
     /// <param name="count">アーカイブ内のアイテム数。</param>
     /// <param name="path">アーカイブファイルのパス。TAR 判定に使用する。</param>
     public ArchiveCollection(IInArchive core, int count, string path)
+        : this(core, count, path, Format.Unknown) { }
+
+    /// <summary>
+    /// フォーマット情報付きでコレクションを初期化する。
+    /// </summary>
+    /// <param name="core">7-zip COM コアオブジェクト。</param>
+    /// <param name="count">アーカイブ内のアイテム数。</param>
+    /// <param name="path">アーカイブファイルのパス。</param>
+    /// <param name="format">
+    /// アーカイブフォーマット。<see cref="Format.Zip"/> の場合は <see cref="ZipArchiveEntity"/>
+    /// インスタンスを返すように分岐する。
+    /// </param>
+    public ArchiveCollection(IInArchive core, int count, string path, Format format)
     {
         _core = core;
         _path = path;
+        _format = format;
         Count = count;
         // キャッシュ配列は最初のアクセス時に遅延生成する（_cache ??= ... を使用）
     }
@@ -74,8 +88,13 @@ internal sealed class ArchiveCollection : EnumerableBase<ArchiveEntity>, IReadOn
             {
                 // COM 経由でプロパティを取得し ArchiveEntitySource 経由で ArchiveEntity を生成する。
                 // using で囲んで PropVariant バッファを確実に解放する。
-                using var src = new ArchiveEntitySource(_core, index, _path);
-                _cache[index] = new(src);
+                var src = new ArchiveEntitySource(_core, index, _path);
+                // Format.Zip の場合は ZIP 固有プロパティを持つ派生型を生成する。
+                // 派生型コンストラクタが base(src) 経由で src.Dispose() を呼ぶため
+                // ここでは using は使わず、生成側に所有権を委譲する。
+                _cache[index] = _format == Format.Zip
+                    ? new ZipArchiveEntity(src, _core, index)
+                    : new ArchiveEntity(src);
             }
             // キャッシュ済みのインスタンスを返す
             return _cache[index];
@@ -118,6 +137,8 @@ internal sealed class ArchiveCollection : EnumerableBase<ArchiveEntity>, IReadOn
     private IInArchive _core;
     // アーカイブファイルのパス（TAR 判定用）
     private readonly string _path;
+    // アーカイブフォーマット（派生型生成の分岐用）
+    private readonly Format _format;
     // ArchiveEntity のキャッシュ配列（初回アクセス時に生成）
     private ArchiveEntity[] _cache;
     #endregion

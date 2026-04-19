@@ -59,6 +59,17 @@ internal sealed class UpdatePlan
         /// 既存アイテムを保持する場合（IsNewOrReplaced=false）は -1。
         /// </summary>
         public int NewItemIndex { get; init; }
+
+        /// <summary>
+        /// 保持エントリをリネームする場合の新しい相対パスを取得する。
+        /// null の場合はリネームなし。
+        /// </summary>
+        /// <remarks>
+        /// 非 null の場合、UpdateCallback は該当エントリに対して
+        /// newdata=0（既存データ再利用）+ newprop=1（新プロパティ適用）を返し、
+        /// GetProperty の ItemPropId.Path では <see cref="RenameTo"/> を返す。
+        /// </remarks>
+        public string RenameTo { get; init; }
     }
 
     #endregion
@@ -77,6 +88,25 @@ internal sealed class UpdatePlan
         Func<uint, string> existingPaths,
         IList<RawEntity> newItems,
         HashSet<uint> removeSet)
+        : this(existingCount, existingPaths, newItems, removeSet, renameMap: null) { }
+
+    /// <summary>
+    /// rename マップを含む更新プランを生成する。
+    /// </summary>
+    /// <param name="existingCount">既存アーカイブ内のアイテム数。</param>
+    /// <param name="existingPaths">既存インデックスから相対パスを取得する関数。</param>
+    /// <param name="newItems">追加/置換する新規アイテムのリスト。</param>
+    /// <param name="removeSet">削除対象の既存インデックスの集合。null の場合は削除なし。</param>
+    /// <param name="renameMap">
+    /// 既存インデックス → 新しい相対パス のマップ。値が null/empty のエントリは削除扱い。
+    /// removeSet と両方で指定された場合は removeSet が優先される。
+    /// </param>
+    public UpdatePlan(
+        uint existingCount,
+        Func<uint, string> existingPaths,
+        IList<RawEntity> newItems,
+        HashSet<uint> removeSet,
+        IReadOnlyDictionary<uint, string> renameMap)
     {
         // 新規アイテムの相対パスをキーとした置換マップを構築する。
         // '/' は '\' に正規化して外部作成 ZIP（非 Windows ツール）との一致を保証する。
@@ -90,12 +120,17 @@ internal sealed class UpdatePlan
         // 置換で使用済みの新規アイテムインデックスを追跡し、Phase 2 での重複追加を防ぐ。
         var usedNewIndices = new HashSet<int>();
 
-        // Phase 1: 既存アイテムを順に処理し、Keep / Replace / Remove を決定する
+        // Phase 1: 既存アイテムを順に処理し、Keep / Replace / Rename / Remove を決定する
         for (uint i = 0; i < existingCount; i++)
         {
             // 削除セットに含まれるアイテムはエントリに追加しない（= 削除扱い）。
             // エントリに含めないことで TotalCount が減り、出力アーカイブから除外される。
             if (removeSet?.Contains(i) == true) continue;
+
+            // renameMap でも削除扱い（値が null/empty）の場合はスキップ
+            string renameTo = null;
+            var hasRename = renameMap is not null && renameMap.TryGetValue(i, out renameTo);
+            if (hasRename && string.IsNullOrEmpty(renameTo)) continue;
 
             // パス区切り文字を正規化（外部作成 ZIP は '/' を使用する場合がある）
             var path = existingPaths(i).Replace('/', '\\');
@@ -112,6 +147,18 @@ internal sealed class UpdatePlan
                 });
                 // このインデックスは Phase 2 での追加処理をスキップする。
                 usedNewIndices.Add(newIdx);
+            }
+            else if (hasRename)
+            {
+                // 保持 + rename: データは既存のまま、プロパティ（Path）だけ新しい値に差し替え。
+                // RenameTo を正規化してから格納する。
+                entries.Add(new Entry
+                {
+                    IsNewOrReplaced = false,
+                    OriginalIndex   = i,
+                    NewItemIndex    = -1,
+                    RenameTo        = renameTo.Replace('/', '\\'),
+                });
             }
             else
             {

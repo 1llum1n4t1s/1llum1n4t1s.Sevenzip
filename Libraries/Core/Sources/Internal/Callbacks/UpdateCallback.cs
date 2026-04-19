@@ -89,6 +89,16 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     /// </remarks>
     public string Password { get; init; }
 
+    /// <summary>
+    /// ファイル圧縮開始時に呼び出されるイベントハンドラ。null の場合は発火しない。
+    /// </summary>
+    public Action<ArchiveFileEventArgs> OnFileStarted { get; init; }
+
+    /// <summary>
+    /// ファイル圧縮終了時に呼び出されるイベントハンドラ。null の場合は発火しない。
+    /// </summary>
+    public Action<ArchiveFileEventArgs> OnFileFinished { get; init; }
+
     #endregion
 
     #region IProgress
@@ -164,6 +174,13 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
                 newprop = 1;
                 indexInArchive = entry.OriginalIndex; // 対応する元インデックス（新規は uint.MaxValue）
             }
+            else if (entry.RenameTo is not null)
+            {
+                // 保持 + rename: データは既存のまま、プロパティだけ新しい値を要求する
+                newdata = 0;
+                newprop = 1;
+                indexInArchive = entry.OriginalIndex;
+            }
             else
             {
                 // 保持: 既存アーカイブからデータとプロパティをそのままコピーする
@@ -200,6 +217,19 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     /// <returns>操作結果コード。</returns>
     public int GetProperty(uint index, ItemPropId pid, ref PropVariant value)
     {
+        // rename エントリの場合: プランから元情報を参照して必要最小限のプロパティだけ返す
+        if (_plan is not null && index < _plan.Entries.Length)
+        {
+            var entry = _plan.Entries[index];
+            if (!entry.IsNewOrReplaced && entry.RenameTo is not null)
+            {
+                // Path は新しい名前に差し替え、その他は空 (7-zip が既存アーカイブから補完する)
+                if (pid == ItemPropId.Path) value.Set(entry.RenameTo);
+                else value.Clear();
+                return (int)SevenZipCode.Success;
+            }
+        }
+
         var i = ResolveItemIndex(index);
         if (i < 0)
         {
@@ -290,6 +320,13 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         var dest = default(ISequentialInStream);
         var src  = Current();
 
+        // FileCompressing イベントを発火する（ファイル読み取りの直前）
+        if (FireFileEvent(OnFileStarted, src, _index))
+        {
+            stream = null;
+            return (int)SevenZipCode.Cancel;
+        }
+
         try
         {
             // ファイルを開いてストリームを生成する処理を Run でラップする
@@ -314,6 +351,25 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     {
         if (code != SevenZipCode.Success) Logger.Warn($"[{code}] Index:{_index}, Name:{Current()?.RawName ?? ""}");
 
+        // P0-5 メモ (検証済の現時点での結論):
+        // 以下の 2 案で早期解放を試みたがどちらも破綻したため、Dispose 時一括解放に集約している:
+        //
+        // 案 A: SetOperationResult で _currentStream を即時 Dispose
+        //   → 並行 GetStream (ZIP Ultra 等) で _currentStream が別エントリで上書きされ、
+        //      誤って使用中の stream を Dispose → MarshalDirectiveException (0x80131522)
+        //
+        // 案 B: Read で EOF 到達を検知して SetCompleted 時に CleanupFinishedStreams
+        //   → ZIP Ultra のマルチスレッド圧縮では Read 完了後も 7z.dll が stream を保持し
+        //      続ける経路があり、Dispose 後に COM 経由でアクセスされて同じく例外
+        //
+        // 正しく安全な早期解放には index 付き SetOperationResult 相当の改造か、
+        // 7z.dll 側パッチが必要。現在のワークロード規模 (数万エントリ) では Dispose
+        // 時一括解放でハンドル上限に余裕があるため、現状の設計で妥協している。
+
+        // FileCompressed イベントを発火する（成功・失敗問わず）
+        if (FireFileEvent(OnFileFinished, Current(), _index))
+            return (int)SevenZipCode.Cancel;
+
         // 成功の場合は Success 状態、失敗の場合は例外を含む Failed 状態を報告する
         return code == SevenZipCode.Success ?
                Report(ProgressState.Success, Current()) :
@@ -325,6 +381,7 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     /// </summary>
     /// <returns>E_NOTIMPL (0x80004001)。</returns>
     public long EnumProperties(IntPtr enumerator) => 0x80004001L; // E_NOTIMPL
+
 
     #endregion
 
@@ -357,8 +414,11 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     /// </param>
     protected override void Dispose(bool disposing)
     {
-        // 全ての読み取りストリームを解放する
-        foreach (var stream in _streams) stream.Dispose();
+        // P0-5: ここで一括解放する。詳細は SetOperationResult のコメントを参照。
+        foreach (var stream in _streams)
+        {
+            try { stream.Dispose(); } catch { /* 解放失敗は無視 */ }
+        }
         _streams.Clear();
 
         // ロック中ファイルの一時コピーを削除する
@@ -388,7 +448,7 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
             // まず通常モード（FileShare.Read）で開く
             stream = Io.Open(src.FullName);
         }
-        catch (IOException ex) when (IsFileLocked(ex))
+        catch (IOException ex) when (FileSystemHelper.IsFileLocked(ex))
         {
             // ロック中 → 一時コピーを作成してコピーを開く
             var tempPath = CopyLockedFile(src.FullName);
@@ -404,12 +464,7 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     /// <summary>
     /// 例外がファイルロック（共有違反）によるものかを判定する。
     /// </summary>
-    private static bool IsFileLocked(IOException ex)
-    {
-        const int SharingViolation = unchecked((int)0x80070020);
-        const int LockViolation = unchecked((int)0x80070021);
-        return ex.HResult == SharingViolation || ex.HResult == LockViolation;
-    }
+    
 
     /// <summary>
     /// ロック中のファイルを一時ディレクトリにコピーし、コピー先パスを返す。
@@ -428,15 +483,17 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         var tempFileName = $"{Guid.NewGuid():N}_{Path.GetFileName(sourcePath)}";
         var tempPath = Path.Combine(_tempDir, tempFileName);
 
+        // P2-21: バッファサイズを 1MB に拡大して大型ファイルコピーの write syscall 回数を削減
+        const int bufferSize = 1024 * 1024;
         using var src = Io.Open(sourcePath, FileShare.ReadWrite | FileShare.Delete);
         using var dst = new FileStream(tempPath, FileMode.Create, FileAccess.Write,
-            FileShare.None, bufferSize: 4096);
+            FileShare.None, bufferSize: bufferSize);
 
         var srcLength = src.Length;
         if (srcLength > 0)
         {
             dst.SetLength(srcLength);
-            src.CopyTo(dst);
+            src.CopyTo(dst, bufferSize);
             // ソースが縮小した場合に末尾ゼロ埋めを除去
             if (dst.Position != srcLength)
                 dst.SetLength(dst.Position);
@@ -449,6 +506,11 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     /// 現在処理中のエンティティを返す。
     /// </summary>
     private RawEntity Current() => (_index >= 0 && _index < _items.Count) ? _items[_index] : null;
+
+    /// <summary>
+    /// per-file イベントを発火し、ハンドラからキャンセル要求があれば true を返す。
+    /// </summary>
+    
 
     /// <summary>
     /// 7-zip コールバックインデックスを <see cref="_items"/> 内のインデックスに変換する。
@@ -493,6 +555,7 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     #region Fields
     // 開いた読み取りストリームのリスト（Dispose 時に全て解放する）
     private readonly List<ArchiveStreamReader> _streams = [];
+
     // 新規/置換アイテムのリスト（_plan が null の場合は全アイテム、非 null の場合は新規/置換のみ）
     private readonly IList<RawEntity> _items;
     // 更新プラン（null = 新規作成モード、非 null = 更新モード）

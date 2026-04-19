@@ -20,7 +20,8 @@ jobs:
   check-and-update:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      # P2-25: SHA 固定でサプライチェーン攻撃を防ぐ
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Get current vendored version
         id: current
@@ -83,13 +84,20 @@ jobs:
           Write-Host "Current=$current, Latest=$latestNum, NeedsUpdate=$needsUpdate"
 
       - name: Download and verify
+        id: download
         if: steps.compare.outputs.needs_update == 'true'
         shell: pwsh
         run: |
           function Test-7zSignature {
             param([string]$Path)
             $sig = Get-AuthenticodeSignature -FilePath $Path
-            return ($sig.Status -eq 'Valid' -and $sig.SignerCertificate.Subject -like '*Igor Pavlov*')
+            # P3: Subject + Issuer の両方を検証して改ざん耐性を強化
+            # 7-Zip の公式証明書は Sectigo (旧 Comodo) 系 CA から発行されている
+            $subjectOk = $sig.SignerCertificate.Subject -like '*Igor Pavlov*'
+            $issuerOk  = ($sig.SignerCertificate.Issuer -like '*Sectigo*') -or
+                         ($sig.SignerCertificate.Issuer -like '*Comodo*') -or
+                         ($sig.SignerCertificate.Issuer -like '*DigiCert*')
+            return ($sig.Status -eq 'Valid' -and $subjectOk -and $issuerOk)
           }
 
           # ダウンロード + Authenticode 検証
@@ -123,7 +131,8 @@ jobs:
 
       - name: Create Pull Request
         if: steps.compare.outputs.needs_update == 'true'
-        uses: peter-evans/create-pull-request@v7
+        # P2-25: SHA 固定でサプライチェーン攻撃を防ぐ
+        uses: peter-evans/create-pull-request@67ccf781d68e04c81f3e2795bdf5bba7e30d4f7f # v7.0.8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: chore/bump-7zip-${{ steps.latest.outputs.tag }}
@@ -138,7 +147,11 @@ jobs:
             - **x64 installer**: `${{ steps.latest.outputs.x64_name }}`
             - **arm64 installer**: `${{ steps.latest.outputs.arm64_name }}`
 
-            Authenticode 署名検証 (Igor Pavlov 名義) 済み。
+            Authenticode 署名検証 (Igor Pavlov 名義 / 認可 CA チェーン) 済み。
+
+            ## バイナリハッシュ (P3)
+            - `x64/7z.dll` SHA256: `${{ steps.download.outputs.x64_sha256 }}`
+            - `arm64/7z.dll` SHA256: `${{ steps.download.outputs.arm64_sha256 }}`
 
             ---
             このPRは `.github/workflows/update-7zip.yml` により自動作成されました。

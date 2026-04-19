@@ -49,6 +49,7 @@ UpgradeLog.htm
 launchSettings.json
 [Tt]est[Rr]esult*
 .claude/settings.local.json
+.serena/
 
 # 本家 7-Zip 26.00 のベンダードネイティブバイナリ (https://www.7-zip.org/)
 !Libraries/Core/Native/**/*.dll

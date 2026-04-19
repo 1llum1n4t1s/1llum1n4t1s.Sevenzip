@@ -113,6 +113,20 @@ ArchiveWriter および ArchiveReader は、生成から破棄まで同一スレ
 | `EncryptionMethod` enum | **新規追加** — 暗号化方式の選択 | `Aes128`, `Aes192`, `Aes256`, `ZipCrypto`, `Default` |
 | `CompressionOption.EncryptionMethod` | **新規追加** — 暗号化方式プロパティ | `init` プロパティ。デフォルトは `EncryptionMethod.Default`。 |
 | `Io.Open(string, FileShare)` | **新規追加** — FileShare 指定付きオープン | Cube.Core の `IoController` にも対応オーバーロード追加。 |
+| `ArchiveReader(Stream, ...)` 等 | **v1.0.66 で追加** — Stream ベース API | path 版と並列運用。`leaveOpen` で所有権制御。 |
+| `ArchiveReader.Extract(int, Stream)` | **v1.0.66** — 単一エントリを直接 Stream に展開 | 辞書版 `Extract(IReadOnlyDictionary<int, Stream>)` も提供。 |
+| `ArchiveWriter.Save(Stream, ...)` | **v1.0.66** — Stream に直接書き込み | `VolumeSize` は未サポート (警告ログ発火)。 |
+| `ArchiveWriter.Add(Stream, name)` | **v1.0.66** — Stream エントリ追加 (一時ファイル経由シム) | `name` は `SafePath` でサニタイズ。 |
+| `ArchiveWriter.Update(Stream, Stream, renameMap?, ...)` | **v1.0.66** — Stream ベース更新 + rename マップ | 自己参照 Stream は `CanSeek` 必須。 |
+| `ArchiveReader.FileExtracting` / `FileExtracted` | **v1.0.66** — per-file 展開イベント | `ArchiveFileEventArgs.Cancel=true` でキャンセル可。 |
+| `ArchiveWriter.FileCompressing` / `FileCompressed` | **v1.0.66** — per-file 圧縮イベント | 同上。 |
+| `ArchiveOption.Encoding : Encoding` | **v1.0.66** — 任意 `Encoding` 指定 | `CodePage` enum より優先。 |
+| `CompressionOption.CustomParameters` | **v1.0.66** — 7z.dll `ISetProperties` パススルー | `mt=<N>`, `cu=on` 等の任意キー注入。 |
+| `CompressionOption.IncludeEmptyDirectories` | **v1.0.66** — 空ディレクトリ除外 | 既定 `true` (互換性維持)。 |
+| `CompressionOption.VolumeSize` | **v1.0.66** — 分割書き出し | `dest.001 / dest.002 ...` を post-process split で生成。`Save(string)` のみ対応。 |
+| `ArchiveEntity.IsUnicodeText` | **v1.0.66** — Unicode デコード判定 (ヒューリスティック) | ZIP bit 11 の厳密値ではない点に注意。 |
+| `ZipArchiveEntity` | **v1.0.66** — Format.Zip 専用の拡張エントリ型 | `Method` / `HostOS` / `PackedSize` / `Comment` 取得可。 |
+| `AsyncPasswordQuery` | **v1.0.66** — 非同期パスワードハンドラ | `Func<CancellationToken, Task<string>>` を `IQuery<string>` として公開。 |
 
 ### 新機能
 
