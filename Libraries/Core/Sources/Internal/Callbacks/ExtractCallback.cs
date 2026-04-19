@@ -1,4 +1,4 @@
-/* ------------------------------------------------------------------------- */
+﻿/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -189,6 +189,20 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
     {
         if (code != SevenZipCode.Success) Logger.Warn($"[{code}] Index:{Current()?.Index ?? -1}, Name:{Current()?.RawName ?? ""}");
 
+        // _iterator が無効な状態で SetOperationResult が呼ばれるケース（破損アーカイブで
+        // 7z.dll が GetStream をスキップしたとき等）に備え、以降の Finalize / イベント発火をガードする
+        var iteratorValid = _iterator.Valid;
+
+        // WrongPassword または PasswordTimes>0 時の DataError は、誤パスワードが
+        // PasswordQuery._cache に永続して UI 再試行を無視する問題を防ぐため、cache をクリアする。
+        // 次回 CryptoGetTextPassword 呼び出し時に Query.Request が再度実行され、
+        // ユーザーに再入力の機会が与えられる。
+        if (code == SevenZipCode.WrongPassword ||
+            (code == SevenZipCode.DataError && PasswordTimes > 0))
+        {
+            (Password as PasswordQuery)?.Reset();
+        }
+
         // WrongPassword は即座に返してパスワード再試行フローに入る
         if (code == SevenZipCode.WrongPassword) return (int)code;
         // パスワード試行済みの DataError は WrongPassword として扱う
@@ -198,12 +212,12 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
 
         try
         {
-            // Extract モードの場合、ストリームを閉じてファイル属性を設定する
-            if (_mode == AskMode.Extract) Finalize(_iterator.Current);
+            // Extract モードの場合、ストリームを閉じてファイル属性を設定する (iterator が valid のときのみ)
+            if (_mode == AskMode.Extract && iteratorValid) Finalize(_iterator.Current);
             Count++;
 
-            // FileExtracted イベントを発火する（Extract モードのみ、成功・失敗問わず）
-            if (_mode == AskMode.Extract)
+            // FileExtracted イベントを発火する（Extract モードのみ、成功・失敗問わず / iterator valid 時のみ）
+            if (_mode == AskMode.Extract && iteratorValid)
             {
                 var cancelled = FireFileEvent(OnFileFinished, _iterator.Current, _iterator.Current?.Index ?? -1);
                 if (cancelled) return (int)SevenZipCode.Cancel;
@@ -343,11 +357,6 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
     /// </summary>
     private ArchiveEntity Current() => _iterator.Valid ? _iterator.Current : null;
 
-    /// <summary>
-    /// per-file イベントを発火し、ハンドラからキャンセル要求があれば true を返す。
-    /// </summary>
-    
-
     #endregion
 
     #region Fields
@@ -363,7 +372,6 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
     private long _hack;
     // 最後に進捗を報告した TickCount64（スロットリング用）
     private long _lastReportedTicks;
-    // 進捗報告の最小間隔（ミリ秒）
-    private const long ReportIntervalMs = 50;
+    // 進捗報告の最小間隔は CallbackBase.ReportIntervalMs に集約
     #endregion
 }

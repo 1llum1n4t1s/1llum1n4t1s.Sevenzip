@@ -1,4 +1,4 @@
-/* ------------------------------------------------------------------------- */
+﻿/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -26,7 +26,33 @@ namespace Cube.FileSystem.SevenZip;
 /// 新しいアーカイブを作成する機能を提供する。
 /// </summary>
 /// <remarks>
+/// <para>
 /// 同一スレッドでの生成から破棄まで実行する必要がある（非同期利用は Task.Run で一連の処理を包む）。
+/// </para>
+/// <para>
+/// <b>スケーラビリティ注意</b>: 非常に大量のエントリ (10 万件超) を圧縮する場合、
+/// 7z.dll 内部のマルチスレッド圧縮が並行的に <c>GetStream</c> を呼ぶため、
+/// 同時オープンしている <see cref="System.IO.FileStream"/> ハンドル数が瞬間的に
+/// 数百〜数千に達する可能性がある。Windows のデフォルトプロセスハンドル上限
+/// (16,384) に近づく場合は <c>ThreadCount</c> を明示的に小さく設定するか、
+/// アーカイブを複数に分割することを検討する。
+/// </para>
+/// <para>
+/// <b>並列実行注意</b>: 同一プロセス内で複数の <see cref="ArchiveWriter"/> を
+/// 同時に動作させることは現状サポートしていない (<c>SevenZipLibrary</c> の共有参照カウンタ
+/// と COM オブジェクト追跡が競合する可能性)。サーバーサイドでは 1 度に 1 つの
+/// 圧縮のみ実行するよう直列化すること。
+/// </para>
+/// <para>
+/// <b>パスワード変更 + rename 併用の注意</b>:
+/// <see cref="Update(System.IO.Stream, System.IO.Stream, System.Collections.Generic.IReadOnlyDictionary{int, string}, string, System.IProgress{Report}, bool, bool)"/>
+/// で rename エントリを指定した場合、既存エントリのデータがそのまま再利用される (再圧縮なし)。
+/// このとき <c>Options.Password</c> を変更しても、rename エントリ/保持エントリは
+/// <b>元のパスワードで暗号化されたまま</b>保持される。新規追加エントリは新しいパスワードで
+/// 暗号化されるため、結果としてハイブリッド暗号化アーカイブが生成される点に注意。
+/// 意図しないハイブリッド化を避けたい場合は、全エントリを <see cref="Add(string, string)"/>
+/// で明示的に再追加する (newdata=1 フラグで再圧縮されパスワードも統一される)。
+/// </para>
 /// </remarks>
 public sealed class ArchiveWriter : DisposableBase
 {
@@ -101,7 +127,14 @@ public sealed class ArchiveWriter : DisposableBase
     /// <param name="name">アーカイブ内の相対パス。</param>
     public void Add(string src, string name)
     {
-        var e = new RawEntity(src, name);
+        if (name is null) throw new ArgumentNullException(nameof(name));
+        // アーカイブ内の相対パスをサニタイズ (Zip Slip 生成側対策)
+        var safe = SanitizeRelativeName(name);
+        if (!safe.HasValue())
+            throw new ArgumentException(
+                $"name '{name}' resolved to empty after sanitization.", nameof(name));
+
+        var e = new RawEntity(src, safe);
         // ファイル/ディレクトリが存在する場合のみ追加する
         if (e.Exists) AddRecursive(e);
         else throw new FileNotFoundException(e.FullName);
@@ -122,16 +155,8 @@ public sealed class ArchiveWriter : DisposableBase
         if (src is null) throw new ArgumentNullException(nameof(src));
         if (string.IsNullOrEmpty(name)) throw new ArgumentException("name is required", nameof(name));
 
-        // P1-8: アーカイブ内に書き出される相対パスを SafePath でサニタイズする
-        // (Zip Slip 生成側対策)。".." / "C:" / UNC / 絶対パス等は除去される。
-        var safe = new SafePath(name)
-        {
-            AllowParentDirectory  = false,
-            AllowDriveLetter      = false,
-            AllowCurrentDirectory = false,
-            AllowInactivation     = false,
-            AllowUnc              = false,
-        }.Value;
+        // 共通サニタイズ (Zip Slip 生成側対策)
+        var safe = SanitizeRelativeName(name);
         if (!safe.HasValue())
             throw new ArgumentException(
                 $"name '{name}' resolved to empty after sanitization.", nameof(name));
@@ -146,11 +171,11 @@ public sealed class ArchiveWriter : DisposableBase
         // 一時ファイルに Stream の内容をコピーする (ファイル名は GetFileName で衝突回避)
         var tempFile = Path.Combine(_streamTempDir,
             $"{Guid.NewGuid():N}_{Io.GetFileName(safe)}");
-        // P3: 1MB バッファで write syscall を削減
+        // 共通バッファサイズで write syscall を削減
         using (var dst = new FileStream(tempFile, FileMode.Create, FileAccess.Write,
-            FileShare.None, bufferSize: 1024 * 1024))
+            FileShare.None, bufferSize: FileSystemHelper.DefaultBufferSize))
         {
-            src.CopyTo(dst, bufferSize: 1024 * 1024);
+            src.CopyTo(dst, bufferSize: FileSystemHelper.DefaultBufferSize);
         }
 
         // path ベース追加として登録する（アーカイブ内の相対パスはサニタイズ済みの safe を使用）
@@ -183,7 +208,7 @@ public sealed class ArchiveWriter : DisposableBase
     /// <param name="progress">進捗を報告するオブジェクト。null の場合は報告しない。</param>
     public void Save(string dest, IProgress<Report> progress)
     {
-        // P2-29: VolumeSize 負値ガード (無限ループ回避)
+        // VolumeSize 負値ガード (無限ループ回避)
         if (Options.VolumeSize < 0)
             throw new ArgumentOutOfRangeException(
                 nameof(CompressionOption.VolumeSize),
@@ -207,10 +232,18 @@ public sealed class ArchiveWriter : DisposableBase
         // 一度 temp file にフル アーカイブを作成してから VolumeSize ごとに分割する
         // (post-process split)。これで 7z.dll 側の制約を回避しつつ、
         // 呼び出し側には dest.001 / dest.002 ... を提供できる。
-        // 注意 (P1-9): この実装は一時ファイル書き込み + 分割コピーの 2 回 I/O が
+        // 注意: この実装は一時ファイル書き込み + 分割コピーの 2 回 I/O が
         // 発生する。大型アーカイブ (数 GB 以上) では TEMP 空き容量とディスク I/O に注意。
         if (Options.VolumeSize > 0)
         {
+            // Format.Zip のボリューム分割は本来 `.z01/.z02/.zip` 形式だが、
+            // 本実装は単純なバイナリ分割 (`.001/.002`) なので他ツール (WinZip / macOS Finder)
+            // では結合後でないと認識できない。呼び出し側に互換性の注意を明示する。
+            if (Format == Format.Zip)
+                Logger.Warn(
+                    "[Save] VolumeSize with Format.Zip produces binary-split (.001/.002) files, " +
+                    "not ZIP-native multi-volume (.z01/.z02/.zip). Other tools may not recognize them.");
+
             var tempPath = Path.Combine(Path.GetTempPath(),
                 $"SevenZipVol_{Guid.NewGuid():N}.tmp");
             try
@@ -243,7 +276,7 @@ public sealed class ArchiveWriter : DisposableBase
     {
         if (dest is null) throw new ArgumentNullException(nameof(dest));
 
-        // P1-11: Stream 版の Save は VolumeSize をサポートしない。
+        // Stream 版の Save は VolumeSize をサポートしない。
         // 呼び出し側が設定値を設定していた場合は無視するがサイレントだと気づけないため警告。
         if (Options.VolumeSize > 0)
             Logger.Warn("[Save] VolumeSize is not supported for Stream output; the option is ignored.");
@@ -258,7 +291,7 @@ public sealed class ArchiveWriter : DisposableBase
                 SaveAsTar(tempPath, FilterItems(_items), progress);
                 using var fs = Io.Open(tempPath);
                 // P3: 大型アーカイブを効率的に書き戻すため 1MB バッファで CopyTo
-                fs.CopyTo(dest, bufferSize: 1024 * 1024);
+                fs.CopyTo(dest, bufferSize: FileSystemHelper.DefaultBufferSize);
             }
             finally { Logger.Try(() => Io.Delete(tempPath)); }
         }
@@ -280,8 +313,12 @@ public sealed class ArchiveWriter : DisposableBase
     public void Remove(string relativeName)
     {
         if (relativeName is null) throw new ArgumentNullException(nameof(relativeName));
-        // パス区切り文字を正規化し、末尾の '\' を取り除いてディレクトリエントリと一致させる
-        _removeNames.Add(relativeName.Replace('/', '\\').TrimEnd('\\'));
+        // 空文字列 / 空白のみを拒否 (プレフィックスが "\\" になり全エントリ削除を誘発するため)
+        var normalized = relativeName.Replace('/', '\\').TrimEnd('\\');
+        if (string.IsNullOrWhiteSpace(normalized))
+            throw new ArgumentException(
+                "relativeName resolved to empty after normalization.", nameof(relativeName));
+        _removeNames.Add(normalized);
     }
 
     /// <summary>
@@ -350,7 +387,7 @@ public sealed class ArchiveWriter : DisposableBase
             var dir = Io.GetDirectoryName(actualDest);
             Io.CreateDirectory(dir);
 
-            // P0-3: using var にすると outStream が開いたまま Io.Move(actualDest, dest) が
+            // using var にすると outStream が開いたまま Io.Move(actualDest, dest) が
             // 走るため、Windows 環境ではウイルスチェッカー等の介入で Move が失敗しうる。
             // UpdateCore 完了後に明示的に Dispose してから Move を実行する。
             var inStream  = new ArchiveStreamReader(Io.Open(source));
@@ -383,9 +420,12 @@ public sealed class ArchiveWriter : DisposableBase
                     try { Io.Move(backup, source, false); }
                     catch (Exception restoreEx)
                     {
-                        // ロールバックも失敗した場合: バックアップのパスを通知して呼び出し元が対処できるようにする
-                        throw new IOException(
+                        // ロールバック失敗時は ArchiveUpdateException 構造化例外で通知。
+                        // BackupPath / OriginalPath プロパティから呼び出し側が手動復旧できる。
+                        throw new ArchiveUpdateException(
                             $"Failed to restore original archive. Backup is at: {backup}",
+                            originalPath: source,
+                            backupPath:   backup,
                             new AggregateException(ex, restoreEx));
                     }
                     throw; // Move 失敗の元例外を再スローする
@@ -434,13 +474,25 @@ public sealed class ArchiveWriter : DisposableBase
     /// <param name="leaveSourceOpen">true の場合、完了後に source を Dispose しない。既定値は true。</param>
     /// <param name="leaveDestOpen">true の場合、完了後に dest を Dispose しない。既定値は true。</param>
     /// <remarks>
+    /// <para>
     /// rename 処理は既存エントリのデータをそのまま再利用し、パスのみ差し替える（新規圧縮は発生しない）。
     /// 同時に <see cref="Add(string, string)"/> / <see cref="Add(Stream, string)"/> / <see cref="Remove(string)"/>
     /// による操作も適用できる。renameMap と Add に同じパスが現れた場合は Add の内容が優先される
     /// （Add のデータで置換される）。
-    ///
-    /// source と dest に同じ Stream インスタンスを渡した場合、一度 MemoryStream にコピーしてから
-    /// 更新処理を行い、結果を元の Stream に書き戻す（大型アーカイブではメモリ消費に注意）。
+    /// </para>
+    /// <para>
+    /// <b>自己参照 (source == dest) の挙動:</b> 一度 MemoryStream に読み出してから書き戻すため、
+    /// アーカイブサイズが大きいとメモリ消費が 2 倍になる (元サイズ + 新サイズ)。
+    /// 10MB 以上のアーカイブでは path ベース <see cref="Update(string, string, string, IProgress{Report})"/>
+    /// の利用を推奨する。
+    /// </para>
+    /// <para>
+    /// <b>OOM 時の dest 保護:</b> 自己参照更新中に <see cref="OutOfMemoryException"/> や
+    /// UpdateCore 内部例外が発生した場合、元の dest 内容を維持するために処理は
+    /// <b>MemoryStream ローカルバッファの生成完了までは dest に書き込まない</b>。
+    /// 書き戻しフェーズ中に例外が起きた場合は dest を長さ 0 に truncate して
+    /// 部分書き込みによるサイレント破損を防ぐ (呼び出し側は例外キャッチ時に dest を破棄すること)。
+    /// </para>
     /// </remarks>
     public void Update(Stream source, Stream dest,
         IReadOnlyDictionary<int, string> renameMap,
@@ -455,7 +507,7 @@ public sealed class ArchiveWriter : DisposableBase
 
         var sameStream = ReferenceEquals(source, dest);
 
-        // P0-2: 自己参照時は dest が truncate 可能 (= CanSeek) である必要がある。
+        // 自己参照時は dest が truncate 可能 (= CanSeek) である必要がある。
         // NetworkStream など非シークの dest に書き戻すと既存内容の末尾に追記されて
         // 旧データ + 新データの不整合アーカイブが生成される (サイレント破損)。
         if (sameStream && !dest.CanSeek)
@@ -475,18 +527,33 @@ public sealed class ArchiveWriter : DisposableBase
             using (var inStream = new ArchiveStreamReader(copy, dispose: false))
             using (var outStream = new ArchiveStreamWriter(outBuffer, dispose: false))
             {
+                // 書き戻しフェーズ前にここで例外が起きた場合、dest は無変更のまま
+                // (書き戻し未実施) となる。OOM 耐性: outBuffer が完成するまで dest
+                // に触らない設計。
                 UpdateCore(inStream, outStream, string.Empty, string.Empty,
                     sourcePassword ?? Options.Password, progress, renameMap);
             }
 
-            // 結果を元の Stream に書き戻す (CanSeek は上記ガードで保証済み)
-            dest.Position = 0L;
-            dest.SetLength(0L);
-            outBuffer.Position = 0L;
-            outBuffer.CopyTo(dest);
-            dest.Flush();
-            // 呼び出し元が読み戻せるよう位置を先頭に戻す
-            dest.Position = 0L;
+            // 結果を元の Stream に書き戻す (CanSeek は上記ガードで保証済み)。
+            // 書き戻し中 (CopyTo / Flush) の例外は dest を partial 状態で放置しないよう、
+            // catch して dest.SetLength(0) で明示的に破棄する。
+            try
+            {
+                dest.Position = 0L;
+                dest.SetLength(0L);
+                outBuffer.Position = 0L;
+                outBuffer.CopyTo(dest);
+                dest.Flush();
+                // 呼び出し元が読み戻せるよう位置を先頭に戻す
+                dest.Position = 0L;
+            }
+            catch
+            {
+                // 書き戻し失敗: dest を空にしてサイレント破損を防ぐ。
+                // 呼び出し側は例外をキャッチしたら dest を破棄または再生成する責務。
+                try { dest.SetLength(0L); dest.Flush(); } catch { /* 最終防御は失敗しても諦める */ }
+                throw;
+            }
         }
         else
         {
@@ -544,7 +611,7 @@ public sealed class ArchiveWriter : DisposableBase
 
             var existingCount = inArchive.GetNumberOfItems();
 
-            // P2-23: 既存エントリのパスを 1 回だけ取得してキャッシュする。
+            // 既存エントリのパスを 1 回だけ取得してキャッシュする。
             // (removeSet 構築と UpdatePlan で重複して COM RPC しないため)
             var existingPaths = new string[existingCount];
             for (uint i = 0; i < existingCount; i++)
@@ -553,7 +620,7 @@ public sealed class ArchiveWriter : DisposableBase
                     .Replace('/', '\\');
             }
 
-            // P2-22: 削除対象の既存インデックスを O(E + R) で収集する。
+            // 削除対象の既存インデックスを O(E + R) で収集する。
             // 旧実装は foreach (removeName) × for (existingCount) で O(E×R) だったが、
             // プレフィックスリストを事前構築 + 完全一致 Set で HashSet ヒットを優先する。
             HashSet<uint> removeSet = null;
@@ -598,12 +665,16 @@ public sealed class ArchiveWriter : DisposableBase
                 foreach (var kv in renameMap)
                 {
                     if (kv.Key < 0 || (uint)kv.Key >= existingCount) continue;
-                    planRenameMap[(uint)kv.Key] = kv.Value;
+                    // rename 値もサニタイズ (Zip Slip 生成側対策)。
+                    // 値が null/empty は「削除」意図なのでそのまま渡す (UpdatePlan 側で削除扱い)。
+                    planRenameMap[(uint)kv.Key] = string.IsNullOrEmpty(kv.Value)
+                        ? kv.Value
+                        : SanitizeRelativeName(kv.Value);
                 }
             }
 
             // 既存アイテム・新規アイテム・削除セット・rename マップから UpdatePlan を生成する
-            // P2-23: existingPaths をキャッシュ配列から引き、重複 COM GetString を回避する
+            // existingPaths をキャッシュ配列から引き、重複 COM GetString を回避する
             var plan = new UpdatePlan(
                 existingCount,
                 idx => existingPaths[idx],
@@ -715,38 +786,58 @@ public sealed class ArchiveWriter : DisposableBase
     /// </remarks>
     private static void SplitFileIntoVolumes(string sourcePath, string basePath, long volumeSize)
     {
-        const int bufferSize = 1024 * 1024; // 1MB チャンク
-        var buffer = new byte[bufferSize];
+        // バッファサイズは共通定数 FileSystemHelper.DefaultBufferSize を使用
+        const int bufferSize = FileSystemHelper.DefaultBufferSize;
+        // LOH 圧迫を避けるため ArrayPool から貸し出す
+        var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(bufferSize);
 
-        using var src = Io.Open(sourcePath);
-        var totalSize = src.Length;
-        long copied = 0;
-        var index = 1;
+        // 途中で例外が発生した場合は生成済みの dest.NNN を全て削除する
+        //       (中途半端な分割ファイルが残って再試行時に邪魔になるのを防ぐ)
+        var createdVolumes = new List<string>();
 
-        while (copied < totalSize)
+        try
         {
-            var remaining = totalSize - copied;
-            var currentVolumeSize = Math.Min(volumeSize, remaining);
-            var volumePath = $"{basePath}.{index:D3}";
+            using var src = Io.Open(sourcePath);
+            var totalSize = src.Length;
+            long copied = 0;
+            var index = 1;
 
-            // 親ディレクトリを確実に作成する (base が階層を含む場合のため)
-            var dir = Io.GetDirectoryName(volumePath);
-            if (!string.IsNullOrEmpty(dir)) Io.CreateDirectory(dir);
-
-            using (var dst = Io.Create(volumePath))
+            while (copied < totalSize)
             {
-                long written = 0;
-                while (written < currentVolumeSize)
+                var remaining = totalSize - copied;
+                var currentVolumeSize = Math.Min(volumeSize, remaining);
+                var volumePath = $"{basePath}.{index:D3}";
+                createdVolumes.Add(volumePath);
+
+                // 親ディレクトリを確実に作成する (base が階層を含む場合のため)
+                var dir = Io.GetDirectoryName(volumePath);
+                if (!string.IsNullOrEmpty(dir)) Io.CreateDirectory(dir);
+
+                using (var dst = Io.Create(volumePath))
                 {
-                    var toRead = (int)Math.Min(bufferSize, currentVolumeSize - written);
-                    var read = src.Read(buffer, 0, toRead);
-                    if (read <= 0) break;
-                    dst.Write(buffer, 0, read);
-                    written += read;
+                    long written = 0;
+                    while (written < currentVolumeSize)
+                    {
+                        var toRead = (int)Math.Min(bufferSize, currentVolumeSize - written);
+                        var read = src.Read(buffer, 0, toRead);
+                        if (read <= 0) break;
+                        dst.Write(buffer, 0, read);
+                        written += read;
+                    }
+                    copied += written;
                 }
-                copied += written;
+                index++;
             }
-            index++;
+        }
+        catch
+        {
+            // 生成済みの .001 / .002 / ... を全削除して呼び出し元に例外を伝播する
+            foreach (var v in createdVolumes) Logger.Try(() => Io.Delete(v));
+            throw;
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 
@@ -839,18 +930,48 @@ public sealed class ArchiveWriter : DisposableBase
     /// 登録される）のため、各ディレクトリ i について「i+1 以降に i.RelativeName を prefix とする
     /// 非ディレクトリエントリが 1 件でも存在するか」を線形走査で判定する。
     /// </remarks>
+    /// <summary>
+    /// アーカイブ内の相対パスをサニタイズする (Zip Slip 生成側対策)。
+    /// </summary>
+    /// <remarks>
+    /// <c>Add(string, name)</c> / <c>Add(Stream, name)</c> /
+    /// <c>Update(..., renameMap, ...)</c> の rename 値に共通で適用する。
+    /// <c>..</c> / ドライブレター / UNC / 絶対パスは除去される。
+    /// </remarks>
+    internal static string SanitizeRelativeName(string name)
+    {
+        if (name is null) return null;
+        return new SafePath(name)
+        {
+            AllowParentDirectory  = false,
+            AllowDriveLetter      = false,
+            AllowCurrentDirectory = false,
+            AllowInactivation     = false,
+            AllowUnc              = false,
+        }.Value;
+    }
+
     private IList<RawEntity> FilterItems(IList<RawEntity> src)
     {
         if (Options.IncludeEmptyDirectories || src.Count == 0) return src;
 
-        // P0-6: 以前の O(N²) 実装から O(N + D×avgPrefix) 相当に変更。
-        // 全ファイルの相対名を HashSet に事前収集し、各ディレクトリは「自身の prefix を
-        // 含むファイルが存在するか」を StartsWith ループで判定する (HashSet 全体を回すが
-        // ファイル数だけの比較に削減される)。
-        var fileNames = new List<string>(src.Count);
+        // O(N × depth) アルゴリズム:
+        // ファイルが属する全ての祖先ディレクトリを HashSet に事前収集することで、
+        // 各ディレクトリが「子孫ファイルを持つか」を O(1) の HashSet.Contains で判定できる。
+        // N=10000 ファイル × depth=5 で約 5 万回 → 旧 O(N²) の 10⁸ から 2000 倍改善。
+        var dirWithChildren = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var e in src)
         {
-            if (!e.IsDirectory) fileNames.Add(e.RelativeName.Replace('/', '\\'));
+            if (e.IsDirectory) continue;
+            var p = e.RelativeName.Replace('/', '\\');
+            // ファイルが属する全祖先ディレクトリを登録 (末尾 '\' なしで正規化)
+            var sep = p.LastIndexOf('\\');
+            while (sep > 0)
+            {
+                var dir = p.Substring(0, sep);
+                if (!dirWithChildren.Add(dir)) break; // 既存ならその祖先も登録済み
+                sep = dir.LastIndexOf('\\');
+            }
         }
 
         var result = new List<RawEntity>(src.Count);
@@ -858,19 +979,9 @@ public sealed class ArchiveWriter : DisposableBase
         {
             if (!e.IsDirectory) { result.Add(e); continue; }
 
-            var name = e.RelativeName.Replace('/', '\\');
-            var prefix = name.EndsWith('\\') ? name : name + "\\";
-
-            var hasChild = false;
-            foreach (var f in fileNames)
-            {
-                if (f.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                {
-                    hasChild = true;
-                    break;
-                }
-            }
-            if (hasChild) result.Add(e);
+            // ディレクトリ名を正規化して (末尾 '\' 無し) HashSet を O(1) で引く
+            var dirName = e.RelativeName.Replace('/', '\\').TrimEnd('\\');
+            if (dirWithChildren.Contains(dirName)) result.Add(e);
         }
         return result;
     }
@@ -908,11 +1019,6 @@ public sealed class ArchiveWriter : DisposableBase
             throw new AccessException(src.RawName, e);
         }
     }
-
-    /// <summary>
-    /// 例外がファイルロック（共有違反）によるものかを判定する。
-    /// </summary>
-    
 
     /// <summary>
     /// UpdateCallback のインスタンスを生成して指定したコールバック関数を実行する。

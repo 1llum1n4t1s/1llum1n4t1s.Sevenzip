@@ -10,9 +10,11 @@
     <ItemGroup>
         <ProjectReference Include="..\..\Libraries\Core\Cube.FileSystem.SevenZip.csproj" />
         <ProjectReference Include="..\Private\Cube.Private.Tests.csproj" />
-        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="*" />
-        <PackageReference Include="NUnit3TestAdapter" Version="*" />
-        <PackageReference Include="Appveyor.TestLogger" Version="*" />
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+        <PackageReference Include="NUnit3TestAdapter" Version="5.0.0" />
+        <PackageReference Include="Appveyor.TestLogger" Version="2.0.0" />
+        <!-- NUnit3TestAdapter が要求する依存を明示固定 (transitive だが version 解決が net10.0 で不安定なため明示) -->
+        <PackageReference Include="Microsoft.Extensions.DependencyModel" Version="8.0.2" />
     </ItemGroup>
     <ItemGroup>
 <None Include="Examples\**\*" CopyToOutputDirectory="Always" />

@@ -20,7 +20,7 @@ jobs:
   check-and-update:
     runs-on: windows-latest
     steps:
-      # P2-25: SHA 固定でサプライチェーン攻撃を防ぐ
+      # SHA 固定でサプライチェーン攻撃を防ぐ
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Get current vendored version
@@ -91,8 +91,8 @@ jobs:
           function Test-7zSignature {
             param([string]$Path)
             $sig = Get-AuthenticodeSignature -FilePath $Path
-            # P3: Subject + Issuer の両方を検証して改ざん耐性を強化
-            # 7-Zip の公式証明書は Sectigo (旧 Comodo) 系 CA から発行されている
+            # Subject + Issuer の両方を検証して改ざん耐性を強化。
+            # 7-Zip の公式証明書は Sectigo (旧 Comodo) 系 CA から発行されている。
             $subjectOk = $sig.SignerCertificate.Subject -like '*Igor Pavlov*'
             $issuerOk  = ($sig.SignerCertificate.Issuer -like '*Sectigo*') -or
                          ($sig.SignerCertificate.Issuer -like '*Comodo*') -or
@@ -123,6 +123,15 @@ jobs:
               exit 1
             }
 
+            # 展開後の 7z.dll 自体も Authenticode 検証する。
+            # インストーラの SFX が侵害されても、内部 DLL の署名までは改竄できない前提で
+            # 二重防御とする。
+            if (-not (Test-7zSignature $dll.FullName)) {
+              Write-Host "::error::Authenticode verification failed for $arch 7z.dll"
+              exit 1
+            }
+            Write-Host "$arch 7z.dll: Authenticode OK"
+
             Copy-Item $dll.FullName "Libraries/Core/Native/$arch/7z.dll" -Force
             $hash = (Get-FileHash "Libraries/Core/Native/$arch/7z.dll" -Algorithm SHA256).Hash
             Write-Host "$arch 7z.dll updated (SHA256: $hash)"
@@ -131,7 +140,7 @@ jobs:
 
       - name: Create Pull Request
         if: steps.compare.outputs.needs_update == 'true'
-        # P2-25: SHA 固定でサプライチェーン攻撃を防ぐ
+        # SHA 固定でサプライチェーン攻撃を防ぐ
         uses: peter-evans/create-pull-request@271a8d0340265f705b14b6d32b9829c1cb33d45e # v7.0.8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -148,8 +157,9 @@ jobs:
             - **arm64 installer**: `${{ steps.latest.outputs.arm64_name }}`
 
             Authenticode 署名検証 (Igor Pavlov 名義 / 認可 CA チェーン) 済み。
+            インストーラ .exe に加えて、展開後の `7z.dll` 自体も二重で署名検証している。
 
-            ## バイナリハッシュ (P3)
+            ## バイナリハッシュ
             - `x64/7z.dll` SHA256: `${{ steps.download.outputs.x64_sha256 }}`
             - `arm64/7z.dll` SHA256: `${{ steps.download.outputs.arm64_sha256 }}`
 

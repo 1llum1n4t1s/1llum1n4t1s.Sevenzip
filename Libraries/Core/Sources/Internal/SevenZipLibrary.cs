@@ -1,4 +1,4 @@
-/* ------------------------------------------------------------------------- */
+﻿/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -29,13 +29,39 @@ namespace Cube.FileSystem.SevenZip;
 /// 7z.dll の機能を提供するクラス。
 /// </summary>
 /// <remarks>
+/// <para>
 /// 参照カウント付きの共有シングルトンとして実装されている。
 /// <see cref="Acquire"/> で参照カウントをインクリメントし、
 /// <see cref="Dispose"/> でデクリメントする。
 /// カウントが 0 になった時点で DLL をアンロードする。
-///
-/// COM オブジェクトのライフタイムは <see cref="_tracked"/> リストで管理する。
+/// </para>
+/// <para>
+/// COM オブジェクトのライフタイムは <see cref="_tracked"/> <see cref="HashSet{T}"/> で管理する。
 /// DLL アンロード前に全オブジェクトの FinalRelease を確実に実行する。
+/// HashSet により <see cref="ReleaseComWrapper"/> の除去コストを O(1) に保つ。
+/// </para>
+/// <para>
+/// <b>並列実行の制約:</b> 同一プロセス内で複数の
+/// <see cref="ArchiveReader"/> / <see cref="ArchiveWriter"/> を並行して動作させることは
+/// <b>現状サポートしていない</b>。理由:
+/// </para>
+/// <list type="bullet">
+/// <item><description>
+/// _refCount / _tracked は共有シングルトン上で管理されるため、あるインスタンスの
+/// Dispose が他インスタンスの使用中 COM オブジェクトを解放するシナリオは防げない
+/// (Dispose は _refCount==0 のときのみ解放するが、複数インスタンスが均等に Acquire/Release
+/// していれば安全)。ただし、両者が同時に最後の Dispose を走らせると FinalRelease と
+/// 使用中が競合する可能性がある。
+/// </description></item>
+/// <item><description>
+/// 7z.dll 自体は内部状態を持たず thread-safe だが、本ラッパーの COM オブジェクト
+/// 追跡設計が直列化を前提としている。
+/// </description></item>
+/// </list>
+/// <para>
+/// サーバーサイドや GUI アプリでは <see cref="System.Threading.SemaphoreSlim"/> や
+/// <c>Task.Run</c> での 1 スロット直列化を行うこと。
+/// </para>
 /// </remarks>
 internal sealed class SevenZipLibrary : IDisposable
 {
@@ -210,7 +236,7 @@ internal sealed class SevenZipLibrary : IDisposable
     /// </remarks>
     public void Dispose()
     {
-        // P2-28: FinalRelease はロック外で呼ぶ。ロック保持のままネイティブへ遷移すると、
+        // FinalRelease はロック外で呼ぶ。ロック保持のままネイティブへ遷移すると、
         // ネイティブ→マネージド再入時の `lock (_lock)` で別スレッドが解放待ちに入り
         // デッドロックが発生する可能性がある。
         List<object> toRelease = null;
@@ -222,7 +248,8 @@ internal sealed class SevenZipLibrary : IDisposable
             if (--_refCount > 0) return;
 
             // 解放対象をローカルリストに取り出してから lock を抜ける
-            toRelease = [.. _tracked];
+            // HashSet.CopyTo で無駄なアロケーションを減らしつつスナップショットを取る
+            toRelease = new List<object>(_tracked);
             _tracked.Clear();
 
             // ネイティブ DLL ハンドルも lock 外で Close する
@@ -312,7 +339,10 @@ internal sealed class SevenZipLibrary : IDisposable
     private readonly SafeLibraryHandle _handle;
     // GetProcAddress で取得した CreateObject 関数のアドレス
     private readonly IntPtr _createObjectPtr;
-    // FinalRelease を確実に呼び出すために生成した COM ラッパーを追跡するリスト
-    private readonly List<object> _tracked = [];
+    // FinalRelease を確実に呼び出すために生成した COM ラッパーを追跡する HashSet。
+    // ReleaseComWrapper の Remove を O(1) にするため List から HashSet に変更。
+    // 参照等価性 (ReferenceEqualityComparer) を使うことで COM ラッパーオブジェクトを
+    // 同一インスタンスのみマッチさせる (オーバーロードされた Equals に依存しない)。
+    private readonly HashSet<object> _tracked = new(ReferenceEqualityComparer.Instance);
     #endregion
 }

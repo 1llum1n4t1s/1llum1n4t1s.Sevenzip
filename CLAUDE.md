@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## プロジェクト概要
 
-7-Zip COM インターフェースを利用した .NET 10 向け圧縮・解凍ラッパーライブラリ。[Cube.FileSystem.SevenZip](https://github.com/cube-soft/cube.filesystem.sevenzip) のフォークで、.NET 10 / NativeAOT 対応 + 本家 7-Zip 26.00 バイナリの vendoring が主な変更点。NuGet パッケージ ID は `1llum1n4t1s.Sevenzip`。**Windows x64 / arm64 専用**。v1.0.58 で AnyCPU 移行 + ARM64 対応 + ビルド時 auto-update 機構を追加、SFX 関連 API を削除した (breaking change)。
+7-Zip COM インターフェースを利用した .NET 10 向け圧縮・解凍ラッパーライブラリ。[Cube.FileSystem.SevenZip](https://github.com/cube-soft/cube.filesystem.sevenzip) のフォークで、.NET 10 / NativeAOT 対応 + 本家 7-Zip 26.00 バイナリの vendoring が主な変更点。NuGet パッケージ ID は `1llum1n4t1s.Sevenzip`。**Windows x64 / arm64 専用**。v1.0.58 で SFX 関連 API を削除 (breaking change)、v1.0.60 で AnyCPU 移行 + ARM64 対応 + ビルド時 auto-update 機構を追加、v1.0.64 で auto-update 機構を撤去し決定論的ビルドに回帰した。v1.0.66 で Stream ベース API / CustomParameters / VolumeSize / AsyncPasswordQuery 等の大規模追加、v1.0.67 で 6 人分隊レビュー対応。
 
 ## ビルド・テストコマンド
 

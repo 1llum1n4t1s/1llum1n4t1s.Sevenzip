@@ -1,4 +1,4 @@
-/* ------------------------------------------------------------------------- */
+﻿/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -132,13 +132,17 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         var value = bytes != IntPtr.Zero ? Marshal.ReadInt64(bytes) : 0L;
 
         // 値が前回より小さくなった場合は次のファイルに移った（リセットされた）と判断し、
-        // 前回のファイルのバイト数を累積値に加算する
-        if (value < _lastCompletedBytes)
+        // 前回のファイルのバイト数を累積値に加算する。
+        // ただし 0 未満にならないよう最小値クランプ + 最終的な Bytes を TotalBytes 以下にクランプして
+        // 保持エントリの無 GetStream コピー時等でも 100% 超過表示を避ける。
+        if (value < _lastCompletedBytes && _lastCompletedBytes > 0)
             _cumulativeBytes += _lastCompletedBytes;
         _lastCompletedBytes = value;
 
         // 累積値と現在のファイルの進捗を合算して全体の処理済みバイト数とする
-        Bytes = _cumulativeBytes + value;
+        var snap = _cumulativeBytes + value;
+        // 100% 超過で進捗 UI がおかしくならないよう TotalBytes を上限とする
+        Bytes = TotalBytes > 0 && snap > TotalBytes ? TotalBytes : snap;
 
         // 50ms 以内の連続呼び出しは進捗報告をスキップしてコールバックのオーバーヘッドを削減する
         var now = Environment.TickCount64;
@@ -351,7 +355,7 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     {
         if (code != SevenZipCode.Success) Logger.Warn($"[{code}] Index:{_index}, Name:{Current()?.RawName ?? ""}");
 
-        // P0-5 メモ (検証済の現時点での結論):
+        // Stream 早期解放の設計メモ (検証済の現時点での結論):
         // 以下の 2 案で早期解放を試みたがどちらも破綻したため、Dispose 時一括解放に集約している:
         //
         // 案 A: SetOperationResult で _currentStream を即時 Dispose
@@ -414,7 +418,7 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     /// </param>
     protected override void Dispose(bool disposing)
     {
-        // P0-5: ここで一括解放する。詳細は SetOperationResult のコメントを参照。
+        // ここで一括解放する。詳細は SetOperationResult のコメントを参照。
         foreach (var stream in _streams)
         {
             try { stream.Dispose(); } catch { /* 解放失敗は無視 */ }
@@ -462,11 +466,6 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     }
 
     /// <summary>
-    /// 例外がファイルロック（共有違反）によるものかを判定する。
-    /// </summary>
-    
-
-    /// <summary>
     /// ロック中のファイルを一時ディレクトリにコピーし、コピー先パスを返す。
     /// FileShare.ReadWrite で開くことでロック中でも読み取れる。
     /// </summary>
@@ -483,8 +482,8 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         var tempFileName = $"{Guid.NewGuid():N}_{Path.GetFileName(sourcePath)}";
         var tempPath = Path.Combine(_tempDir, tempFileName);
 
-        // P2-21: バッファサイズを 1MB に拡大して大型ファイルコピーの write syscall 回数を削減
-        const int bufferSize = 1024 * 1024;
+        // 共通の 1MB バッファで write syscall 回数を削減
+        const int bufferSize = FileSystemHelper.DefaultBufferSize;
         using var src = Io.Open(sourcePath, FileShare.ReadWrite | FileShare.Delete);
         using var dst = new FileStream(tempPath, FileMode.Create, FileAccess.Write,
             FileShare.None, bufferSize: bufferSize);
@@ -506,11 +505,6 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     /// 現在処理中のエンティティを返す。
     /// </summary>
     private RawEntity Current() => (_index >= 0 && _index < _items.Count) ? _items[_index] : null;
-
-    /// <summary>
-    /// per-file イベントを発火し、ハンドラからキャンセル要求があれば true を返す。
-    /// </summary>
-    
 
     /// <summary>
     /// 7-zip コールバックインデックスを <see cref="_items"/> 内のインデックスに変換する。
@@ -572,7 +566,6 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     private long _lastCompletedBytes = 0L;
     // 最後に進捗を報告した TickCount64（スロットリング用）
     private long _lastReportedTicks;
-    // 進捗報告の最小間隔（ミリ秒）
-    private const long ReportIntervalMs = 50;
+    // 進捗報告の最小間隔は CallbackBase.ReportIntervalMs に集約
     #endregion
 }

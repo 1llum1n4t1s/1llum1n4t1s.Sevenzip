@@ -69,8 +69,14 @@ public class CompressionOption : ArchiveOption
     /// Password
     ///
     /// <summary>
-    /// Gets or sets a password to encrypt the archive being created.
+    /// 作成するアーカイブの暗号化パスワードを取得する。
     /// </summary>
+    /// <remarks>
+    /// <b>メモリ保持の注意</b>: このプロパティは <c>init</c> 専用の <see cref="string"/>
+    /// なので <see cref="ArchiveWriter"/> が長寿命オブジェクトとして保持される場合は
+    /// パスワードが GC されるまで平文で残る。セキュリティを重視する場合は
+    /// <see cref="ArchiveWriter"/> のスコープを <c>using</c> 等で最小限に留めること。
+    /// </remarks>
     ///
     /* --------------------------------------------------------------------- */
     public string Password { get; init; } = string.Empty;
@@ -89,7 +95,7 @@ public class CompressionOption : ArchiveOption
     /// このコレクションの値が優先される。全ての値は BSTR として注入する。
     /// </remarks>
     /* --------------------------------------------------------------------- */
-    // P2-20: デフォルトは null。CompressionOptionSetter 側で null ガードするため、
+    // デフォルトは null。CompressionOptionSetter 側で null ガードするため、
     // 使わないケースで辞書 allocation が発生しないようにする。
     public IDictionary<string, string> CustomParameters { get; init; }
 

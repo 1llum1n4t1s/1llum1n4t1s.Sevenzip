@@ -21,13 +21,19 @@ namespace Cube.FileSystem.SevenZip;
 
 /// <summary>
 /// ファイル I/O に関する共通ヘルパー。
+/// <c>ArchiveWriter</c> と <c>UpdateCallback</c> で共有する <c>IsFileLocked</c> 判定と
+/// 1MB バッファサイズを集約する。
 /// </summary>
-/// <remarks>
-/// P2-17: <c>ArchiveWriter</c> と <c>UpdateCallback</c> に重複していた
-/// <c>IsFileLocked</c> を共通化。
-/// </remarks>
 internal static class FileSystemHelper
 {
+    /// <summary>
+    /// ストリームコピーに使用するデフォルトバッファサイズ (1MB)。
+    /// </summary>
+    /// <remarks>
+    /// write syscall 数の削減と LOH 割り当て回避のバランスで 1MB を採用。
+    /// </remarks>
+    public const int DefaultBufferSize = 1024 * 1024;
+
     /// <summary>
     /// HResult が共有違反 (Sharing/Lock Violation) かどうかを判定する。
     /// </summary>

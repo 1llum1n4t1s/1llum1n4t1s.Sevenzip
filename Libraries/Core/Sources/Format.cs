@@ -18,9 +18,6 @@
 /* ------------------------------------------------------------------------- */
 namespace Cube.FileSystem.SevenZip;
 
-// NOTE (P2-19): FormatExtensions クラスは削除されました。
-// 代わりに FormatFactory.From(Stream) / FormatFactory.From(string) を直接使用してください。
-
 /* ------------------------------------------------------------------------- */
 ///
 /// Format

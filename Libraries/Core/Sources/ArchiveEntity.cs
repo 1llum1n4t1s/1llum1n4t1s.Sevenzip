@@ -135,12 +135,17 @@ public class ArchiveEntity : Entity
     /* --------------------------------------------------------------------- */
     public bool IsUnicodeText { get; }
 
-    // RawName: 基底 Entity.RawName として既に public 公開されている。
-    // 7z.dll から受け取った生のエントリパス文字列を返す（パスサニタイズ前の値）。
-    // バイト列に戻したい場合は `Encoding.UTF8.GetBytes(RawName)` や `Encoding.Latin1.GetBytes(RawName)`
-    // を利用する。CP437 / Shift_JIS を使う場合は .NET Core では事前に
-    // `Encoding.RegisterProvider(CodePagesEncodingProvider.Instance)` を呼ぶ必要がある
-    // (System.Text.Encoding.CodePages パッケージ同梱)。
+    // --- RawName について (基底 Entity.RawName として既に public 公開されている) ---
+    //
+    // 7z.dll から受け取った生のエントリパス文字列を返します（パスサニタイズ前の値）。
+    //
+    // バイト列に戻したい場合は以下のようにします:
+    //   var bytes = Encoding.UTF8.GetBytes(entity.RawName);
+    //   var bytes = Encoding.Latin1.GetBytes(entity.RawName);
+    //
+    // CP437 / Shift_JIS 等のレガシーコードページを使う場合は、.NET Core では事前に
+    // `System.Text.Encoding.RegisterProvider(CodePagesEncodingProvider.Instance)` の
+    // 呼び出しが必要です (System.Text.Encoding.CodePages パッケージを同梱済み)。
 
     #endregion
 

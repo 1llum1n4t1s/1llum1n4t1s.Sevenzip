@@ -1,4 +1,4 @@
-/* ------------------------------------------------------------------------- */
+﻿/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -106,6 +106,14 @@ public sealed class AsyncPasswordQuery : IQuery<string>
                 message.Value  = null;
                 message.Cancel = true;
             }
+            else if (ContainsInvalidControlChar(value))
+            {
+                // 制御文字 (NUL / LF / CR / TAB 等) はネイティブ 7z.dll 側で誤解される可能性があるため拒否。
+                // メッセージにパスワードを含めないようにする。
+                Logger.Warn("[AsyncPasswordQuery] handler returned a password containing control characters; rejected.");
+                message.Value  = null;
+                message.Cancel = true;
+            }
             else
             {
                 message.Value  = value;
@@ -119,12 +127,33 @@ public sealed class AsyncPasswordQuery : IQuery<string>
         }
         catch (Exception ex)
         {
-            // P2-26: ex.Message は握り潰す (ハンドラ内でパスワードをメッセージに含めた場合の漏洩回避)。
+            // ex.Message は握り潰す (ハンドラ内でパスワードをメッセージに含めた場合の漏洩回避)。
             // 型名とスタック位置だけログする。
             Logger.Warn($"[AsyncPasswordQuery] handler threw {ex.GetType().FullName}");
             message.Value  = null;
             message.Cancel = true;
         }
+    }
+
+    #endregion
+
+    #region Implementations
+
+    /// <summary>
+    /// パスワード文字列に不正な制御文字が含まれるかを判定する。
+    /// </summary>
+    /// <remarks>
+    /// NUL (U+0000) はネイティブ文字列終端扱いされ残りが切り捨てられる。
+    /// LF / CR / TAB / その他 U+0001〜U+001F / U+007F もパスワードとしては不正扱い。
+    /// </remarks>
+    private static bool ContainsInvalidControlChar(string value)
+    {
+        for (var i = 0; i < value.Length; i++)
+        {
+            var c = value[i];
+            if (c < 0x20 || c == 0x7F) return true;
+        }
+        return false;
     }
 
     #endregion

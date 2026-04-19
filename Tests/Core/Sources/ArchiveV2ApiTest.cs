@@ -327,6 +327,39 @@ internal class ArchiveV2ApiTest : FileFixture
             Assert.That(size, Is.LessThanOrEqualTo(512 * 1024),
                 $"ボリューム {parts[i]} が VolumeSize を超過: {size}");
         }
+
+        // ラウンドトリップ検証: 全ボリュームを結合 → 再展開して元の内容と一致することを確認
+        var joined = Get(nameof(VolumeSize_SevenZip_SplitsIntoParts), "joined.7z");
+        using (var outStream = File.Create(joined))
+        {
+            foreach (var p in parts)
+            {
+                using var inStream = File.OpenRead(p);
+                inStream.CopyTo(outStream);
+            }
+        }
+
+        var extractDir = Get(nameof(VolumeSize_SevenZip_SplitsIntoParts), "extracted");
+        using (var r = new ArchiveReader(joined))
+        {
+            r.Save(extractDir);
+        }
+
+        // 元の 3 ファイルが全て同じバイト列で復元されていること
+        for (var i = 0; i < 3; i++)
+        {
+            var original  = Io.Combine(workDir, $"chunk{i}.bin");
+            var restored  = Io.Combine(extractDir, "src", $"chunk{i}.bin");
+            Assert.That(File.Exists(restored), Is.True,
+                $"再展開後に {restored} が見つからない");
+            Assert.That(new FileInfo(restored).Length, Is.EqualTo(new FileInfo(original).Length),
+                $"{restored} のサイズが元と異なる");
+            // バイト一致検証 (1MB × 3 = 軽量なので SHA でなく直接比較)
+            var originalBytes = File.ReadAllBytes(original);
+            var restoredBytes = File.ReadAllBytes(restored);
+            Assert.That(restoredBytes, Is.EqualTo(originalBytes),
+                $"{restored} の内容が元と異なる");
+        }
     }
 
     /* --------------------------------------------------------------------- */

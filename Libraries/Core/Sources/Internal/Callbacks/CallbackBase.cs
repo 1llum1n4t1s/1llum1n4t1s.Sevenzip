@@ -136,6 +136,37 @@ internal abstract class CallbackBase : DisposableBase
     /// キャンセル要求があった場合は Cancel コード；
     /// それ以外は <paramref name="func"/> の戻り値。
     /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>例外透過性ポリシー</b>: <paramref name="func"/> がスローした全ての <see cref="Exception"/>
+    /// は <see cref="Exceptions"/> スタックに積まれ、7-Zip への戻り値は以下のルールに従う:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>
+    /// aggregator (IProgress&lt;Report&gt;) が存在する場合: <see cref="ProgressState.Failed"/> を
+    /// 報告し、ハンドラが <see cref="Report.Cancel"/> を設定していれば
+    /// <see cref="SevenZipCode.Cancel"/>、そうでなければ <see cref="SevenZipCode.Success"/>
+    /// を返す (Failed 状態時は Make が Cancel=true を自動設定するため通常は Cancel)。
+    /// </description></item>
+    /// <item><description>
+    /// aggregator が null の場合: 例外が <see cref="SevenZipException"/> なら
+    /// <see cref="SevenZipException.Code"/> を、それ以外は
+    /// <see cref="SevenZipCode.UnknownError"/> を返す。
+    /// </description></item>
+    /// </list>
+    /// <para>
+    /// <b>例外の再スローは行わない</b>。これは COM 境界を越えて .NET 例外を伝播させない
+    /// ための意図的な設計であり、呼び出し元 (ArchiveReader / ArchiveWriter) は処理完了後に
+    /// <see cref="Exceptions"/> スタックを確認することで元の例外を再スロー可能。
+    /// 詳細は <see cref="ArchiveReader"/> / <see cref="ArchiveWriter"/> の実装参照。
+    /// </para>
+    /// <para>
+    /// <b>注意:</b> <see cref="OutOfMemoryException"/> / <see cref="StackOverflowException"/>
+    /// 等の corrupted state exception も現状は catch される。将来的にこれらを再スローする
+    /// 挙動に変更する可能性があるため、呼び出し側は Exceptions スタックに積まれた例外の
+    /// 型をチェックして fatal 例外なら即座に再スローするのが望ましい。
+    /// </para>
+    /// </remarks>
     protected int Run(Func<int> func, ProgressState state, Func<Entity> entity)
     {
         try
@@ -149,7 +180,8 @@ internal abstract class CallbackBase : DisposableBase
         }
         catch (Exception e)
         {
-            // 例外をスタックに積んでおく（呼び出し元が後で確認できるように）
+            // 例外を Exceptions スタックに積み、COM 境界を越えて .NET 例外を伝播させない。
+            // 呼び出し元は処理完了後に Exceptions を確認することで元の例外を再スロー可能。
             Exceptions.Push(e);
             // aggregator が存在する場合は失敗を報告してコールバックを継続させる
             if (_inner is not null) return Report(e, entity());
@@ -168,6 +200,16 @@ internal abstract class CallbackBase : DisposableBase
     /// <param name="s1">結合するパス。</param>
     /// <returns>結合されたパス。</returns>
     protected string Combine(string s0, string s1) => !s0.HasValue() ? s1 : Io.Combine(s0, s1);
+
+
+    /// <summary>
+    /// 進捗報告の最小間隔 (ミリ秒)。
+    /// </summary>
+    /// <remarks>
+    /// ExtractCallback / UpdateCallback で共有する進捗報告の最小間隔。
+    /// 50ms = 毎秒 20 回の報告頻度、UI の視覚的スムーズさとコールバックオーバーヘッドのバランスで決定。
+    /// </remarks>
+    protected const long ReportIntervalMs = 50L;
 
 
     /// <summary>

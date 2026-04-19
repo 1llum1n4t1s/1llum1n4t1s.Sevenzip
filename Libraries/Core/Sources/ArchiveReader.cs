@@ -1,4 +1,4 @@
-/* ------------------------------------------------------------------------- */
+﻿/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -143,10 +143,14 @@ public sealed class ArchiveReader : DisposableBase
     /// true の場合、オブジェクト破棄時に <paramref name="src"/> を Dispose しない
     /// （呼び出し側が所有権を保持する）。既定値は true。
     /// </param>
+    /// <param name="sourceHint">
+    /// <see cref="Source"/> プロパティに設定する任意のヒント文字列（通常は元のファイルパスや URL）。
+    /// エラーログや再オープン時の識別用。省略時は空文字。
+    /// </param>
     ///
     /* --------------------------------------------------------------------- */
-    public ArchiveReader(Stream src, bool leaveOpen = true) :
-        this(src, string.Empty, new(), leaveOpen) { }
+    public ArchiveReader(Stream src, bool leaveOpen = true, string sourceHint = null) :
+        this(src, string.Empty, new(), leaveOpen, sourceHint) { }
 
     /* --------------------------------------------------------------------- */
     ///
@@ -159,10 +163,13 @@ public sealed class ArchiveReader : DisposableBase
     /// <param name="src">アーカイブを読み取るシーク可能な Stream。</param>
     /// <param name="password">アーカイブのパスワード。</param>
     /// <param name="leaveOpen">Stream の所有権を保持するかどうか。</param>
+    /// <param name="sourceHint">
+    /// <see cref="Source"/> プロパティに設定する任意のヒント文字列。省略時は空文字。
+    /// </param>
     ///
     /* --------------------------------------------------------------------- */
-    public ArchiveReader(Stream src, string password, bool leaveOpen = true) :
-        this(src, password, new(), leaveOpen) { }
+    public ArchiveReader(Stream src, string password, bool leaveOpen = true, string sourceHint = null) :
+        this(src, password, new(), leaveOpen, sourceHint) { }
 
     /* --------------------------------------------------------------------- */
     ///
@@ -176,10 +183,13 @@ public sealed class ArchiveReader : DisposableBase
     /// <param name="password">アーカイブのパスワード。</param>
     /// <param name="options">展開オプション。</param>
     /// <param name="leaveOpen">Stream の所有権を保持するかどうか。</param>
+    /// <param name="sourceHint">
+    /// <see cref="Source"/> プロパティに設定する任意のヒント文字列。省略時は空文字。
+    /// </param>
     ///
     /* --------------------------------------------------------------------- */
-    public ArchiveReader(Stream src, string password, ArchiveOption options, bool leaveOpen = true) :
-        this(FormatFactory.From(src), src, string.Empty, new(password), options, dispose: !leaveOpen) { }
+    public ArchiveReader(Stream src, string password, ArchiveOption options, bool leaveOpen = true, string sourceHint = null) :
+        this(FormatFactory.From(src), src, sourceHint, new(password), options, dispose: !leaveOpen) { }
 
     /* --------------------------------------------------------------------- */
     ///
@@ -193,10 +203,13 @@ public sealed class ArchiveReader : DisposableBase
     /// <param name="password">パスワード問い合わせオブジェクト。</param>
     /// <param name="options">展開オプション。</param>
     /// <param name="leaveOpen">Stream の所有権を保持するかどうか。</param>
+    /// <param name="sourceHint">
+    /// <see cref="Source"/> プロパティに設定する任意のヒント文字列。省略時は空文字。
+    /// </param>
     ///
     /* --------------------------------------------------------------------- */
-    public ArchiveReader(Stream src, IQuery<string> password, ArchiveOption options, bool leaveOpen = true) :
-        this(FormatFactory.From(src), src, string.Empty, new(password), options, dispose: !leaveOpen) { }
+    public ArchiveReader(Stream src, IQuery<string> password, ArchiveOption options, bool leaveOpen = true, string sourceHint = null) :
+        this(FormatFactory.From(src), src, sourceHint, new(password), options, dispose: !leaveOpen) { }
 
     /* --------------------------------------------------------------------- */
     ///
@@ -212,11 +225,14 @@ public sealed class ArchiveReader : DisposableBase
     /// <param name="password">パスワード問い合わせオブジェクト。</param>
     /// <param name="options">展開オプション。</param>
     /// <param name="leaveOpen">Stream の所有権を保持するかどうか。</param>
+    /// <param name="sourceHint">
+    /// <see cref="Source"/> プロパティに設定する任意のヒント文字列。省略時は空文字。
+    /// </param>
     ///
     /* --------------------------------------------------------------------- */
     public ArchiveReader(Format format, Stream src, IQuery<string> password,
-        ArchiveOption options, bool leaveOpen = true) :
-        this(format, src, string.Empty, new(password), options, dispose: !leaveOpen) { }
+        ArchiveOption options, bool leaveOpen = true, string sourceHint = null) :
+        this(format, src, sourceHint, new(password), options, dispose: !leaveOpen) { }
 
     /* --------------------------------------------------------------------- */
     ///
@@ -239,6 +255,12 @@ public sealed class ArchiveReader : DisposableBase
         _password = password;
         var lib = Hook(SevenZipLibrary.Acquire());
         _core = lib.GetInArchive(format);
+
+        // Format.Zip 以外で Encoding/CodePage 非デフォルト指定の場合は警告
+        if (format != Format.Zip && !options.IsDefaultCodePage())
+            Logger.Warn(
+                $"[ArchiveReader] ArchiveOption.Encoding/CodePage is only honored for Format.Zip " +
+                $"and ignored for {format}.");
 
         // Open() 前にコードページを設定する（7z.dll が ZIP ファイル名のデコードに使用）
         // ZIP 形式かつデフォルト（Oem かつ Encoding 未指定）以外の場合のみ SetProperties を呼ぶ
@@ -518,10 +540,10 @@ public sealed class ArchiveReader : DisposableBase
     /* --------------------------------------------------------------------- */
     protected override void Dispose(bool disposing)
     {
-        // P0-7: パスワードキャッシュをクリアしてヒープ上の平文を除去
+        // パスワードキャッシュをクリアしてヒープ上の平文を除去
         try { _password?.Reset(); } catch { /* reset 失敗は無視 */ }
 
-        // P0-4: Items (ArchiveCollection) を先に Dispose して内部 _core 参照を null 化する。
+        // Items (ArchiveCollection) を先に Dispose して内部 _core 参照を null 化する。
         // これで Dispose 後に Items[i] がアクセスされても解放済み COM に触らない
         // (ArchiveCollection.Dispose が _core = null を行う)。
         (Items as IDisposable)?.Dispose();

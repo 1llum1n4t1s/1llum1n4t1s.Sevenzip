@@ -139,7 +139,22 @@ internal class CompressionOptionSetter
 
         var obj = GCHandle.Alloc(v, GCHandleType.Pinned);
         try { _ = dest.SetProperties(k, obj.AddrOfPinnedObject(), (uint)k.Length); }
-        finally { obj.Free(); }
+        finally
+        {
+            obj.Free();
+            // VT_BSTR 等のネイティブバッファを保持する PropVariant を解放する。
+            // GCHandle.Free() はピン解除のみで BSTR は解放しないため、明示的に Clear() を呼ぶ。
+            // (AddCompressionMethod / AddEncryptionMethod / CustomParameters の文字列値が該当)
+            for (var i = 0; i < v.Length; i++)
+            {
+                if (v[i].VarType == VarEnum.VT_BSTR ||
+                    v[i].VarType == VarEnum.VT_LPWSTR ||
+                    v[i].VarType == VarEnum.VT_LPSTR)
+                {
+                    v[i].Clear();
+                }
+            }
+        }
     }
 
     /* --------------------------------------------------------------------- */
