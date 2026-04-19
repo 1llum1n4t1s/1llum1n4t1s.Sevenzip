@@ -24,6 +24,9 @@
 > - **per-file 進捗イベント**（v1.0.66〜） — `FileExtracting` / `FileExtracted` / `FileCompressing` / `FileCompressed` + `ArchiveFileEventArgs` で個別エントリの進捗とキャンセルに対応
 > - **柔軟な圧縮オプション**（v1.0.66〜） — `CustomParameters`（7z.dll `ISetProperties` への任意キー注入）/ `VolumeSize`（分割書き出し）/ `IncludeEmptyDirectories`（空ディレクトリ除外）
 > - **追加メタデータ型**（v1.0.66〜） — `ZipArchiveEntity`（ZIP 固有メタデータ）/ `AsyncPasswordQuery`（非同期パスワード問い合わせ）/ `ArchiveEntity.IsUnicodeText`（ヒューリスティック Unicode 判定）
+> - **構造化例外**（v1.0.68〜） — `ArchiveUpdateException`（Update ロールバック失敗時に `OriginalPath` / `BackupPath` を公開）
+> - **クラッシュ耐性オプション**（v1.0.69〜） — `CompressionOption.FlushToDisk`（`FlushFileBuffers` でディスク同期）/ `CompressionOption.AtomicSave`（tmp → atomic rename パターン）/ `CompressionOption.KeepBackupOnUpdate`（.bak 保持）/ `ArchiveWriter.LastBackupPath` / `ArchiveWriter.BackupPaths` / `ArchiveWriter.LastTempPath`
+> - **並行実行安全性 / 厳密化**（v1.0.70〜） — `SevenZipLibrary` FinalRelease 二重解放防止 / `UpdateCallback.SetCompleted` の lock 保護 / `CompressionOption.Validate()` / `AsyncPasswordQuery` UI スレッドガード / `Update(Stream, Stream, ..., allowDestructiveOnWritebackFailure)` オプトインパラメータ
 >
 > **削除（breaking change）**
 > - **SFX (自己展開書庫) 機能の削除**（v1.0.58） — `SfxOption` / `Format.Sfx` / `7z.sfx` 同梱を廃止。自己展開書庫が必要な場合は別途 SFX モジュールを用意する必要あり
@@ -132,6 +135,13 @@ ArchiveWriter および ArchiveReader は、生成から破棄まで同一スレ
 | `ArchiveEntity.IsUnicodeText` | **v1.0.66** — Unicode デコード判定 (ヒューリスティック) | ZIP bit 11 の厳密値ではない点に注意。 |
 | `ZipArchiveEntity` | **v1.0.66** — Format.Zip 専用の拡張エントリ型 | `Method` / `HostOS` / `PackedSize` / `Comment` 取得可。 |
 | `AsyncPasswordQuery` | **v1.0.66** — 非同期パスワードハンドラ | `Func<CancellationToken, Task<string>>` を `IQuery<string>` として公開。 |
+| `ArchiveUpdateException` | **v1.0.68** — Update ロールバック失敗時の構造化例外 | `OriginalPath` / `BackupPath` から手動復旧が可能。 |
+| `CompressionOption.FlushToDisk` | **v1.0.69** — `FlushFileBuffers` でディスク同期 | OS ページキャッシュまで flush。PLP 非対応ストレージのデバイスキャッシュは保証しない。 |
+| `CompressionOption.AtomicSave` | **v1.0.69** — tmp → atomic rename パターン | NTFS 同一ボリューム前提。`VolumeSize` との併用不可 (例外)。 |
+| `CompressionOption.KeepBackupOnUpdate` | **v1.0.69** — Save/Update 完了後も .bak を保持 | 前回値は次回操作で自動削除され孤立しない。 |
+| `ArchiveWriter.LastBackupPath` / `BackupPaths` / `LastTempPath` | **v1.0.69〜v1.0.70** — .bak / tmp パスの公開 | `BackupPaths` は全履歴 (v1.0.70)。`LastTempPath` は異常終了時のクリーンアップ用 (v1.0.70)。 |
+| `CompressionOption.Validate(Format)` | **v1.0.70** — オプション矛盾の早期検出 | AtomicSave+VolumeSize / Tar+Password / 負値ガード。 |
+| `Update(Stream, Stream, ..., allowDestructiveOnWritebackFailure)` | **v1.0.70** — 自己参照書き戻し失敗時の dest 挙動をオプトイン化 | デフォルト false = 部分書き込み保持 / true = 全消失 (旧動作)。 |
 
 ### 新機能
 

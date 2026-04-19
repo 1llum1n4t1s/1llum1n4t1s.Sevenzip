@@ -104,15 +104,20 @@ internal class PasswordQuery : IQuery<string>
     /* --------------------------------------------------------------------- */
     public void Request(QueryMessage<string, string> e)
     {
-        if (Password.HasValue() || _cache.HasValue())
+        // 7z.dll は CryptoGetTextPassword コールバックを通常は直列化して呼ぶが、
+        // マルチスレッド解凍の特殊経路で並行呼び出しされる可能性を排除できないため lock で保護する。
+        lock (_lock)
         {
-            e.Value  = Password.HasValue() ? Password : _cache;
-            e.Cancel = false;
-        }
-        else
-        {
-            Query?.Request(e);
-            if (!e.Cancel && e.Value.HasValue()) _cache = e.Value;
+            if (Password.HasValue() || _cache.HasValue())
+            {
+                e.Value  = Password.HasValue() ? Password : _cache;
+                e.Cancel = false;
+            }
+            else
+            {
+                Query?.Request(e);
+                if (!e.Cancel && e.Value.HasValue()) _cache = e.Value;
+            }
         }
     }
 
@@ -125,11 +130,16 @@ internal class PasswordQuery : IQuery<string>
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    public void Reset() => _cache = null;
+    public void Reset()
+    {
+        lock (_lock) _cache = null;
+    }
 
     #endregion
 
     #region Fields
     private string _cache;
+    // _cache の非同期アクセス保護 (7z.dll の並行呼び出し耐性)
+    private readonly object _lock = new();
     #endregion
 }

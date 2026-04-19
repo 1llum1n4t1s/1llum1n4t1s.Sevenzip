@@ -16,6 +16,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
 /* ------------------------------------------------------------------------- */
+using System;
 using System.Collections.Generic;
 namespace Cube.FileSystem.SevenZip;
 
@@ -153,13 +154,19 @@ public class CompressionOption : ArchiveOption
     /// <para>
     /// 既定値は <c>false</c>。<c>true</c> にすると、Save / Update 完了直前に
     /// <see cref="System.IO.FileStream.Flush(bool)"/> を <c>flushToDisk: true</c> で呼び、
-    /// NTFS 書き込みキャッシュがディスクメディアへ確実に到達してからメソッドを抜ける。
+    /// OS ページキャッシュからディスクコントローラへの書き出しを同期する。
     /// </para>
     /// <para>
-    /// <b>用途:</b> 停電・ブルースクリーン等の予期しないシステムクラッシュに対する耐性を
-    /// 高めたい場合に有効。<see cref="AtomicSave"/> と組み合わせると、新アーカイブが
-    /// ディスクに到達してから古いアーカイブを rename で置き換えるので、クラッシュ耐性が
-    /// 最大化される。
+    /// <b>保証範囲 (重要):</b> <c>FlushFileBuffers</c> は <b>OS ページキャッシュまで</b>の同期を保証する。
+    /// ストレージデバイス自体の揮発性 DRAM キャッシュ (PLP 非対応 NVMe / SATA SSD 等) のフラッシュは
+    /// <b>保証しない</b>。完全な電源断耐性を得るには PLP (Power Loss Protection) 対応ストレージ
+    /// またはエンタープライズ SSD / UPS 付与の環境が必要。
+    /// </para>
+    /// <para>
+    /// <b>用途:</b> 予期しないシステムクラッシュ (プロセス kill / BSOD) に対する耐性強化。
+    /// <see cref="AtomicSave"/> と組み合わせると、tmp にデータがディスクに到達してから
+    /// atomic rename で古いアーカイブを置き換えるので、NTFS 等のジャーナリング FS では
+    /// write-then-rename パターンが完成する。
     /// </para>
     /// <para>
     /// <b>パフォーマンス注意:</b> <c>FlushFileBuffers</c> は数百 ms 〜 数秒のレイテンシを
@@ -190,22 +197,30 @@ public class CompressionOption : ArchiveOption
     /// </para>
     /// <list type="number">
     /// <item><description>dest と同一ディレクトリに <c>{GUID}.ext</c> の tmp ファイルを作成して書き込む</description></item>
-    /// <item><description>既存 dest があれば <c>{GUID}.bak</c> に退避 (atomic rename)</description></item>
-    /// <item><description>tmp ファイルを dest にリネーム (atomic rename)</description></item>
+    /// <item><description>既存 dest があれば <c>{GUID}.bak</c> に退避 (rename)</description></item>
+    /// <item><description>tmp ファイルを dest にリネーム (rename)</description></item>
     /// <item><description><see cref="KeepBackupOnUpdate"/> が false なら .bak を削除、true なら残す</description></item>
     /// </list>
     /// <para>
-    /// <b>クラッシュ耐性:</b> 書き込み途中で停電しても元の dest は無傷。
-    /// rename は NTFS 等のジャーナリング FS では同一ボリューム内で atomic。
-    /// <see cref="FlushToDisk"/> と併用すると、rename 前に tmp の内容がディスクに到達済みとなり最強。
+    /// <b>保証範囲 (重要):</b> rename の "atomic" 性は <b>NTFS / ReFS v3 等のジャーナリング FS で、
+    /// 同一ボリューム内での操作のみ</b>保証される。SMB 共有 / ReFS v1 / exFAT / FAT32 では
+    /// atomic rename は保証されない (ネットワーク切断・電源断で中間状態に陥りうる)。
+    /// ジャーナリング非対応 FS で使う場合はドキュメントの前提が成立しないため、運用側で
+    /// 追加のフェイルセーフ (外部レプリカ等) が必要。
+    /// </para>
+    /// <para>
+    /// <b>クラッシュ耐性:</b> NTFS 同一ボリュームなら、書き込み途中で停電しても元の dest は
+    /// ほぼ無傷で残る。<see cref="FlushToDisk"/> と併用すると、rename 前に tmp の内容が OS
+    /// ページキャッシュからディスクコントローラへ同期される。ただし PLP 非対応ストレージの
+    /// デバイスキャッシュは同期されない点に注意 (詳細は <see cref="FlushToDisk"/> 参照)。
     /// </para>
     /// <para>
     /// <b>制限:</b>
     /// </para>
     /// <list type="bullet">
-    /// <item><description><see cref="VolumeSize"/> &gt; 0 時は非対応 (警告ログを出して無視)。</description></item>
+    /// <item><description><see cref="VolumeSize"/> &gt; 0 時は両立不可 (<see cref="System.InvalidOperationException"/> をスロー)。</description></item>
     /// <item><description><c>Format.Tar</c> は既に tmp 経由で生成されるため、AtomicSave は Tar でも動作するが追加のリネームが入る。</description></item>
-    /// <item><description>tmp ファイル分の空き容量 (dest とほぼ同サイズ) が dest のディレクトリに必要。</description></item>
+    /// <item><description>tmp ファイル分の空き容量 (dest とほぼ同サイズ × 1.1) が dest のディレクトリに必要。事前にベストエフォートチェックが走る。</description></item>
     /// <item><description>dest と tmp を別ボリュームにはできない (atomic rename の制約)。本実装は強制的に同一ディレクトリに tmp を作る。</description></item>
     /// </list>
     /// </remarks>
@@ -219,14 +234,16 @@ public class CompressionOption : ArchiveOption
     ///
     /// <summary>
     /// <see cref="ArchiveWriter.Update(string, string)"/> の自己更新 (source==dest) や
-    /// <see cref="AtomicSave"/> モードで生成される <c>{GUID}.bak</c> バックアップファイルを
-    /// 正常完了後も削除せず残すかどうかを取得する。
+    /// <see cref="AtomicSave"/> モードの <see cref="ArchiveWriter.Save(string)"/> 上書きで生成される
+    /// <c>{GUID}.bak</c> バックアップファイルを正常完了後も削除せず残すかどうかを取得する。
     /// </summary>
     /// <remarks>
     /// <para>
     /// 既定値は <c>false</c>（正常完了時に .bak を削除する従来動作）。
     /// <c>true</c> にすると .bak ファイルが残り、そのパスは
     /// <see cref="ArchiveWriter.LastBackupPath"/> プロパティで取得できる。
+    /// 複数回 Save/Update を呼ぶ場合、前回の .bak は次回操作で自動削除されるため孤立しない。
+    /// 全履歴が必要な場合は <see cref="ArchiveWriter.BackupPaths"/> を参照。
     /// </para>
     /// <para>
     /// <b>用途:</b> 新アーカイブ生成後も一定期間「1 世代前」を保持したい GUI アプリ向け。
@@ -234,11 +251,52 @@ public class CompressionOption : ArchiveOption
     /// 削除し忘れるとディスク容量が肥大するので注意。
     /// </para>
     /// <para>
-    /// このオプションは <see cref="ArchiveWriter.Update(string, string)"/> 自己更新および
-    /// <see cref="AtomicSave"/> <c>= true</c> の <see cref="ArchiveWriter.Save(string)"/> 上書き時のみ効果がある。
+    /// <b>適用範囲:</b>
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description><see cref="ArchiveWriter.Update(string, string)"/> の自己更新 (source == dest)</description></item>
+    /// <item><description><see cref="AtomicSave"/> = true の <see cref="ArchiveWriter.Save(string)"/> 上書き</description></item>
+    /// <item><description><see cref="AtomicSave"/> = true の <see cref="ArchiveWriter.Update(string, string)"/> 非 sameFile 上書き</description></item>
+    /// </list>
+    /// <para>
+    /// プロパティ名に "OnUpdate" が含まれているのは歴史的経緯。Save でも AtomicSave 上書き時に機能する。
     /// </para>
     /// </remarks>
     ///
     /* --------------------------------------------------------------------- */
     public bool KeepBackupOnUpdate { get; init; } = false;
+
+    /// <summary>
+    /// オプションの組み合わせを検証し、矛盾があれば <see cref="InvalidOperationException"/> をスローする。
+    /// </summary>
+    /// <param name="format">対象アーカイブフォーマット。</param>
+    /// <remarks>
+    /// 既知の早期検出可能な矛盾:
+    /// - VolumeSize が負値
+    /// - AtomicSave + VolumeSize の併用
+    /// - ThreadCount が負値 (Normal 化されるのではなく例外に)
+    /// - Password が Format.Tar で指定されている (TAR は暗号化非対応)
+    /// 7z.dll が受け付けない組み合わせをライブラリ側で早期にキャッチし、不透明な
+    /// <c>E_INVALIDARG</c> 例外より具体的なメッセージを呼び出し側に返す。
+    /// </remarks>
+    internal void Validate(Format format)
+    {
+        if (VolumeSize < 0)
+            throw new ArgumentOutOfRangeException(
+                nameof(VolumeSize), VolumeSize,
+                "VolumeSize must be zero (no split) or positive.");
+
+        if (AtomicSave && VolumeSize > 0)
+            throw new InvalidOperationException(
+                "AtomicSave and VolumeSize > 0 cannot be combined. Disable one of the options.");
+
+        if (ThreadCount < 0)
+            throw new ArgumentOutOfRangeException(
+                nameof(ThreadCount), ThreadCount,
+                "ThreadCount must be zero (auto) or positive.");
+
+        if (format == Format.Tar && !string.IsNullOrEmpty(Password))
+            throw new InvalidOperationException(
+                "Format.Tar does not support encryption. Remove Password or switch to Format.SevenZip / Format.Zip.");
+    }
 }

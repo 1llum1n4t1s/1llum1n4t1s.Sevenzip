@@ -89,9 +89,26 @@ public sealed class AsyncPasswordQuery : IQuery<string>
     /// 同期的にパスワードを要求する（7-Zip コールバックからの呼び出し点）。
     /// </summary>
     /// <param name="message">要求メッセージ。結果は Value / Cancel に設定される。</param>
+    /// <exception cref="InvalidOperationException">
+    /// 呼び出し元が UI スレッド相当の同期コンテキスト (WinUI / WPF 等) の場合。
+    /// UI スレッドで同期ブロックするとハンドラからの <c>DispatcherQueue.TryEnqueue</c> 等が
+    /// デッドロックするため早期失敗させる。バックグラウンドスレッド (Task.Run 配下) から呼ぶこと。
+    /// </exception>
     public void Request(QueryMessage<string, string> message)
     {
         if (message is null) throw new ArgumentNullException(nameof(message));
+
+        // UI スレッドからの直接呼び出しを検出してデッドロックを事前に防ぐ。
+        // SynchronizationContext.Current が非 null かつ DispatcherSynchronizationContext 系なら UI スレッド。
+        var ctx = SynchronizationContext.Current;
+        if (ctx is not null && IsUiSynchronizationContext(ctx))
+        {
+            throw new InvalidOperationException(
+                "AsyncPasswordQuery.Request must not be called from a UI synchronization context " +
+                "(detected: " + ctx.GetType().FullName + "). " +
+                "Wrap the ArchiveReader/Writer call in Task.Run to avoid deadlock when the handler " +
+                "marshals back to the UI thread.");
+        }
 
         try
         {
@@ -145,6 +162,9 @@ public sealed class AsyncPasswordQuery : IQuery<string>
     /// <remarks>
     /// NUL (U+0000) はネイティブ文字列終端扱いされ残りが切り捨てられる。
     /// LF / CR / TAB / その他 U+0001〜U+001F / U+007F もパスワードとしては不正扱い。
+    /// 加えて Unicode Category.Control (U+0080〜U+009F, U+2028, U+2029 等) もブロック。
+    /// U+200B (ZWSP) / U+200C / U+200D / U+2060 の不可視文字は Format カテゴリなので
+    /// ここではブロックしないが、ユーザーが意図せず入れた場合にパスワード比較が狂う可能性がある。
     /// </remarks>
     private static bool ContainsInvalidControlChar(string value)
     {
@@ -152,8 +172,27 @@ public sealed class AsyncPasswordQuery : IQuery<string>
         {
             var c = value[i];
             if (c < 0x20 || c == 0x7F) return true;
+            // Unicode カテゴリで "Control" (Cc) に該当するものも拒否 (U+0080〜U+009F 等)
+            if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c)
+                == System.Globalization.UnicodeCategory.Control) return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// 渡された <see cref="SynchronizationContext"/> が UI スレッドの同期コンテキストかを判定する。
+    /// </summary>
+    /// <remarks>
+    /// WinUI 3 / WPF / WinForms / MAUI の DispatcherSynchronizationContext 系を型名の
+    /// 部分一致で検出する。ASP.NET Classic の AspNetSynchronizationContext は UI とは
+    /// 異なるがデッドロックリスクは同等なため同扱い。
+    /// </remarks>
+    private static bool IsUiSynchronizationContext(SynchronizationContext ctx)
+    {
+        var typeName = ctx.GetType().FullName ?? string.Empty;
+        return typeName.Contains("Dispatcher", StringComparison.Ordinal) ||
+               typeName.Contains("WindowsForms", StringComparison.Ordinal) ||
+               typeName.Contains("AspNet", StringComparison.Ordinal);
     }
 
     #endregion

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## プロジェクト概要
 
-7-Zip COM インターフェースを利用した .NET 10 向け圧縮・解凍ラッパーライブラリ。[Cube.FileSystem.SevenZip](https://github.com/cube-soft/cube.filesystem.sevenzip) のフォークで、.NET 10 / NativeAOT 対応 + 本家 7-Zip 26.00 バイナリの vendoring が主な変更点。NuGet パッケージ ID は `1llum1n4t1s.Sevenzip`。**Windows x64 / arm64 専用**。v1.0.58 で SFX 関連 API を削除 (breaking change)、v1.0.60 で AnyCPU 移行 + ARM64 対応 + ビルド時 auto-update 機構を追加、v1.0.64 で auto-update 機構を撤去し決定論的ビルドに回帰した。v1.0.66 で Stream ベース API / CustomParameters / VolumeSize / AsyncPasswordQuery 等の大規模追加、v1.0.67 で 6 人分隊レビュー対応。
+7-Zip COM インターフェースを利用した .NET 10 向け圧縮・解凍ラッパーライブラリ。[Cube.FileSystem.SevenZip](https://github.com/cube-soft/cube.filesystem.sevenzip) のフォークで、.NET 10 / NativeAOT 対応 + 本家 7-Zip 26.00 バイナリの vendoring が主な変更点。NuGet パッケージ ID は `1llum1n4t1s.Sevenzip`。**Windows x64 / arm64 専用**。v1.0.58 で SFX 関連 API を削除 (breaking change)、v1.0.60 で AnyCPU 移行 + ARM64 対応 + ビルド時 auto-update 機構を追加、v1.0.64 で auto-update 機構を撤去し決定論的ビルドに回帰した。v1.0.66 で Stream ベース API / CustomParameters / VolumeSize / AsyncPasswordQuery 等の大規模追加、v1.0.67〜v1.0.68 で 6 人分隊レビュー指摘の品質改善。v1.0.69 で停電耐性オプション (`FlushToDisk` / `AtomicSave` / `KeepBackupOnUpdate` / `LastBackupPath` / `ArchiveUpdateException`) を追加。v1.0.70 で並行実行安全性 (`SevenZipLibrary` の FinalRelease 二重解放防止、`ArchiveWriter` の `LastBackupPath` 自動クリーンアップ、`UpdateCallback.SetCompleted` lock 保護、`CompressionOption.Validate()`) と doc 厳密化 (AtomicSave の NTFS 制約、FlushToDisk の PLP 制約を明示) + `BackupPaths` 履歴 / `LastTempPath` 公開 + `allowDestructiveOnWritebackFailure` オプトインパラメータ追加。
 
 ## ビルド・テストコマンド
 
@@ -59,15 +59,16 @@ NuGet パッケージの `runtimes/win-{x64,arm64}/native/7z.dll` として配�
 
 ```
 Sources/
-├── ArchiveReader.cs, ArchiveWriter.cs   # 公開 API (sealed クラス / Stream 版オーバーロード v1.0.66)
+├── ArchiveReader.cs, ArchiveWriter.cs   # 公開 API (sealed クラス / Stream 版オーバーロード v1.0.66 / AtomicSave+BackupPaths+LastTempPath v1.0.70)
 ├── ArchiveEntity.cs                     # アーカイブエントリ (継承可 / IsUnicodeText v1.0.66)
 ├── ZipArchiveEntity.cs                  # ZIP 固有エントリ (Method / HostOS 等 v1.0.66)
 ├── ArchiveFileEventArgs.cs              # per-file イベント引数 (v1.0.66)
-├── AsyncPasswordQuery.cs                # 非同期パスワード問い合わせ (v1.0.66)
+├── AsyncPasswordQuery.cs                # 非同期パスワード問い合わせ + UI スレッドガード (v1.0.66 / v1.0.70)
+├── ArchiveUpdateException.cs            # Update ロールバック失敗時の構造化例外 (v1.0.68)
 ├── Format.cs                            # Zip/7z/Tar/Rar/Iso/Udf 等の列挙
 ├── Options/
 │   ├── ArchiveOption.cs                 # CodePage / Encoding / Filter / ThreadCount など共通オプション
-│   └── CompressionOption.cs             # Writer 用: 圧縮レベル / メソッド / パスワード / CustomParameters / VolumeSize / IncludeEmptyDirectories
+│   └── CompressionOption.cs             # Writer 用: 圧縮レベル / メソッド / パスワード / CustomParameters / VolumeSize / IncludeEmptyDirectories / FlushToDisk / AtomicSave / KeepBackupOnUpdate + Validate() (v1.0.69〜v1.0.70)
 └── Internal/
     ├── Interfaces/          # COM インターフェース定義 ([GeneratedComInterface])
     ├── Callbacks/           # COM コールバック実装 ([GeneratedComClass])

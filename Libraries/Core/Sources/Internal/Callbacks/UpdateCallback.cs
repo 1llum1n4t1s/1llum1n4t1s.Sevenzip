@@ -131,16 +131,22 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     {
         var value = bytes != IntPtr.Zero ? Marshal.ReadInt64(bytes) : 0L;
 
-        // 値が前回より小さくなった場合は次のファイルに移った（リセットされた）と判断し、
-        // 前回のファイルのバイト数を累積値に加算する。
-        // ただし 0 未満にならないよう最小値クランプ + 最終的な Bytes を TotalBytes 以下にクランプして
-        // 保持エントリの無 GetStream コピー時等でも 100% 超過表示を避ける。
-        if (value < _lastCompletedBytes && _lastCompletedBytes > 0)
-            _cumulativeBytes += _lastCompletedBytes;
-        _lastCompletedBytes = value;
+        // ZIP Ultra 等のマルチスレッド圧縮では SetCompleted が並行呼び出しされうるため、
+        // _cumulativeBytes / _lastCompletedBytes のフィールドアクセスを lock で保護する。
+        // lock 範囲は小さく保ち、Report 呼び出しは lock 外で行う (再入デッドロック回避)。
+        long snap;
+        lock (_completedLock)
+        {
+            // 値が前回より小さくなった場合は次のファイルに移った（リセットされた）と判断し、
+            // 前回のファイルのバイト数を累積値に加算する。
+            if (value < _lastCompletedBytes && _lastCompletedBytes > 0)
+                _cumulativeBytes += _lastCompletedBytes;
+            _lastCompletedBytes = value;
 
-        // 累積値と現在のファイルの進捗を合算して全体の処理済みバイト数とする
-        var snap = _cumulativeBytes + value;
+            // 累積値と現在のファイルの進捗を合算して全体の処理済みバイト数とする
+            snap = _cumulativeBytes + value;
+        }
+
         // 100% 超過で進捗 UI がおかしくならないよう TotalBytes を上限とする
         Bytes = TotalBytes > 0 && snap > TotalBytes ? TotalBytes : snap;
 
@@ -476,6 +482,20 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         {
             _tempDir = Path.Combine(Path.GetTempPath(), $"SevenZip_{Guid.NewGuid():N}");
             Directory.CreateDirectory(_tempDir);
+
+            // RDS/Citrix 等の共有 %TEMP% 環境で攻撃者がシンボリックリンクを事前配置している
+            // 可能性を排除するため、作成したディレクトリが実ディレクトリであることを検証する。
+            // Directory.CreateDirectory は既存ディレクトリ (リパースポイント含む) でも例外を
+            // 投げないため、明示的に Attributes でチェックする必要がある。
+            var dirInfo = new DirectoryInfo(_tempDir);
+            if ((dirInfo.Attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                // 攻撃の可能性がある。別の tempdir を作り直す。
+                _tempDir = null;
+                throw new IOException(
+                    $"Refusing to use reparse point as temp directory: '{dirInfo.FullName}'. " +
+                    $"This may indicate a symlink attack on the shared %TEMP% directory.");
+            }
         }
 
         // GUID プレフィックスで同名ファイルの衝突を防止
@@ -564,6 +584,9 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     private long _cumulativeBytes = 0L;
     // 前回の SetCompleted で受け取ったバイト数（リセット検出用）
     private long _lastCompletedBytes = 0L;
+    // SetCompleted の並行呼び出し (ZIP Ultra 等のマルチスレッド圧縮) で _cumulativeBytes /
+    // _lastCompletedBytes を保護するロック
+    private readonly object _completedLock = new();
     // 最後に進捗を報告した TickCount64（スロットリング用）
     private long _lastReportedTicks;
     // 進捗報告の最小間隔は CallbackBase.ReportIntervalMs に集約

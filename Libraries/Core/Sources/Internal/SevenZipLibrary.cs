@@ -217,14 +217,27 @@ internal sealed class SevenZipLibrary : IDisposable
     /// </remarks>
     public static void ReleaseComWrapper(object comWrapper)
     {
-        // ComObject 型の場合は FinalRelease で COM ポインタをアトミックに解放する
-        if (comWrapper is ComObject comObject) comObject.FinalRelease();
+        if (comWrapper is null) return;
 
-        // 共有シングルトンの追跡リストからも除去してメモリリークを防ぐ
+        // 二重解放防止: lock 内で _tracked から Remove が成功した場合のみ FinalRelease する。
+        // Dispose 側も同様に lock 内で _tracked.Clear() してからスナップショットを取るため、
+        // 「どちらか片方が Remove 責任を持つ」形に収束して二重 FinalRelease を防ぐ。
+        var shouldRelease = false;
         lock (_lock)
         {
-            _shared?._tracked.Remove(comWrapper);
+            // _shared が null (アンロード済み) でも _tracked 自体は前インスタンスに残り続けるが、
+            // このメソッドは外から呼ばれる経路 (QueryInterface の finally 等) で使われるため、
+            // 渡された comWrapper がどのインスタンスの _tracked にいるか不明。
+            // 安全策として _shared?._tracked.Remove の結果で判定する。
+            shouldRelease = _shared?._tracked.Remove(comWrapper) ?? false;
         }
+
+        if (shouldRelease && comWrapper is ComObject comObject)
+        {
+            // lock 外で FinalRelease (ネイティブ遷移中の再入デッドロック回避)
+            comObject.FinalRelease();
+        }
+        // shouldRelease=false の場合は Dispose 側が foreach で FinalRelease する責任を持つ。
     }
 
     /// <summary>

@@ -178,7 +178,7 @@ internal abstract class CallbackBase : DisposableBase
             // キャンセルが優先される（ユーザーが中断要求した場合はキャンセルを伝播する）
             return c1 == (int)SevenZipCode.Cancel ? c1 : c0;
         }
-        catch (Exception e)
+        catch (Exception e) when (!IsFatalException(e))
         {
             // 例外を Exceptions スタックに積み、COM 境界を越えて .NET 例外を伝播させない。
             // 呼び出し元は処理完了後に Exceptions を確認することで元の例外を再スロー可能。
@@ -189,7 +189,22 @@ internal abstract class CallbackBase : DisposableBase
             if (e is SevenZipException se) return (int)se.Code;
             return (int)SevenZipCode.UnknownError;
         }
+        // fatal 例外 (OOM / AccessViolation / StackOverflow) は catch せず COM 境界外に伝播させる。
+        // これらはプロセス状態が corrupted であり、握り潰して続行すると更に状況が悪化する。
     }
+
+    /// <summary>
+    /// 握り潰してはいけない致命的例外かどうかを判定する。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="OutOfMemoryException"/>: ヒープ回復前に握り潰すと後続処理もすべて失敗する。
+    /// <see cref="AccessViolationException"/>: プロセスメモリが破損している可能性があり、続行不可。
+    /// <see cref="StackOverflowException"/>: catch すら不可能だが念のため判定に含める。
+    /// </remarks>
+    private static bool IsFatalException(Exception e) =>
+        e is OutOfMemoryException ||
+        e is AccessViolationException ||
+        e is StackOverflowException;
 
     #endregion
 

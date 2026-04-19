@@ -66,9 +66,14 @@ jobs:
       - name: Compare versions
         id: compare
         shell: pwsh
+        # GitHub Actions の ${{ ... }} 展開は run ブロック内で文字列挿入として動作するため、
+        # 外部データ (ip7z/7zip のタグ名) を env: 経由で渡し、PowerShell 側で $env: で参照する。
+        env:
+          CURRENT_VER: ${{ steps.current.outputs.version }}
+          LATEST_TAG:  ${{ steps.latest.outputs.tag }}
         run: |
-          $current = '${{ steps.current.outputs.version }}'
-          $tag = '${{ steps.latest.outputs.tag }}'
+          $current = $env:CURRENT_VER
+          $tag = $env:LATEST_TAG
           # タグから数字部分を抽出 (例: "26.00" → "26.00")
           $latestNum = $tag -replace '[^0-9.]', ''
           $currentMajor = ($current -split '\.')[0]
@@ -87,22 +92,27 @@ jobs:
         id: download
         if: steps.compare.outputs.needs_update == 'true'
         shell: pwsh
+        # 外部由来のダウンロード URL も env: で渡す (command injection 回避)
+        env:
+          X64_URL:   ${{ steps.latest.outputs.x64_url }}
+          ARM64_URL: ${{ steps.latest.outputs.arm64_url }}
         run: |
           function Test-7zSignature {
             param([string]$Path)
             $sig = Get-AuthenticodeSignature -FilePath $Path
-            # Subject + Issuer の両方を検証して改ざん耐性を強化。
-            # 7-Zip の公式証明書は Sectigo (旧 Comodo) 系 CA から発行されている。
-            $subjectOk = $sig.SignerCertificate.Subject -like '*Igor Pavlov*'
-            $issuerOk  = ($sig.SignerCertificate.Issuer -like '*Sectigo*') -or
-                         ($sig.SignerCertificate.Issuer -like '*Comodo*') -or
-                         ($sig.SignerCertificate.Issuer -like '*DigiCert*')
+            # Subject は CN を正規表現で厳密一致させ、部分一致バイパスを防ぐ。
+            # 例: "CN=Igor Pavlov Malicious LLC" は通らない。
+            $subjectOk = $sig.SignerCertificate.Subject -match '(?:^|,\s*)CN=Igor Pavlov(?:,|$)'
+            # Issuer も CN= 前提の厳密マッチ (Sectigo / Comodo / DigiCert 系)
+            $issuerOk  = ($sig.SignerCertificate.Issuer -match 'CN=[^,]*Sectigo') -or
+                         ($sig.SignerCertificate.Issuer -match 'CN=[^,]*Comodo') -or
+                         ($sig.SignerCertificate.Issuer -match 'CN=[^,]*DigiCert')
             return ($sig.Status -eq 'Valid' -and $subjectOk -and $issuerOk)
           }
 
           # ダウンロード + Authenticode 検証
           foreach ($arch in @('x64', 'arm64')) {
-            $url = if ($arch -eq 'x64') { '${{ steps.latest.outputs.x64_url }}' } else { '${{ steps.latest.outputs.arm64_url }}' }
+            $url = if ($arch -eq 'x64') { $env:X64_URL } else { $env:ARM64_URL }
             $exe = "$env:TEMP\7z-$arch.exe"
             Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
 

@@ -16,6 +16,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
 /* ------------------------------------------------------------------------- */
+using System;
 using System.IO;
 namespace Cube.FileSystem.SevenZip;
 
@@ -67,7 +68,12 @@ internal static class FileSystemHelper
                 FileShare.Read, bufferSize: 1);
             fs.Flush(flushToDisk: true);
         }
-        catch { /* クリティカルではないので握り潰す (ログは呼び出し側の責務) */ }
+        catch (Exception ex)
+        {
+            // アンチウイルス等で SharingViolation が発生するとこの経路を通り、FlushToDisk が
+            // サイレントに失敗する。デバッグ可能なよう Warn ログを残す (path は secret ではない)。
+            Logger.Warn($"[FlushFile] Failed to flush '{path}': {ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -83,11 +89,66 @@ internal static class FileSystemHelper
         if (stream is FileStream fs)
         {
             try { fs.Flush(flushToDisk: true); }
-            catch { /* クリティカルではないので握り潰す */ }
+            catch (Exception ex)
+            {
+                Logger.Warn($"[FlushToDisk] FileStream.Flush(true) failed: {ex.GetType().Name}: {ex.Message}");
+            }
         }
         else
         {
-            try { stream.Flush(); } catch { /* 同上 */ }
+            try { stream.Flush(); }
+            catch (Exception ex)
+            {
+                Logger.Warn($"[FlushToDisk] Stream.Flush failed: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// 指定ディレクトリに dest ファイル分 + バッファの空き容量があることをベストエフォートで確認する。
+    /// </summary>
+    /// <param name="workDir">tmp ファイルを配置するディレクトリ。</param>
+    /// <param name="referenceFile">サイズ基準となる既存ファイル (通常は上書き先 dest)。存在しなければチェックスキップ。</param>
+    /// <remarks>
+    /// <para>
+    /// 既存ファイルサイズの 1.1 倍の空き容量を要求する。圧縮後サイズは未知だが、上書きシナリオでは
+    /// 概ね「元サイズ ± 数 %」に収まることが多いので近似として使える。
+    /// </para>
+    /// <para>
+    /// 空き容量取得に失敗した場合 (UNC パス / 未サポート FS 等) は黙ってスキップする (早期失敗は回避)。
+    /// </para>
+    /// </remarks>
+    /// <exception cref="IOException">空き容量が不足している場合。</exception>
+    public static void EnsureEnoughFreeSpace(string workDir, string referenceFile)
+    {
+        if (string.IsNullOrEmpty(workDir)) return;
+        if (string.IsNullOrEmpty(referenceFile) || !File.Exists(referenceFile)) return;
+
+        try
+        {
+            var refSize = new FileInfo(referenceFile).Length;
+            var required = (long)(refSize * 1.1);
+            var root = Path.GetPathRoot(Path.GetFullPath(workDir));
+            if (string.IsNullOrEmpty(root)) return;
+
+            var drive = new DriveInfo(root);
+            if (!drive.IsReady) return;
+            var free = drive.AvailableFreeSpace;
+
+            if (free < required)
+            {
+                throw new IOException(
+                    $"Insufficient free space on '{root}'. Required {required:N0} bytes " +
+                    $"(1.1x of existing {refSize:N0} bytes), available {free:N0} bytes.");
+            }
+        }
+        catch (IOException)
+        {
+            throw; // 容量不足エラーはそのまま伝播
+        }
+        catch
+        {
+            // DriveInfo 取得失敗等はベストエフォート無視
         }
     }
 }

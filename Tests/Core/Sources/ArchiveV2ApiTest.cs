@@ -571,6 +571,9 @@ internal class ArchiveV2ApiTest : FileFixture
             w.Save(archive);
         }
 
+        // 初回保存時の ZIP バイト列をキャプチャ (後で .bak と byte 一致を確認)
+        var originalBytes = File.ReadAllBytes(archive);
+
         // 自己更新 (KeepBackupOnUpdate=true)
         var opt = new CompressionOption { KeepBackupOnUpdate = true };
         string backupPath;
@@ -585,8 +588,89 @@ internal class ArchiveV2ApiTest : FileFixture
         Assert.That(backupPath, Is.Not.Null, "LastBackupPath が設定されている");
         Assert.That(File.Exists(backupPath), Is.True, ".bak が実在する");
 
+        // .bak の中身が初回保存時のバイト列と完全一致することを検証 (rename 方向性を保証)
+        var backupBytes = File.ReadAllBytes(backupPath);
+        Assert.That(backupBytes, Is.EqualTo(originalBytes),
+            ".bak の内容が初回保存時の ZIP と完全一致すること");
+
         // dest は更新後の内容
         using var r = new ArchiveReader(archive);
         Assert.That(r.Items.Any(e => e.FullName.Contains("Sample.tar")), Is.True);
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// AtomicSave_VolumeSize_ThrowsInvalidOperation
+    ///
+    /// <summary>
+    /// AtomicSave=true と VolumeSize>0 の組み合わせは InvalidOperationException を
+    /// スローすること (サイレント downgrade させない)。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [Test]
+    public void AtomicSave_VolumeSize_ThrowsInvalidOperation()
+    {
+        var srcTxt = GetSource("Sample.txt");
+        var dest = Get(nameof(AtomicSave_VolumeSize_ThrowsInvalidOperation), "out.7z");
+
+        var opt = new CompressionOption
+        {
+            AtomicSave  = true,
+            VolumeSize  = 1024 * 1024,
+        };
+        using var w = new ArchiveWriter(Format.SevenZip, opt);
+        w.Add(srcTxt);
+        Assert.Throws<System.InvalidOperationException>(() => w.Save(dest),
+            "AtomicSave + VolumeSize>0 は InvalidOperationException");
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// BackupPaths_MultipleCalls_AutoCleanup
+    ///
+    /// <summary>
+    /// AtomicSave + KeepBackupOnUpdate で複数回 Save を呼んだ場合、前回の .bak は
+    /// 自動削除されて孤立しないこと。BackupPaths には最新の .bak のみ残る。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [Test]
+    public void BackupPaths_MultipleCalls_AutoCleanup()
+    {
+        var srcTxt = GetSource("Sample.txt");
+        var destDir = Get(nameof(BackupPaths_MultipleCalls_AutoCleanup));
+        Io.CreateDirectory(destDir);
+        var dest = Path.Combine(destDir, "out.zip");
+
+        // 初回: dest を作成
+        using (var w0 = new ArchiveWriter(Format.Zip))
+        {
+            w0.Add(srcTxt);
+            w0.Save(dest);
+        }
+
+        var opt = new CompressionOption
+        {
+            AtomicSave          = true,
+            KeepBackupOnUpdate  = true,
+        };
+        using var w = new ArchiveWriter(Format.Zip, opt);
+        w.Add(srcTxt);
+
+        // 1 回目: .bak が生成される
+        w.Save(dest);
+        var first = w.LastBackupPath;
+        Assert.That(first, Is.Not.Null);
+        Assert.That(File.Exists(first), Is.True, "1 回目の .bak が存在");
+
+        // 2 回目: 前回の .bak は自動削除、新しい .bak が生成される
+        w.Save(dest);
+        var second = w.LastBackupPath;
+        Assert.That(second, Is.Not.Null);
+        Assert.That(second, Is.Not.EqualTo(first), "2 回目の .bak は異なるパス");
+        Assert.That(File.Exists(first), Is.False, "前回の .bak は自動削除されている");
+        Assert.That(File.Exists(second), Is.True, "最新の .bak のみ存在");
+        Assert.That(w.BackupPaths.Count, Is.EqualTo(1), "BackupPaths には最新のみ残る");
     }
 }
