@@ -3,7 +3,7 @@
         <!-- Managed .NET アセンブリ自体はアーキ非依存。x64 / arm64 の差は同梱ネイティブ 7z.dll のみ。 -->
         <Platform Condition="'$(Platform)' == ''">AnyCPU</Platform>
         <Platforms>AnyCPU;x64;arm64</Platforms>
-        <Version>1.0.71</Version>
+        <Version>1.0.72</Version>
         <!-- transitive 依存を packages.lock.json で固定してサプライチェーンの決定論性を担保 -->
         <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
         <Authors>clown,cube-soft,ゆろち</Authors>

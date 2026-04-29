@@ -1,6 +1,6 @@
 # 7-Zip ネイティブバイナリの自動追従 PR bot
 #
-# 毎週月曜 9:00 JST に ip7z/7zip の最新リリースをチェックし、
+# 毎週月曜 9:00 JST に公式サイト (7-zip.org) の最新バージョンをチェックし、
 # 新バージョンがあれば x64 / arm64 の 7z.dll を更新する PR を自動作成する。
 #
 # PR はメンテナが内容を確認し merge → /vava で NuGet 公開する運用。
@@ -42,32 +42,51 @@ jobs:
         id: latest
         shell: pwsh
         run: |
-          $release = Invoke-RestMethod 'https://api.github.com/repos/ip7z/7zip/releases/latest' `
-            -Headers @{ 'User-Agent' = '1llum1n4t1s.Sevenzip-bot/1.0' }
-          $tag = $release.tag_name
-          "tag=$tag" >> $env:GITHUB_OUTPUT
-          "release_url=$($release.html_url)" >> $env:GITHUB_OUTPUT
+          # 公式サイトのダウンロードページから最新バージョンを取得
+          # (ip7z/7zip GitHub ミラーは公式リリースに対して遅延があるため直接取得)
+          $html = (Invoke-WebRequest -Uri 'https://www.7-zip.org/download.html' -UseBasicParsing).Content
 
-          # x64 / arm64 の asset URL を取得
-          $x64 = $release.assets | Where-Object { $_.name -like '7z*-x64.exe' -and $_.name -notlike '*msi*' } | Select-Object -First 1
-          $arm64 = $release.assets | Where-Object { $_.name -like '7z*-arm64.exe' -and $_.name -notlike '*msi*' } | Select-Object -First 1
-
-          if (-not $x64 -or -not $arm64) {
-            Write-Host "::error::Could not find x64/arm64 assets in release $tag"
+          # x64 インストーラのリンクパターンからバージョンを抽出 (例: "a/7z2601-x64.exe")
+          $allMatches = [regex]::Matches($html, 'a/7z(\d{2})(\d{2})-x64\.exe')
+          if ($allMatches.Count -eq 0) {
+            Write-Host "::error::Could not find x64 installer link on 7-zip.org/download.html"
             exit 1
           }
 
-          "x64_url=$($x64.browser_download_url)" >> $env:GITHUB_OUTPUT
-          "x64_name=$($x64.name)" >> $env:GITHUB_OUTPUT
-          "arm64_url=$($arm64.browser_download_url)" >> $env:GITHUB_OUTPUT
-          "arm64_name=$($arm64.name)" >> $env:GITHUB_OUTPUT
-          Write-Host "Latest release: $tag (x64=$($x64.name), arm64=$($arm64.name))"
+          $best = $allMatches | ForEach-Object {
+            [PSCustomObject]@{
+              Major = [int]$_.Groups[1].Value
+              Minor = [int]$_.Groups[2].Value
+              Code  = "$($_.Groups[1].Value)$($_.Groups[2].Value)"
+            }
+          } | Sort-Object Major, Minor -Descending | Select-Object -First 1
+
+          $tag  = "$($best.Major).$($best.Minor.ToString('D2'))"
+          $code = $best.Code
+          $base = 'https://www.7-zip.org/a'
+
+          # arm64 インストーラの存在を HEAD リクエストで確認
+          $arm64Url = "$base/7z$code-arm64.exe"
+          try {
+            Invoke-WebRequest -Uri $arm64Url -Method Head -UseBasicParsing -ErrorAction Stop | Out-Null
+          } catch {
+            Write-Host "::error::arm64 installer not found at $arm64Url ($_)"
+            exit 1
+          }
+
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "release_url=https://www.7-zip.org/" >> $env:GITHUB_OUTPUT
+          "x64_url=$base/7z$code-x64.exe" >> $env:GITHUB_OUTPUT
+          "x64_name=7z$code-x64.exe" >> $env:GITHUB_OUTPUT
+          "arm64_url=$arm64Url" >> $env:GITHUB_OUTPUT
+          "arm64_name=7z$code-arm64.exe" >> $env:GITHUB_OUTPUT
+          Write-Host "Latest release: $tag (x64=7z$code-x64.exe, arm64=7z$code-arm64.exe)"
 
       - name: Compare versions
         id: compare
         shell: pwsh
         # GitHub Actions の ${{ ... }} 展開は run ブロック内で文字列挿入として動作するため、
-        # 外部データ (ip7z/7zip のタグ名) を env: 経由で渡し、PowerShell 側で $env: で参照する。
+        # 外部データ (7-zip.org 由来のバージョン) を env: 経由で渡し、PowerShell 側で $env: で参照する。
         env:
           CURRENT_VER: ${{ steps.current.outputs.version }}
           LATEST_TAG:  ${{ steps.latest.outputs.tag }}
@@ -162,7 +181,8 @@ jobs:
             7-Zip 本家のネイティブバイナリ (`7z.dll`) を最新版に更新します。
 
             - **バージョン**: ${{ steps.current.outputs.version }} → ${{ steps.latest.outputs.tag }}
-            - **リリースノート**: ${{ steps.latest.outputs.release_url }}
+            - **ダウンロード元**: [7-zip.org](${{ steps.latest.outputs.release_url }})
+            - **変更履歴**: https://www.7-zip.org/history.txt
             - **x64 installer**: `${{ steps.latest.outputs.x64_name }}`
             - **arm64 installer**: `${{ steps.latest.outputs.arm64_name }}`
 
