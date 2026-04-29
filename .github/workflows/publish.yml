@@ -1,3 +1,7 @@
+# NuGet パッケージ公開ワークフロー
+#
+# release/** ブランチへの push 時に、7-zip.org から最新の 7z.dll を取得し、
+# ビルド → パック → NuGet 公開を行う。
 name: Publish to NuGet
 
 on:
@@ -23,20 +27,96 @@ jobs:
         # SHA 固定でサプライチェーン攻撃を防ぐ
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
+      - name: Fetch latest 7-Zip native binaries
+        shell: pwsh
+        run: |
+          # 7-zip.org のダウンロードページから最新バージョンを検出。
+          # 最新版は GitHub (ip7z/7zip) にホスト、旧版は 7-zip.org/a/ に置かれるため
+          # 両パターンの href を統一的にマッチさせる。
+          $html = (Invoke-WebRequest -Uri 'https://www.7-zip.org/download.html' -UseBasicParsing).Content
+          $pattern = 'href="([^"]*7z(\d{2})(\d{2})-x64\.exe)"'
+          $allMatches = [regex]::Matches($html, $pattern)
+          if ($allMatches.Count -eq 0) {
+            Write-Host "::error::Could not find x64 installer link on 7-zip.org/download.html"
+            exit 1
+          }
+
+          $best = $allMatches | ForEach-Object {
+            $href = $_.Groups[1].Value
+            if (-not $href.StartsWith('http')) { $href = "https://www.7-zip.org/$href" }
+            [PSCustomObject]@{
+              Major = [int]$_.Groups[2].Value
+              Minor = [int]$_.Groups[3].Value
+              Code  = "$($_.Groups[2].Value)$($_.Groups[3].Value)"
+              Url   = $href
+            }
+          } | Sort-Object Major, Minor -Descending | Select-Object -First 1
+
+          $tag  = "$($best.Major).$($best.Minor.ToString('D2'))"
+          $code = $best.Code
+          $x64Url   = $best.Url
+          $arm64Url = $x64Url -replace '-x64\.exe$', '-arm64.exe'
+          Write-Host "Latest 7-Zip: $tag"
+
+          # Authenticode 検証関数（署名がある場合のみ厳密検証）
+          function Test-7zSignature {
+            param([string]$Path)
+            $sig = Get-AuthenticodeSignature -FilePath $Path
+            if ($sig.Status -eq 'NotSigned') {
+              Write-Host "::warning::$Path is not Authenticode-signed"
+              return $true
+            }
+            $subjectOk = $sig.SignerCertificate.Subject -match '(?:^|,\s*)CN=Igor Pavlov(?:,|$)'
+            $issuerOk  = ($sig.SignerCertificate.Issuer -match 'CN=[^,]*Sectigo') -or
+                         ($sig.SignerCertificate.Issuer -match 'CN=[^,]*Comodo') -or
+                         ($sig.SignerCertificate.Issuer -match 'CN=[^,]*DigiCert')
+            if (-not ($sig.Status -eq 'Valid' -and $subjectOk -and $issuerOk)) {
+              Write-Host "::error::Authenticode verification FAILED — Subject: $($sig.SignerCertificate.Subject)"
+              return $false
+            }
+            Write-Host "$Path : Authenticode OK (Igor Pavlov)"
+            return $true
+          }
+
+          foreach ($arch in @('x64', 'arm64')) {
+            $url = if ($arch -eq 'x64') { $x64Url } else { $arm64Url }
+            $exe = "$env:TEMP\7z-$arch.exe"
+            Write-Host "Downloading $arch from $url"
+            Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
+
+            if (-not (Test-7zSignature $exe)) { exit 1 }
+
+            $extractDir = "$env:TEMP\extract-$arch"
+            & 7z x $exe -o"$extractDir" -y | Out-Null
+
+            $dll = Get-ChildItem -Path $extractDir -Filter '7z.dll' -Recurse | Select-Object -First 1
+            if (-not $dll) {
+              Write-Host "::error::7z.dll not found in $arch installer"
+              exit 1
+            }
+
+            if (-not (Test-7zSignature $dll.FullName)) { exit 1 }
+
+            Copy-Item $dll.FullName "Libraries/Core/Native/$arch/7z.dll" -Force
+            $ver  = [System.Diagnostics.FileVersionInfo]::GetVersionInfo("Libraries/Core/Native/$arch/7z.dll").FileVersion
+            $hash = (Get-FileHash "Libraries/Core/Native/$arch/7z.dll" -Algorithm SHA256).Hash
+            Write-Host "$arch 7z.dll updated to $ver (SHA256: $hash)"
+          }
+
       - name: Setup .NET
         uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: '10.0.x'
-      
+
       - name: Restore dependencies
         run: dotnet restore Cube.FileSystem.SevenZip.slnx
-      
+
       - name: Build Release
         run: dotnet build Cube.FileSystem.SevenZip.slnx -c Release -p:Platform=AnyCPU --no-restore
 
       - name: Pack
         run: dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Platform=AnyCPU --no-build -o Libraries/Core/bin -p:NoDefaultExcludes=true
-      
+
       - name: Publish to NuGet
         run: |
           $apiKey = $env:NUGET_API_KEY

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## プロジェクト概要
 
-7-Zip COM インターフェースを利用した .NET 10 向け圧縮・解凍ラッパーライブラリ。[Cube.FileSystem.SevenZip](https://github.com/cube-soft/cube.filesystem.sevenzip) のフォークで、.NET 10 / NativeAOT 対応 + 本家 7-Zip 26.00 バイナリの vendoring が主な変更点。NuGet パッケージ ID は `1llum1n4t1s.Sevenzip`。**Windows x64 / arm64 専用**。v1.0.58 で SFX 関連 API を削除 (breaking change)、v1.0.60 で AnyCPU 移行 + ARM64 対応 + ビルド時 auto-update 機構を追加、v1.0.64 で auto-update 機構を撤去し決定論的ビルドに回帰した。v1.0.66 で Stream ベース API / CustomParameters / VolumeSize / AsyncPasswordQuery 等の大規模追加、v1.0.67〜v1.0.68 で 6 人分隊レビュー指摘の品質改善。v1.0.69 で停電耐性オプション (`FlushToDisk` / `AtomicSave` / `KeepBackupOnUpdate` / `LastBackupPath` / `ArchiveUpdateException`) を追加。v1.0.70 で並行実行安全性 (`SevenZipLibrary` の FinalRelease 二重解放防止、`ArchiveWriter` の `LastBackupPath` 自動クリーンアップ、`UpdateCallback.SetCompleted` lock 保護、`CompressionOption.Validate()`) と doc 厳密化 (AtomicSave の NTFS 制約、FlushToDisk の PLP 制約を明示) + `BackupPaths` 履歴 / `LastTempPath` 公開 + `allowDestructiveOnWritebackFailure` オプトインパラメータ追加。
+7-Zip COM インターフェースを利用した .NET 10 向け圧縮・解凍ラッパーライブラリ。[Cube.FileSystem.SevenZip](https://github.com/cube-soft/cube.filesystem.sevenzip) のフォークで、.NET 10 / NativeAOT 対応 + 本家 7-Zip バイナリの vendoring が主な変更点。NuGet パッケージ ID は `1llum1n4t1s.Sevenzip`。**Windows x64 / arm64 専用**。公開 API は `ArchiveReader`（解凍）と `ArchiveWriter`（圧縮）の 2 クラス。Stream ベース API / per-file 進捗イベント / アーカイブ更新・削除 / クラッシュ耐性オプション（AtomicSave / FlushToDisk / KeepBackupOnUpdate）等を本家から大幅に拡張。SFX 機能は v1.0.58 で削除済み (breaking change)。
 
 ## ビルド・テストコマンド
 
@@ -31,13 +31,13 @@ rtk dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Pla
 
 ## バージョン管理
 
-バージョンは `Directory.Build.props` の `<Version>` タグで一元管理（全プロジェクト共通）。偶数マイナー（1.0.50 → 1.0.52 → 1.0.54 → ...）で bump する慣習。コミットメッセージは日本語。
+バージョンは `Directory.Build.props` の `<Version>` タグで一元管理（全プロジェクト共通）。patch を +1 ずつインクリメント（`/vava` スキルで自動化）。コミットメッセージは日本語。
 
 ## アーキテクチャ
 
 ### プロジェクト構成
 
-- **Libraries/Core** — メインライブラリ (`Cube.FileSystem.SevenZip`)。公開 API は `ArchiveReader`（解凍）と `ArchiveWriter`（圧縮）。ライセンス: LGPLv3
+- **Libraries/Core** — メインライブラリ (`Cube.FileSystem.SevenZip`)。ライセンス: LGPLv3
 - **Libraries/Cube.Core** — MVVM ユーティリティ、基底クラス (`DisposableBase`, `Bindable`, `IQuery<T>`, `Io`, `IoController` 等)。`PrivateAssets="all"` で参照し、DLL は NuGet パッケージに直接同梱。ライセンス: Apache 2.0
 - **Libraries/Cube.Logging** — SuperLightLogger ラッパー。テストハーネスでのみ使用（`IsPackable=false`）。NLog からの移行先。
 - **Tests/Core** — NUnit 4 によるテスト（コンソールアプリとして実行、`OutputType=Exe`）。
@@ -53,22 +53,22 @@ rtk dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Pla
 
 NuGet パッケージの `runtimes/win-{x64,arm64}/native/7z.dll` として配布。`RuntimeIdentifier` 指定ビルドや `dotnet publish` ではアセンブリ直下に自動配置される。RID なしの `dotnet build` では `runtimes/{rid}/native/` サブディレクトリに配置されるため、`SevenZipLibrary` がフォールバック探索で対応する。
 
-7-Zip 本体の追従は `.github/workflows/update-7zip.yml` の週次 PR bot がメンテナ向けに自動 PR を作成し、レビュー後にリリースする運用。コンシューマのビルド時にネットワークアクセスは一切発生しない（決定論的ビルド保証）。
+7-Zip 本体の追従は `publish.yml` のリリースワークフロー内で自動化。`release/**` ブランチ push 時に 7-zip.org から最新の 7z.dll をダウンロードし、NuGet パッケージに同梱する。リポジトリ内の vendored DLL はローカル開発・テスト用のフォールバック。
 
 ### 7-Zip COM Interop 構造（Libraries/Core）
 
 ```
 Sources/
-├── ArchiveReader.cs, ArchiveWriter.cs   # 公開 API (sealed クラス / Stream 版オーバーロード v1.0.66 / AtomicSave+BackupPaths+LastTempPath v1.0.70)
-├── ArchiveEntity.cs                     # アーカイブエントリ (継承可 / IsUnicodeText v1.0.66)
-├── ZipArchiveEntity.cs                  # ZIP 固有エントリ (Method / HostOS 等 v1.0.66)
-├── ArchiveFileEventArgs.cs              # per-file イベント引数 (v1.0.66)
-├── AsyncPasswordQuery.cs                # 非同期パスワード問い合わせ + UI スレッドガード (v1.0.66 / v1.0.70)
-├── ArchiveUpdateException.cs            # Update ロールバック失敗時の構造化例外 (v1.0.68)
+├── ArchiveReader.cs, ArchiveWriter.cs   # 公開 API (sealed クラス)
+├── ArchiveEntity.cs                     # アーカイブエントリ (継承可)
+├── ZipArchiveEntity.cs                  # ZIP 固有エントリ (Method / HostOS 等)
+├── ArchiveFileEventArgs.cs              # per-file イベント引数
+├── AsyncPasswordQuery.cs                # 非同期パスワード問い合わせ + UI スレッドガード
+├── ArchiveUpdateException.cs            # Update ロールバック失敗時の構造化例外
 ├── Format.cs                            # Zip/7z/Tar/Rar/Iso/Udf 等の列挙
 ├── Options/
 │   ├── ArchiveOption.cs                 # CodePage / Encoding / Filter / ThreadCount など共通オプション
-│   └── CompressionOption.cs             # Writer 用: 圧縮レベル / メソッド / パスワード / CustomParameters / VolumeSize / IncludeEmptyDirectories / FlushToDisk / AtomicSave / KeepBackupOnUpdate + Validate() (v1.0.69〜v1.0.70)
+│   └── CompressionOption.cs             # Writer 用: 圧縮レベル / メソッド / パスワード / CustomParameters / VolumeSize / FlushToDisk / AtomicSave / KeepBackupOnUpdate + Validate()
 └── Internal/
     ├── Interfaces/          # COM インターフェース定義 ([GeneratedComInterface])
     ├── Callbacks/           # COM コールバック実装 ([GeneratedComClass])
@@ -79,7 +79,7 @@ Sources/
     │   └── CallbackBase.cs     # 共通進捗報告 + FireFileEvent ヘルパー
     ├── Options/             # CompressionOptionSetter 系 (既知キー + CustomParameters merge)
     ├── UpdatePlan.cs        # 更新プラン (Keep / Replace / Add / Rename / Remove)
-    ├── FileSystemHelper.cs  # IsFileLocked 共通化 (v1.0.66)
+    ├── FileSystemHelper.cs  # IsFileLocked 共通化
     └── SevenZipLibrary.cs   # 7z.dll の参照カウント付き singleton + CreateObject 関数ポインタ
 ```
 
@@ -136,4 +136,4 @@ COM Interop と P/Invoke は全面的に AOT 互換 API に移行済み:
 
 ## CI/CD
 
-GitHub Actions で `release/**` ブランチへの push 時に NuGet パッケージを自動公開（`.github/workflows/publish.yml`）。`main` ブランチには公開トリガーは設定されていない。
+GitHub Actions で `release/**` ブランチへの push 時に、7-zip.org から最新 7z.dll を取得 → ビルド → NuGet パッケージを自動公開（`.github/workflows/publish.yml`）。`main` ブランチには公開トリガーは設定されていない。

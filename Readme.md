@@ -10,7 +10,7 @@
 > - **NativeAOT 対応**（COM Interop を `[GeneratedComInterface]` に、P/Invoke を `[LibraryImport]` に全面移行）
 > - **Windows x64 / arm64 対応** — `<RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>` を宣言。Managed アセンブリは AnyCPU で単一、ネイティブ 7z.dll のみ RID で分岐
 > - **7-Zip 本家 26.00** のネイティブバイナリを直接 vendor（`Cube.Native.SevenZip` 依存を除去）
-> - **ピン留めネイティブバイナリ配布** — NuGet パッケージに固定バージョンの 7z.dll を同梱。ビルド時のネットワークアクセスなし（決定論的ビルド保証）。7-Zip 本体の更新はメンテナ側の週次 PR bot で追従
+> - **ネイティブバイナリ自動配布** — NuGet 公開時のリリースワークフローが 7-zip.org から最新の 7z.dll を自動取得して同梱。コンシューマのビルド時にネットワークアクセスは発生しない
 > - [Cube.Core](https://github.com/cube-soft/cube.core) をソリューション内のプロジェクトとして直接組み込み（NuGet 参照ではなく NuGet パッケージに DLL を同梱）
 > - CI を AppVeyor から **GitHub Actions** に移行
 > - NuGet パッケージ名を **1llum1n4t1s.Sevenzip** として公開
@@ -206,7 +206,7 @@ COM オブジェクトの生成・解放を `StrategyBasedComWrappers` + `Create
 
 ## Dependencies
 
-* [7-Zip](https://www.7-zip.org/) … 本家 26.00 の `7z.dll` を `Libraries/Core/Native/x64/` および `Libraries/Core/Native/arm64/` に vendor して NuGet パッケージに同梱しています (Windows x64 / arm64 対応)。`runtimes/win-x64/native/` および `runtimes/win-arm64/native/` に配置されるため、.NET SDK のランタイム RID 解決により実行時に自動的に正しいバイナリが選択されます。コンシューマのビルド時にネットワークアクセスは一切発生しません（決定論的ビルド）。7-Zip 本体の新版追従はメンテナ側の週次 PR bot (`.github/workflows/update-7zip.yml`) で行います。
+* [7-Zip](https://www.7-zip.org/) … 本家の `7z.dll` を `Libraries/Core/Native/x64/` および `Libraries/Core/Native/arm64/` に vendor して NuGet パッケージに同梱しています (Windows x64 / arm64 対応)。`runtimes/win-x64/native/` および `runtimes/win-arm64/native/` に配置されるため、.NET SDK のランタイム RID 解決により実行時に自動的に正しいバイナリが選択されます。NuGet 公開時のリリースワークフロー (`.github/workflows/publish.yml`) が 7-zip.org から最新版を自動取得して同梱します。
 
 ## License
 
