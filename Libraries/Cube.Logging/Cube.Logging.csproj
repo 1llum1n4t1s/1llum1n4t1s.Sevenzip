@@ -6,6 +6,6 @@
     </PropertyGroup>
     <ItemGroup>
         <ProjectReference Include="..\Cube.Core\Cube.Core.csproj" />
-        <PackageReference Include="SuperLightLogger" Version="1.0.6" />
+        <PackageReference Include="SuperLightLogger" Version="1.0.7" />
     </ItemGroup>
 </Project>
