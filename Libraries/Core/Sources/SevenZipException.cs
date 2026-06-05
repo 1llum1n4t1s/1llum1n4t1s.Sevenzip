@@ -62,7 +62,14 @@ public class SevenZipException : IOException
     ///
     /* --------------------------------------------------------------------- */
     public SevenZipException(SevenZipCode code, Exception inner) :
-        base(code.ToString(), inner) => Code = code;
+        base(code.ToString(), inner)
+    {
+        Code = code;
+        // 本来の原因 (ディスク満杯・デバイス切断・使用中などの I/O 例外) の HRESULT を
+        // 引き継ぐことで、Code だけでなく HResult を見る呼び出し側でも正しく分類できる。
+        // inner が既定の IOException HRESULT (COR_E_IO) しか持たない場合は上書きしない。
+        if (inner is not null && inner.HResult != 0) HResult = inner.HResult;
+    }
 
     #endregion
 

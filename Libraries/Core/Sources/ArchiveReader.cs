@@ -303,7 +303,21 @@ public sealed class ArchiveReader : DisposableBase
         var code = _core.Open(ss, IntPtr.Zero, cb);
         GC.KeepAlive(cb);
         GC.KeepAlive(ss);
-        if (code != 0) Logger.Warn($"[Open] Code:{code}");
+        if (code != 0)
+        {
+            Logger.Warn($"[Open] Code:{code}");
+            // Open が失敗 (非 S_OK) のまま続行すると、GetNumberOfItems が 0 を返して
+            // Items が空になり「中身ゼロのアーカイブ」として静かに誤動作する
+            // (壊れた書庫・非対応書庫・形式不一致の展開が 0 件成功扱いになる)。失敗を明示する。
+            // ヘッダー暗号のパスワード不一致などコールバックが捕捉した例外があれば内包して投げる。
+            if (cb.Exceptions.Count > 0)
+            {
+                var inner = cb.Exceptions.Pop();
+                if (inner is EncryptionException) throw inner;
+                throw new SevenZipException(SevenZipCode.HeadersError, inner);
+            }
+            throw new SevenZipException(SevenZipCode.IsNotArc);
+        }
 
         Items = new ArchiveCollection(_core, (int)_core.GetNumberOfItems(), Source, format);
     }

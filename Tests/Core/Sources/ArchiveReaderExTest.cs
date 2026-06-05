@@ -151,8 +151,13 @@ internal class ArchiveReaderExTest : FileFixture
         var src = Io.Combine(dest, "SampleVolume.rar.001");
         using var archive = new ArchiveReader(src);
 
+        // マルチボリュームの欠落はデータ起因の失敗であり、ユーザー主導のキャンセルではない。
+        // ThrowIfError は「Cancel コード + Exceptions に積まれた実例外」を失敗として扱うため、
+        // OperationCanceledException ではなく SevenZipException(Cancel) が、内側に本当の原因
+        // (SevenZipException: DataError 等) を内包した形で送出される。
+        // （旧実装は OperationCanceledException で包み、本当の失敗をキャンセルと誤認していた。）
         Assert.That(() => archive.Save(dest), Throws
-            .TypeOf<OperationCanceledException>()
+            .TypeOf<SevenZipException>()
             .And
             .InnerException
             .TypeOf<SevenZipException>()

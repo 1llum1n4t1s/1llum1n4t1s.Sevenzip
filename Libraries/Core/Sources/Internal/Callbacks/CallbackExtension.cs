@@ -90,7 +90,18 @@ internal static class CallbackExtension
     {
         if (code == (int)SevenZipCode.Success) return;
         if (checkPassword && code == (int)SevenZipCode.WrongPassword) throw new EncryptionException();
-        if (code == (int)SevenZipCode.Cancel) throw src.GetCancelException();
+        if (code == (int)SevenZipCode.Cancel)
+        {
+            // Cancel コードは「ユーザー主導の中断」と「処理失敗による中断」の両方で返る。
+            // CallbackBase.Run は func() が例外を投げると Exceptions に積んだ上で Failed を
+            // 報告し、Make が Cancel=true を立てるため 7-Zip へ Cancel コードを返す。一方、
+            // 純粋なユーザーキャンセルでは例外は積まれない (Exceptions が空)。
+            // したがって Exceptions が非空なら失敗起因の中断であり、OperationCanceledException
+            // で包むと呼び出し側にキャンセル扱いされ本当の失敗 (ディスク満杯・I/O エラー等) が
+            // 握り潰される。失敗を保持したまま例外を投げ分ける。
+            if (src.Exceptions.Count > 0) throw src.GetException(code);
+            throw src.GetCancelException();
+        }
         throw src.GetException(code);
     }
 
