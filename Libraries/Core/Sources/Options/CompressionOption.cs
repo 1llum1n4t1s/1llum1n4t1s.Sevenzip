@@ -266,6 +266,42 @@ public class CompressionOption : ArchiveOption
     /* --------------------------------------------------------------------- */
     public bool KeepBackupOnUpdate { get; init; } = false;
 
+    /* --------------------------------------------------------------------- */
+    ///
+    /// SkipInaccessibleFiles
+    ///
+    /// <summary>
+    /// <see cref="ArchiveWriter.Add(string, string)"/> 時にファイルを読み取れず
+    /// <see cref="AccessException"/> 相当の状況になった場合、例外を投げずに
+    /// 当該ファイルをスキップしてアーカイブから除外するかどうかを取得する。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 既定値は <c>false</c>（従来通り <see cref="AccessException"/> を投げ、
+    /// 1 ファイルアクセス不能で圧縮全体が失敗する）。
+    /// </para>
+    /// <para>
+    /// <c>true</c> にすると、ライブラリ内部の 2 段試行
+    /// (<c>FileShare.Read</c> → <c>FileShare.ReadWrite | FileShare.Delete</c>) で両方失敗した
+    /// ファイルを <see cref="ArchiveWriter._items"/> に追加せず、警告ログを残し、
+    /// <see cref="ArchiveWriter.FileSkipped"/> イベントを発火して呼び出し側に通知する。
+    /// 1 ファイルアクセス不能で圧縮全体を死なせたくないデスクトップ GUI 用途で使う。
+    /// </para>
+    /// <para>
+    /// <b>典型ケース:</b> Visual Studio が <c>.vs\&lt;sln&gt;\FileContentIndex\*.vsidx</c> を
+    /// <c>FileShare.None</c> で握っている等、共有モード <c>None</c> で他プロセスが排他保持している
+    /// ファイル。これらはライブラリの一時コピー機構 (<c>UpdateCallback</c>) でも開けないため、
+    /// 事前 (Add 時) の fail-fast 段階でスキップ判定する。
+    /// </para>
+    /// <para>
+    /// <b>適用範囲 (現状):</b> Add 時の fail-fast のみ。Add 通過後に Save 中で他プロセスが
+    /// 新たにロックを取り始める race は対象外（<c>UpdateCallback.Open</c> 側は引き続き失敗時に
+    /// 例外を投げる）。実害が出たら別途対応する。
+    /// </para>
+    /// </remarks>
+    /* --------------------------------------------------------------------- */
+    public bool SkipInaccessibleFiles { get; init; } = false;
+
     /// <summary>
     /// オプションの組み合わせを検証し、矛盾があれば <see cref="InvalidOperationException"/> をスローする。
     /// </summary>

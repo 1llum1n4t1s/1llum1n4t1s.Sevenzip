@@ -101,6 +101,18 @@ Sources/
 
 ロック判定は `IsFileLocked()` で HResult（`ERROR_SHARING_VIOLATION = 0x80070020`、`ERROR_LOCK_VIOLATION = 0x80070021`）を確認。
 
+#### 完全排他ファイルの skip 続行 (`CompressionOption.SkipInaccessibleFiles`)
+
+`FileShare.None` で他プロセスが排他保持しているファイル (Visual Studio の `.vsidx` 等) は、自動コピー機構（`FileShare.ReadWrite | FileShare.Delete` で再試行）でも開けず、既定では `AddItem()` の外側 catch が `AccessException` を投げて圧縮全体が失敗する。
+
+呼び出し側 (GUI アプリ等) で「1 ファイルアクセス不能で全体を死なせない」が要件のとき、`CompressionOption.SkipInaccessibleFiles = true` を渡すと:
+
+1. `AddItem()` の outer catch で `_items` に追加せずスキップする（`AccessException` を投げない）
+2. `ArchiveWriter.FileSkipped` イベント（引数: `FileSkippedEventArgs { FullName, RelativeName, Reason }`）が発火する
+3. `Logger.Warn` にスキップ事実が記録される
+
+既定は `false`（従来通り throw）で、後方互換性を保持。**現状の適用範囲は `Add()` 時の fail-fast のみ**。Add 通過後に Save 中で他プロセスが新たにロックを取り始める race は対象外（`UpdateCallback.Open` 側は引き続き失敗時に例外を投げる）— 実害が出たら別途対応する。
+
 ### NativeAOT 対応の規約
 
 COM Interop と P/Invoke は全面的に AOT 互換 API に移行済み:

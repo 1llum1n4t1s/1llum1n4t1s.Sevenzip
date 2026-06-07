@@ -18,6 +18,7 @@
 using Cube.Tests.Fixtures;
 using NUnit.Framework;
 using System;
+using System.Collections.Generic;
 using System.IO;
 namespace Cube.FileSystem.SevenZip.Tests;
 
@@ -151,6 +152,74 @@ internal class ArchiveWriterExTest : FileFixture
         using var obj = new ArchiveWriter(Format.Zip);
         obj.Add(GetSource("NotFound.txt"));
     }, Throws.TypeOf<FileNotFoundException>());
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// Add_FileShareNone_ThrowsAccessException
+    ///
+    /// <summary>
+    /// 既定 (<see cref="CompressionOption.SkipInaccessibleFiles"/> = false) では、
+    /// <see cref="FileShare.None"/> で他プロセスが排他保持しているファイルを Add すると
+    /// <see cref="AccessException"/> が投げられる (後方互換挙動)。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [Test]
+    public void Add_FileShareNone_ThrowsAccessException()
+    {
+        var locked = Get("locked_default.bin");
+        File.WriteAllText(locked, "exclusive");
+        using var hold = new FileStream(locked, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        Assert.That(() =>
+        {
+            using var obj = new ArchiveWriter(Format.Zip);
+            obj.Add(locked);
+        }, Throws.TypeOf<AccessException>());
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// Add_SkipInaccessibleFiles_SkipsAndFiresEvent
+    ///
+    /// <summary>
+    /// <see cref="CompressionOption.SkipInaccessibleFiles"/> = true のとき、
+    /// <see cref="FileShare.None"/> で排他保持されたファイルは例外を投げずにスキップされ、
+    /// <see cref="ArchiveWriter.FileSkipped"/> イベントが発火する。読めるファイルだけが
+    /// アーカイブに収まる。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [Test]
+    public void Add_SkipInaccessibleFiles_SkipsAndFiresEvent()
+    {
+        var readable = Get("readable.txt");
+        var locked   = Get("locked_skip.bin");
+        var dest     = Get($"{nameof(Add_SkipInaccessibleFiles_SkipsAndFiresEvent)}.zip");
+        File.WriteAllText(readable, "ok");
+        File.WriteAllText(locked, "exclusive");
+
+        using var hold = new FileStream(locked, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        var skipped = new List<FileSkippedEventArgs>();
+        using (var obj = new ArchiveWriter(Format.Zip, new() { SkipInaccessibleFiles = true }))
+        {
+            obj.FileSkipped += (_, e) => skipped.Add(e);
+
+            Assert.That(() => obj.Add(readable), Throws.Nothing);
+            Assert.That(() => obj.Add(locked),   Throws.Nothing);
+            obj.Save(dest);
+        }
+
+        Assert.That(skipped, Has.Count.EqualTo(1));
+        Assert.That(skipped[0].FullName,     Is.EqualTo(locked));
+        Assert.That(skipped[0].RelativeName, Is.EqualTo("locked_skip.bin"));
+        Assert.That(skipped[0].Reason,       Is.Not.Null);
+
+        using var reader = new ArchiveReader(dest);
+        Assert.That(reader.Items, Has.Count.EqualTo(1));
+        Assert.That(reader.Items[0].FullName, Is.EqualTo("readable.txt"));
+    }
 
     #endregion
 }

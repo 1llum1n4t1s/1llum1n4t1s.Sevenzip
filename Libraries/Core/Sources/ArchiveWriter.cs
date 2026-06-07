@@ -93,6 +93,16 @@ public sealed class ArchiveWriter : DisposableBase
     /// </summary>
     public event EventHandler<ArchiveFileEventArgs> FileCompressed;
 
+    /// <summary>
+    /// <see cref="CompressionOption.SkipInaccessibleFiles"/> が true のとき、
+    /// 読み取り不能ファイルをスキップした際に発火するイベント。
+    /// </summary>
+    /// <remarks>
+    /// イベント引数 (<see cref="FileSkippedEventArgs"/>) には対象ファイルパス・相対パス・
+    /// 原因例外が入る。呼び出し側はログ出力や UI 通知に利用できる。
+    /// </remarks>
+    public event EventHandler<FileSkippedEventArgs> FileSkipped;
+
     #endregion
 
     #region Properties
@@ -1242,6 +1252,23 @@ public sealed class ArchiveWriter : DisposableBase
         {
             // アクセスエラーをログに記録してラップした例外をスローする
             Logger.Debug($"Path:{src.FullName.Quote()}, Error:{e.Message} ({e.GetType().Name})");
+
+            // SkipInaccessibleFiles=true: アーカイブ全体を死なせず当該ファイルをスキップ。
+            // FileShare.None で他プロセスが排他保持しているファイル (Visual Studio の .vsidx 等) を
+            // 想定。_items に追加しないので Save 時の GetStream にも到達しない。
+            if (Options?.SkipInaccessibleFiles == true)
+            {
+                Logger.Warn($"Skipped inaccessible file: Path:{src.FullName.Quote()}, " +
+                            $"Reason:{e.Message} ({e.GetType().Name})");
+                FileSkipped?.Invoke(this, new FileSkippedEventArgs
+                {
+                    FullName     = src.FullName,
+                    RelativeName = src.RelativeName,
+                    Reason       = e,
+                });
+                return;
+            }
+
             throw new AccessException(src.RawName, e);
         }
     }
