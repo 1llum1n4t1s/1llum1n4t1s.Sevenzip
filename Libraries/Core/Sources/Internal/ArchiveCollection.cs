@@ -17,6 +17,7 @@
 //
 /* ------------------------------------------------------------------------- */
 using Cube.Collections;
+using System;
 using System.Collections.Generic;
 namespace Cube.FileSystem.SevenZip;
 
@@ -81,6 +82,10 @@ internal sealed class ArchiveCollection : EnumerableBase<ArchiveEntity>, IReadOn
     {
         get
         {
+            // Dispose 後のアクセスは _cache ??= が再生成 → null の _core への COM 呼び出しで
+            // NullReferenceException になり原因が分かりにくい。明示的に投げて誤用を早期検出する。
+            if (_core is null) throw new ObjectDisposedException(nameof(ArchiveCollection));
+
             // キャッシュ配列を遅延初期化する（Count 分確保）
             _cache ??= new ArchiveEntity[Count];
 

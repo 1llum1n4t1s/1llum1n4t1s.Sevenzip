@@ -154,8 +154,10 @@ internal static class ArchiveExtension
     /// </remarks>
     public static string GetPath(this IInArchive src, int index, string path)
     {
-        // まず 7-zip からパスを取得する（GetString を使って BSTR メモリを解放する）
-        var dest = src.Get<string>(index, ItemPropId.Path);
+        // まず 7-zip からパスを取得する（GetString を使って BSTR メモリを解放する）。
+        // Get<string> は VT_BSTR のネイティブバッファを解放しないため、エントリ列挙の
+        // たびに 1 エントリ 1 BSTR がリークしていた（大量エントリの書庫で顕著）。
+        var dest = src.GetString(index, ItemPropId.Path);
         if (dest.HasValue()) return dest; // 取得できた場合はそのまま返す
 
         // パスが取得できなかった場合（TAR など）はアーカイブ名から生成する
