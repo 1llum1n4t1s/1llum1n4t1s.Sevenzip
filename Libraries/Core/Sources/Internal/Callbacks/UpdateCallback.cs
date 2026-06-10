@@ -424,10 +424,17 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     /// </param>
     protected override void Dispose(bool disposing)
     {
-        // ここで一括解放する。詳細は SetOperationResult のコメントを参照。
-        foreach (var stream in _streams)
+        // finalizer 経路 (disposing == false) では他のマネージドオブジェクト
+        // (ストリーム) に触らない。各ストリームは自身の finalizer / SafeHandle が
+        // 回収する (ArchiveReader.Dispose の同ガード参照)。一時ディレクトリ削除は
+        // 純粋な OS 呼び出しなので finalizer 経路でも実行する。
+        if (disposing)
         {
-            try { stream.Dispose(); } catch { /* 解放失敗は無視 */ }
+            // ここで一括解放する。詳細は SetOperationResult のコメントを参照。
+            foreach (var stream in _streams)
+            {
+                try { stream.Dispose(); } catch { /* 解放失敗は無視 */ }
+            }
         }
         _streams.Clear();
 

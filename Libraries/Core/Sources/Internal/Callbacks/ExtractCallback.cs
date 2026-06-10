@@ -241,8 +241,14 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
     /// </param>
     protected override void Dispose(bool disposing)
     {
-        // 未クローズのストリームを全て解放する
-        foreach (var kv in _streams) kv.Value?.Dispose();
+        // finalizer 経路 (disposing == false) では他のマネージドオブジェクト
+        // (ArchiveStreamWriter → BaseStream) に触らない。各ストリームは自身の
+        // finalizer / SafeHandle が回収する (ArchiveReader.Dispose の同ガード参照)。
+        if (disposing)
+        {
+            // 未クローズのストリームを全て解放する
+            foreach (var kv in _streams) kv.Value?.Dispose();
+        }
         _streams.Clear();
     }
 

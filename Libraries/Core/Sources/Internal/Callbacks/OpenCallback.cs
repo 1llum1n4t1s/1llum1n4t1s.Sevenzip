@@ -186,7 +186,13 @@ internal partial class OpenCallback : PasswordCallback, IArchiveOpenCallback, IA
     /* --------------------------------------------------------------------- */
     protected override void Dispose(bool disposing)
     {
-        foreach (var item in Streams) item.Dispose();
+        // finalizer 経路 (disposing == false) では他のマネージドオブジェクト
+        // (ArchiveStreamReader → BaseStream) に触らない。各ストリームは自身の
+        // finalizer / SafeHandle が回収する (ArchiveReader.Dispose の同ガード参照)。
+        if (disposing)
+        {
+            foreach (var item in Streams) item.Dispose();
+        }
         Streams.Clear();
     }
 
