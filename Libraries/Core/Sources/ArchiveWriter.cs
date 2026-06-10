@@ -69,10 +69,43 @@ public sealed class ArchiveWriter : DisposableBase
     /// </summary>
     /// <param name="format">アーカイブフォーマット。</param>
     /// <param name="options">アーカイブ作成オプション。</param>
+    /// <exception cref="UnknownFormatException">
+    /// format が <see cref="Format.Unknown"/> の場合。
+    /// </exception>
     public ArchiveWriter(Format format, CompressionOption options)
     {
+        if (format == Format.Unknown)
+        {
+            // ctor 失敗で this は孤児化する。リソース未取得のため解放は不要だが、
+            // finalizer 不要を明示する (ctor cleanup の方針は下の catch コメント参照)。
+            GC.SuppressFinalize(this);
+            throw new UnknownFormatException();
+        }
+
         Format  = format;
         Options = options;
+        try
+        {
+            _lib = SevenZipLibrary.Acquire();
+
+            // 書き込み非対応フォーマット (Rar 等の読み取り専用) を Save() 時まで
+            // 遅延させずここで fail-fast 検出する。検証のみが目的のため生成した
+            // COM オブジェクトは即解放する。
+            IOutArchive archive = null;
+            try { archive = _lib.GetOutArchive(format); }
+            finally { SevenZipLibrary.ReleaseComWrapper(archive); }
+        }
+        catch
+        {
+            // ctor 失敗時のクリーンアップ (ArchiveReader の ctor と同型)。throw すると
+            // this は誰にも参照されず孤児化し、取得済みのライブラリ参照カウントが GC まで
+            // リークする (finalizer 経路の Dispose(false) は _lib に触らないガードがあり、
+            // 解放は _lib 自身の finalizer 任せになる)。ここで同期的に解放し、
+            // finalizer 自体を不要化する。
+            try { Dispose(true); } catch { /* cleanup は best effort */ }
+            GC.SuppressFinalize(this);
+            throw;
+        }
     }
 
     #endregion
@@ -810,8 +843,9 @@ public sealed class ArchiveWriter : DisposableBase
         // インスタンスを Dispose すると finalizer スレッドで例外が出てプロセスごと
         // クラッシュしうる (ArchiveReader.Dispose の同ガード参照)。参照カウントの解放は
         // _lib 自身の finalizer に任せる。一時ディレクトリ削除は純粋な OS 呼び出しなので
-        // finalizer 経路でも実行する。
-        if (disposing) _lib.Dispose();
+        // finalizer 経路でも実行する。_lib は ctor の Acquire 失敗時は null のため
+        // null 条件演算子で解放する。
+        if (disposing) _lib?.Dispose();
 
         // Add(Stream) で作成した一時ディレクトリを削除する
         if (_streamTempDir is not null && Directory.Exists(_streamTempDir))
@@ -1345,8 +1379,9 @@ public sealed class ArchiveWriter : DisposableBase
     #endregion
 
     #region Fields
-    // 7z.dll のラッパー（参照カウント付き共有シングルトン）
-    private readonly SevenZipLibrary _lib = SevenZipLibrary.Acquire();
+    // 7z.dll のラッパー（参照カウント付き共有シングルトン）。
+    // ctor 失敗時に同期解放できるよう、フィールド初期化子ではなく ctor 内で取得する。
+    private readonly SevenZipLibrary _lib;
     // 追加するファイル/ディレクトリのリスト
     private readonly List<RawEntity> _items = [];
     // Update 時に削除するアイテムの相対パスセット（OrdinalIgnoreCase）
