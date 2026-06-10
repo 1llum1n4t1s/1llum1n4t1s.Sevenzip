@@ -142,6 +142,7 @@ ArchiveWriter および ArchiveReader は、生成から破棄まで同一スレ
 | `ArchiveWriter.LastBackupPath` / `BackupPaths` / `LastTempPath` | **v1.0.69〜v1.0.70** — .bak / tmp パスの公開 | `BackupPaths` は全履歴 (v1.0.70)。`LastTempPath` は異常終了時のクリーンアップ用 (v1.0.70)。 |
 | `CompressionOption.Validate(Format)` | **v1.0.70** — オプション矛盾の早期検出 | AtomicSave+VolumeSize / Tar+Password / 負値ガード。 |
 | `Update(Stream, Stream, ..., allowDestructiveOnWritebackFailure)` | **v1.0.70** — 自己参照書き戻し失敗時の dest 挙動をオプトイン化 | デフォルト false = 部分書き込み保持 / true = 全消失 (旧動作)。 |
+| `ArchiveWriter(Format, ...)` コンストラクタ | **v1.0.78** — 未対応フォーマットの fail-fast 検証 + ctor 失敗時クリーンアップ | `Format.Unknown` は `UnknownFormatException`、書き込み非対応フォーマット (Rar 等) は ctor で即例外 (従来は `Save()` 時に失敗)。失敗時は取得済みリソースを同期解放。 |
 
 ### 新機能
 
