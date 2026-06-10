@@ -805,7 +805,13 @@ public sealed class ArchiveWriter : DisposableBase
     /// </param>
     protected override void Dispose(bool disposing)
     {
-        _lib.Dispose();
+        // finalizer 経路 (disposing == false) では _lib (SevenZipLibrary) に触らない。
+        // _lib 自身も finalizable で finalize 順序は不定のため、先に finalize 済みの
+        // インスタンスを Dispose すると finalizer スレッドで例外が出てプロセスごと
+        // クラッシュしうる (ArchiveReader.Dispose の同ガード参照)。参照カウントの解放は
+        // _lib 自身の finalizer に任せる。一時ディレクトリ削除は純粋な OS 呼び出しなので
+        // finalizer 経路でも実行する。
+        if (disposing) _lib.Dispose();
 
         // Add(Stream) で作成した一時ディレクトリを削除する
         if (_streamTempDir is not null && Directory.Exists(_streamTempDir))

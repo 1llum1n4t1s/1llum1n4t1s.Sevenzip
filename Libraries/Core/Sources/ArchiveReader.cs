@@ -247,79 +247,108 @@ public sealed class ArchiveReader : DisposableBase
         PasswordQuery password, ArchiveOption options, bool dispose)
     {
         if (src is null) throw new ArgumentNullException(nameof(src));
-        if (format == Format.Unknown) throw new UnknownFormatException();
+        if (format == Format.Unknown)
+        {
+            // ctor 失敗で this は孤児化する。所有権を受け取った Stream を閉じ、
+            // finalizer 不要を明示する (ctor cleanup の方針は下の catch コメント参照)。
+            if (dispose) { try { src.Dispose(); } catch { /* best effort */ } }
+            GC.SuppressFinalize(this);
+            throw new UnknownFormatException();
+        }
 
         Source  = sourceHint ?? string.Empty;
         Format  = format;
         Options = options;
         _password = password;
-        var lib = Hook(SevenZipLibrary.Acquire());
-        _core = lib.GetInArchive(format);
-
-        // Format.Zip 以外で Encoding/CodePage 非デフォルト指定の場合は警告
-        if (format != Format.Zip && !options.IsDefaultCodePage())
-            Logger.Warn(
-                $"[ArchiveReader] ArchiveOption.Encoding/CodePage is only honored for Format.Zip " +
-                $"and ignored for {format}.");
-
-        // Open() 前にコードページを設定する（7z.dll が ZIP ファイル名のデコードに使用）
-        // ZIP 形式かつデフォルト（Oem かつ Encoding 未指定）以外の場合のみ SetProperties を呼ぶ
-        if (format == Format.Zip && !options.IsDefaultCodePage())
+        try
         {
-            ISetProperties setProps = null;
-            try
+            var lib = Hook(SevenZipLibrary.Acquire());
+            _core = lib.GetInArchive(format);
+
+            // Format.Zip 以外で Encoding/CodePage 非デフォルト指定の場合は警告
+            if (format != Format.Zip && !options.IsDefaultCodePage())
+                Logger.Warn(
+                    $"[ArchiveReader] ArchiveOption.Encoding/CodePage is only honored for Format.Zip " +
+                    $"and ignored for {format}.");
+
+            // Open() 前にコードページを設定する（7z.dll が ZIP ファイル名のデコードに使用）
+            // ZIP 形式かつデフォルト（Oem かつ Encoding 未指定）以外の場合のみ SetProperties を呼ぶ
+            if (format == Format.Zip && !options.IsDefaultCodePage())
             {
-                setProps = lib.QueryInterface<ISetProperties>(_core);
-                if (setProps is not null)
+                ISetProperties setProps = null;
+                try
                 {
-                    var codePage = options.ResolveCodePage();
-                    var keys = new[] { "cp" };
-                    var vals = new[] { PropVariant.Create(codePage) };
-                    var pin = GCHandle.Alloc(vals, GCHandleType.Pinned);
-                    try
+                    setProps = lib.QueryInterface<ISetProperties>(_core);
+                    if (setProps is not null)
                     {
-                        var hr = setProps.SetProperties(keys, pin.AddrOfPinnedObject(), (uint)keys.Length);
-                        if (hr != 0) throw new IOException(
-                            $"コードページ {codePage} の設定に失敗しました (HRESULT: 0x{hr:X8})");
+                        var codePage = options.ResolveCodePage();
+                        var keys = new[] { "cp" };
+                        var vals = new[] { PropVariant.Create(codePage) };
+                        var pin = GCHandle.Alloc(vals, GCHandleType.Pinned);
+                        try
+                        {
+                            var hr = setProps.SetProperties(keys, pin.AddrOfPinnedObject(), (uint)keys.Length);
+                            if (hr != 0) throw new IOException(
+                                $"コードページ {codePage} の設定に失敗しました (HRESULT: 0x{hr:X8})");
+                        }
+                        finally { pin.Free(); }
                     }
-                    finally { pin.Free(); }
+                }
+                finally
+                {
+                    SevenZipLibrary.ReleaseComWrapper(setProps);
                 }
             }
-            finally
+
+            var cb = Hook(new OpenCallback(Source) { Password = _password });
+            var ss = new ArchiveStreamReader(src, dispose);
+            cb.Streams.Add(ss);
+
+            // Keep managed references alive to prevent GC from collecting
+            // objects whose CCWs are held by native 7-Zip.
+            // (_openStream の代入をもって src の所有権は cb → _disposable 系列に移る)
+            _openStream   = ss;
+            _openCallback = cb;
+
+            var code = _core.Open(ss, IntPtr.Zero, cb);
+            GC.KeepAlive(cb);
+            GC.KeepAlive(ss);
+            if (code != 0)
             {
-                SevenZipLibrary.ReleaseComWrapper(setProps);
+                Logger.Warn($"[Open] Code:{code}");
+                // Open が失敗 (非 S_OK) のまま続行すると、GetNumberOfItems が 0 を返して
+                // Items が空になり「中身ゼロのアーカイブ」として静かに誤動作する
+                // (壊れた書庫・非対応書庫・形式不一致の展開が 0 件成功扱いになる)。失敗を明示する。
+                // ヘッダー暗号のパスワード不一致などコールバックが捕捉した例外があれば内包して投げる。
+                if (cb.Exceptions.Count > 0)
+                {
+                    var inner = cb.Exceptions.Pop();
+                    if (inner is EncryptionException) throw inner;
+                    throw new SevenZipException(SevenZipCode.HeadersError, inner);
+                }
+                throw new SevenZipException(SevenZipCode.IsNotArc);
             }
+
+            Items = new ArchiveCollection(_core, (int)_core.GetNumberOfItems(), Source, format);
         }
-
-        var cb = Hook(new OpenCallback(Source) { Password = _password });
-        var ss = new ArchiveStreamReader(src, dispose);
-        cb.Streams.Add(ss);
-
-        // Keep managed references alive to prevent GC from collecting
-        // objects whose CCWs are held by native 7-Zip.
-        _openStream   = ss;
-        _openCallback = cb;
-
-        var code = _core.Open(ss, IntPtr.Zero, cb);
-        GC.KeepAlive(cb);
-        GC.KeepAlive(ss);
-        if (code != 0)
+        catch
         {
-            Logger.Warn($"[Open] Code:{code}");
-            // Open が失敗 (非 S_OK) のまま続行すると、GetNumberOfItems が 0 を返して
-            // Items が空になり「中身ゼロのアーカイブ」として静かに誤動作する
-            // (壊れた書庫・非対応書庫・形式不一致の展開が 0 件成功扱いになる)。失敗を明示する。
-            // ヘッダー暗号のパスワード不一致などコールバックが捕捉した例外があれば内包して投げる。
-            if (cb.Exceptions.Count > 0)
-            {
-                var inner = cb.Exceptions.Pop();
-                if (inner is EncryptionException) throw inner;
-                throw new SevenZipException(SevenZipCode.HeadersError, inner);
-            }
-            throw new SevenZipException(SevenZipCode.IsNotArc);
+            // ctor 失敗時のクリーンアップ。throw すると this は誰にも参照されず孤児化し、
+            // (1) 取得済みの COM ラッパー・ライブラリ参照カウント・Stream が GC まで
+            //     リークする (パスワード無しでヘッダ暗号化書庫を開く失敗は正常系なので頻発)、
+            // (2) 後に finalizer (~DisposableBase → Dispose(false)) が走った時点では
+            //     _core の ComObject が先に finalize 済みのことがあり、旧実装では
+            //     ObjectDisposedException が finalizer スレッドで発生してプロセスごと
+            //     クラッシュしていた (Lhamiel テストスイートで実測・再現)。
+            // ここで同期的に解放し、finalizer 自体を不要化する。
+            var owned = _openStream is not null;
+            try { Dispose(true); } catch { /* cleanup は best effort */ }
+            // OpenCallback.Streams へ追加する前に失敗した場合、src の所有権は
+            // まだ _disposable 系列に移っていないためここで直接閉じる。
+            if (dispose && !owned) { try { src.Dispose(); } catch { /* best effort */ } }
+            GC.SuppressFinalize(this);
+            throw;
         }
-
-        Items = new ArchiveCollection(_core, (int)_core.GetNumberOfItems(), Source, format);
     }
 
     #endregion
@@ -557,6 +586,21 @@ public sealed class ArchiveReader : DisposableBase
         // パスワードキャッシュをクリアしてヒープ上の平文を除去
         try { _password?.Reset(); } catch { /* reset 失敗は無視 */ }
 
+        // finalizer 経路 (disposing == false) では他のマネージドオブジェクトに触らない。
+        // _core (source-generated ComObject)・Items・_disposable 内のオブジェクトはそれぞれ
+        // 自身が finalizable で、finalize 順序は不定。先に finalize 済みの ComObject の
+        // メソッド (Close 等) を呼ぶと ObjectDisposedException が finalizer スレッドで
+        // 発生し、プロセスごとクラッシュする (.NET の finalizer 未処理例外は致死)。
+        // ネイティブ側の解放は各 ComObject 自身の finalizer が担うため、ここでは参照を
+        // 切るだけでよい。
+        if (!disposing)
+        {
+            _core         = null;
+            _openStream   = null;
+            _openCallback = null;
+            return;
+        }
+
         // Items (ArchiveCollection) を先に Dispose して内部 _core 参照を null 化する。
         // これで Dispose 後に Items[i] がアクセスされても解放済み COM に触らない
         // (ArchiveCollection.Dispose が _core = null を行う)。
@@ -564,7 +608,10 @@ public sealed class ArchiveReader : DisposableBase
 
         if (_core != null)
         {
-            _core.Close();
+            // Open に失敗した直後の Close は失敗しうるが、COM ラッパーと
+            // ライブラリ参照カウントの解放は続行する (ctor 失敗クリーンアップ経路)。
+            try { _core.Close(); }
+            catch (Exception e) { Logger.Warn($"[Dispose] Close failed: {e.Message}"); }
             SevenZipLibrary.ReleaseComWrapper(_core);
             _core = null;
         }
