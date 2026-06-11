@@ -8,5 +8,8 @@
 // License, or (at your option) any later version.
 //
 /* ------------------------------------------------------------------------- */
+using System.Runtime.CompilerServices;
 using System.Runtime.Versioning;
 [assembly: SupportedOSPlatform("windows")]
+// UpdateCallback 等の internal な進捗ロジックを単体テストから検証するため
+[assembly: InternalsVisibleTo("Cube.FileSystem.SevenZip.Tests")]

@@ -561,17 +561,16 @@ indexInArchiveは更新するファイルがアーカイブ内にあるならア
 
 ### SetOperationResult
 
-### IProgress (SetTotal / SetCompleted) と進捗の「ファイルごとに100%になる」問題
+### IProgress (SetTotal / SetCompleted) と進捗集計のセマンティクス
 
-一部のフォーマット（例: Zip）では、7-Zip が **ファイルごとに** SetTotal(現在ファイルのサイズ) と SetCompleted(現在ファイルの処理バイト) を呼ぶ実装になっている。  
-その場合、Report の Bytes/TotalBytes がファイルごとに 0→1 となり、進捗がファイルごとに 100% になる。
+7-Zip の completeValue は **SetTotal と同尺度のグローバル累積値**（アーカイブ全体の絶対進捗位置、complexity 尺度でエントリ毎のヘッダ定数込み）であり、ファイル毎に 0 リセットされない（7-Zip 公式コンソール UI も `_percent.Completed = *completeValue` の絶対代入で解釈。CMtProgressMixer2 / CLocalProgress が CriticalSection 直列化 + offset 加算で単調に合成する）。
 
-対策として UpdateCallback では以下を行う。
+UpdateCallback では以下を行う。
 
-- **TotalBytes**: コンストラクタで `_items.Sum(e => e.Length)` により全ファイルの合計バイト数を一度だけ設定。SetTotal では上書きしない。
-- **Bytes**: SetCompleted で 7-Zip から受け取った値を「ファイル単位」とみなし、値が前回より小さくなったら次のファイルに移ったと判断して累積する。`Bytes = _cumulativeBytes + value` で常に全体の累積バイトを Report に渡す。
+- **TotalBytes**: コンストラクタで `_items.Sum(e => e.Length)` により全ファイルの合計バイト数を一度だけ設定。SetTotal では上書きしない（complexity 尺度との僅かな差は Bytes のクランプで吸収）。
+- **Bytes**: SetCompleted で受け取った値の**単調最大値** (`_maxCompletedBytes`) を採用し、TotalBytes でクランプする。マルチスレッド圧縮ではスレッド間の読み取りレースでまれに直前より小さい値が届くため、単調性だけ保証して UI の進捗後退を防ぐ。
 
-これにより、SetCompleted が累積でもファイル単位でも、アプリ側では常に全体進捗として扱える。
+⚠️ 旧実装（〜1.0.78）は「値の減少 = ファイル切替リセット」とみなして直前値を `_cumulativeBytes` に累積加算していたが、これは誤前提で、マルチスレッド圧縮の値後退のたびにグローバル累積値を二重加算し、大規模アーカイブで進捗が早期に 100% へ張り付くバグだった（実測: 528k ファイル / 60GB の ZIP 圧縮 22 分中に 16 回の後退 → 23.7% 過剰計上 → 残り 9.2 分が 100% 表示のまま）。リセット検出方式へ戻さないこと（回帰テスト: `UpdateCallbackProgressTest`）。
 
 <a name="IOutStream">IOutStream</a>
 ----------------------------------
