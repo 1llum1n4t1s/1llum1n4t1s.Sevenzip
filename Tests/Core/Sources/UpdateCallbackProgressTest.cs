@@ -20,6 +20,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using NUnit.Framework;
 
 namespace Cube.FileSystem.SevenZip.Tests;
@@ -119,6 +120,48 @@ internal class UpdateCallbackProgressTest
                 Assert.That(cb.Bytes, Is.EqualTo(1000L));
             }
             finally { Marshal.FreeHGlobal(p); }
+        }
+        finally { File.Delete(src); }
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// SetCompleted_ConcurrentCalls_RemainsMonotonicMax
+    ///
+    /// <summary>
+    /// SetCompleted の並行呼び出し（ZIP Ultra 等のマルチスレッド圧縮を模擬）でも
+    /// Bytes が後退せず、最終的に単調最大値へ収束することを確認します。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [Test]
+    public void SetCompleted_ConcurrentCalls_RemainsMonotonicMax()
+    {
+        var src = Path.Combine(Path.GetTempPath(), $"UpdateCallbackProgressTest_{Guid.NewGuid():N}.bin");
+        File.WriteAllBytes(src, new byte[1000]);
+        try
+        {
+            var items = new List<RawEntity> { new(src, "a.bin") };
+            using var cb = new UpdateCallback(items, new SilentProgress())
+            {
+                Destination = string.Empty,
+                Password    = string.Empty,
+            };
+
+            // 後退を含む値列を複数スレッドから同時投入する。バッファはスレッドごとに
+            // 確保し、テスト自体の race を排除する。
+            Parallel.ForEach(new long[] { 100, 700, 650, 900, 850, 300, 880, 200 }, value =>
+            {
+                var p = Marshal.AllocHGlobal(sizeof(long));
+                try
+                {
+                    Marshal.WriteInt64(p, value);
+                    _ = cb.SetCompleted(p);
+                }
+                finally { Marshal.FreeHGlobal(p); }
+            });
+
+            Assert.That(cb.Bytes, Is.EqualTo(900L));
         }
         finally { File.Delete(src); }
     }
