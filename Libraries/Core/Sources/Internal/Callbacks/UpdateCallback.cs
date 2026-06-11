@@ -140,19 +140,18 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         var value = bytes != IntPtr.Zero ? Marshal.ReadInt64(bytes) : 0L;
 
         // ZIP Ultra 等のマルチスレッド圧縮では SetCompleted が並行呼び出しされうるため、
-        // _maxCompletedBytes のフィールドアクセスを lock で保護する。
+        // _maxCompletedBytes と Bytes の更新を同一 lock で保護する（Bytes 代入を lock 外に
+        // 置くと、古いスナップショットが後から書き戻されて進捗が後退しうる）。
         // lock 範囲は小さく保ち、Report 呼び出しは lock 外で行う (再入デッドロック回避)。
-        long snap;
         lock (_completedLock)
         {
             if (value > _maxCompletedBytes) _maxCompletedBytes = value;
-            snap = _maxCompletedBytes;
-        }
 
-        // 100% 超過で進捗 UI がおかしくならないよう TotalBytes を上限とする
-        // (completeValue は complexity 尺度でエントリ毎のヘッダ定数等を含むため、
-        //  純粋なファイルサイズ合計である TotalBytes を僅かに超えることがある)
-        Bytes = TotalBytes > 0 && snap > TotalBytes ? TotalBytes : snap;
+            // 100% 超過で進捗 UI がおかしくならないよう TotalBytes を上限とする
+            // (completeValue は complexity 尺度でエントリ毎のヘッダ定数等を含むため、
+            //  純粋なファイルサイズ合計である TotalBytes を僅かに超えることがある)
+            Bytes = TotalBytes > 0 && _maxCompletedBytes > TotalBytes ? TotalBytes : _maxCompletedBytes;
+        }
 
         // 50ms 以内の連続呼び出しは進捗報告をスキップしてコールバックのオーバーヘッドを削減する
         var now = Environment.TickCount64;
