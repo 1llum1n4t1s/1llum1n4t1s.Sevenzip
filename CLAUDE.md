@@ -139,6 +139,14 @@ COM Interop と P/Invoke は全面的に AOT 互換 API に移行済み:
 - **ZipSlipWin 系のパスサニタイゼーション**: バックスラッシュを含むエントリ名は Windows 禁止文字を Private Use Area (`U+F02F` / `U+F05C`) にエスケープする。特定ファイル名ではなく「destDir 外に漏洩しない」ことだけを `Extract_ZipSlipWin` で検証する。
 - **CJK パスワードでの ZIP 作成**: upstream regression。`ZipCrypto` / `AES256` 共に `E_INVALIDARG` で失敗する（7z.exe CLI でも再現）。本家修正待ちのためテストケースから除外済み（`ArchiveWriterTest.cs` のコメント参照）。
 
+## 進捗報告 (SetCompleted) のセマンティクス
+
+`IArchiveUpdateCallback::SetCompleted` の completeValue は **SetTotal と同尺度のグローバル累積値**（アーカイブ全体の絶対進捗位置、complexity 尺度でヘッダ定数込み）であり、ファイル毎に 0 リセットされない（7-Zip 公式コンソール UI も絶対代入で解釈。CMtProgressMixer2 / CLocalProgress が CriticalSection 直列化 + offset 加算で合成）。ただしマルチスレッド圧縮ではスレッド間の読み取りレースで**まれに直前より小さい値が届く**ため、`UpdateCallback.SetCompleted` は単調最大値のみを採用する。
+
+旧実装（〜1.0.78）の「値の減少 = ファイル切替リセット」ヒューリスティックは、この後退のたびにグローバル累積値を二重加算し、大規模アーカイブで進捗が早期に 100% へ張り付く原因だった（実測: 528k ファイル / 60GB の ZIP 圧縮 22 分中に 16 回の後退 → 23.7% 過剰計上 → 残り 9.2 分が 100% 表示のまま）。回帰テスト: `UpdateCallbackProgressTest`。
+
+関連の設計妥協: `UpdateCallback` は GetStream で開いた入力ストリームを **Dispose まで保持**する（早期解放は ZIP Ultra MT で COM 違反、`SetOperationResult` のコメント参照）。このため**圧縮中は全対象ファイルが FileShare.Read で write ロックされ続ける**（数十万ファイル × 数十分の圧縮では利用者のファイル保存が失敗しうる既知の制約）。
+
 ## テストハーネス
 
 - NUnit 4 をコンソールアプリ (`OutputType=Exe`) として実行

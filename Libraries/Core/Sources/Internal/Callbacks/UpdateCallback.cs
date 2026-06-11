@@ -124,30 +124,34 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     /// <param name="bytes">処理済みバイト数を指すポインタ。null の場合は 0 として扱う。</param>
     /// <returns>操作結果コード。</returns>
     /// <remarks>
-    /// 7-zip はファイルごとに 0 から当該ファイルサイズまでをリセットして報告する場合がある。
-    /// 値のリセットを検出して累積バイト数を計算することで常に全体の進捗を報告する。
+    /// 7-zip の completeValue は SetTotal と同尺度のグローバル累積値（アーカイブ全体の
+    /// 絶対進捗位置）であり、ファイル毎にリセットされない（7-Zip 公式コンソール UI も
+    /// _percent.Completed への絶対代入で解釈している）。ZIP 等のマルチスレッド圧縮では
+    /// スレッド間の読み取りレースにより直前より小さい値がまれに届くため、単調最大値のみを
+    /// 採用して UI の進捗後退を防ぐ。
+    ///
+    /// 旧実装の「ファイル毎リセット検出」（値の減少を検出するたびに直前値を累積加算）は、
+    /// この後退をファイル切替と誤認してグローバル累積値を二重加算し、大規模アーカイブで
+    /// 進捗が実処理の半ばで 100% に張り付く原因だった（実測: 528k ファイル / 60GB の ZIP
+    /// 圧縮 22 分中、16 回の後退 → 23.7% 過剰計上 → 残り 9.2 分が 100% 表示のまま）。
     /// </remarks>
     public int SetCompleted(IntPtr bytes)
     {
         var value = bytes != IntPtr.Zero ? Marshal.ReadInt64(bytes) : 0L;
 
         // ZIP Ultra 等のマルチスレッド圧縮では SetCompleted が並行呼び出しされうるため、
-        // _cumulativeBytes / _lastCompletedBytes のフィールドアクセスを lock で保護する。
+        // _maxCompletedBytes のフィールドアクセスを lock で保護する。
         // lock 範囲は小さく保ち、Report 呼び出しは lock 外で行う (再入デッドロック回避)。
         long snap;
         lock (_completedLock)
         {
-            // 値が前回より小さくなった場合は次のファイルに移った（リセットされた）と判断し、
-            // 前回のファイルのバイト数を累積値に加算する。
-            if (value < _lastCompletedBytes && _lastCompletedBytes > 0)
-                _cumulativeBytes += _lastCompletedBytes;
-            _lastCompletedBytes = value;
-
-            // 累積値と現在のファイルの進捗を合算して全体の処理済みバイト数とする
-            snap = _cumulativeBytes + value;
+            if (value > _maxCompletedBytes) _maxCompletedBytes = value;
+            snap = _maxCompletedBytes;
         }
 
         // 100% 超過で進捗 UI がおかしくならないよう TotalBytes を上限とする
+        // (completeValue は complexity 尺度でエントリ毎のヘッダ定数等を含むため、
+        //  純粋なファイルサイズ合計である TotalBytes を僅かに超えることがある)
         Bytes = TotalBytes > 0 && snap > TotalBytes ? TotalBytes : snap;
 
         // 50ms 以内の連続呼び出しは進捗報告をスキップしてコールバックのオーバーヘッドを削減する
@@ -587,12 +591,10 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     private string _tempDir;
     // 最後に処理したコールバックインデックス（UpdateItemProgress の重複検出用）
     private int _processedItemIndex = -1;
-    // 7-zip のバイト報告がリセットされた場合の累積バイト数
-    private long _cumulativeBytes = 0L;
-    // 前回の SetCompleted で受け取ったバイト数（リセット検出用）
-    private long _lastCompletedBytes = 0L;
-    // SetCompleted の並行呼び出し (ZIP Ultra 等のマルチスレッド圧縮) で _cumulativeBytes /
-    // _lastCompletedBytes を保護するロック
+    // SetCompleted で受領した completeValue の単調最大値（グローバル累積の絶対進捗位置）
+    private long _maxCompletedBytes;
+    // SetCompleted の並行呼び出し (ZIP Ultra 等のマルチスレッド圧縮) で _maxCompletedBytes を
+    // 保護するロック
     private readonly object _completedLock = new();
     // 最後に進捗を報告した TickCount64（スロットリング用）
     private long _lastReportedTicks;
