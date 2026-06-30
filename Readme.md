@@ -9,7 +9,7 @@
 > - **.NET 10** 対応（ターゲットを net10.0 / net10.0-windows に変更）
 > - **NativeAOT 対応**（COM Interop を `[GeneratedComInterface]` に、P/Invoke を `[LibraryImport]` に全面移行）
 > - **Windows x64 / arm64 対応** — `<RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>` を宣言。Managed アセンブリは AnyCPU で単一、ネイティブ 7z.dll のみ RID で分岐
-> - **7-Zip 本家 26.00** のネイティブバイナリを直接 vendor（`Cube.Native.SevenZip` 依存を除去）
+> - **7-Zip 本家 26.02** のネイティブバイナリを直接 vendor（`Cube.Native.SevenZip` 依存を除去）
 > - **ネイティブバイナリ自動配布** — NuGet 公開時のリリースワークフローが 7-zip.org から最新の 7z.dll を自動取得して同梱。コンシューマのビルド時にネットワークアクセスは発生しない
 > - [Cube.Core](https://github.com/cube-soft/cube.core) をソリューション内のプロジェクトとして直接組み込み（NuGet 参照ではなく NuGet パッケージに DLL を同梱）
 > - CI を AppVeyor から **GitHub Actions** に移行
