@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code and other coding agents working in this repository.
 
 ## プロジェクト概要
 
@@ -111,7 +111,7 @@ Sources/
 2. `ArchiveWriter.FileSkipped` イベント（引数: `FileSkippedEventArgs { FullName, RelativeName, Reason }`）が発火する
 3. `Logger.Warn` にスキップ事実が記録される
 
-既定は `false`（従来通り throw）で、後方互換性を保持。**現状の適用範囲は `Add()` 時の fail-fast のみ**。Add 通過後に Save 中で他プロセスが新たにロックを取り始める race は対象外（`UpdateCallback.Open` 側は引き続き失敗時に例外を投げる）— 実害が出たら別途対応する。
+既定は `false`（従来通り throw）で後方互換性を保持する。**現状の適用範囲は `Add()` 時の fail-fast のみ**。Add 通過後に Save 中で他プロセスが新たにロックを取り始める race は対象外（`UpdateCallback.Open` 側は引き続き失敗時に例外を投げる）— 実害が出たら別途対応する。
 
 ### NativeAOT 対応の規約
 
@@ -120,21 +120,21 @@ COM Interop と P/Invoke は全面的に AOT 互換 API に移行済み:
 - `[DllImport]` → `[LibraryImport]`
 - COM オブジェクトは `StrategyBasedComWrappers` + `CreateObjectFlags.UniqueInstance` で明示管理
 - AOT 非互換コード（リフレクションベース）には `[RequiresUnreferencedCode]` / `[RequiresDynamicCode]` を付与
-- `[GeneratedComInterface]` は例外ごとに固有の HRESULT を返すため、カスタムの `IProgress<Report>` 実装は全ての `ProgressState` 値を処理する必要がある（未処理だと例外が 7-Zip 側に伝播して中断する）
+- `[GeneratedComInterface]` は例外ごとに固有の HRESULT を返すため、カスタムの `IProgress<Report>` 実装は全ての `ProgressState` 値を処理する（未処理だと例外が 7-Zip 側に伝播して中断する）
 
 ### コード規約
 
-- `DisableImplicitNamespaceImports = true` — 全 using を明示的に記述
+- `DisableImplicitNamespaceImports = true` — 全 using を明示的に記述する
 - `AllowUnsafeBlocks = true` — COM ポインタ操作のため（`ArchiveReader.Save(string, uint[], IProgress<Report>)` が `unsafe`）
 - `#region` でセクション分割（Constructors / Properties / Methods / Fields）
 - XML ドキュメントコメントは日本語
-- `ArchiveReader` / `ArchiveWriter` は**同一スレッドで生成から破棄まで実行**する必要あり（非同期は `Task.Run` で一連の処理を包む）
+- `ArchiveReader` / `ArchiveWriter` は**同一スレッドで生成から破棄まで実行する**（非同期は `Task.Run` で一連の処理を包む）
 
 ## 既知の 7-Zip 26.00 挙動変化
 
 本家 25.01 → 26.00 への移行に伴い、以下の挙動変化がテストに影響する。Cube 時代の Babel パッチ（SJIS 自動検出）が無くなったのが主因。
 
-- **SJIS エンコード ZIP**: 自動検出されないため `ArchiveOption.CodePage = CodePage.Japanese` を明示指定する必要がある。`Extract_SampleUnixSjis` テスト参照。
+- **SJIS エンコード ZIP**: 自動検出されないため `ArchiveOption.CodePage = CodePage.Japanese` を明示指定する。`Extract_SampleUnixSjis` テスト参照。
 - **Mac 製 ZIP (NFD)**: `名称未設定フォルダ` 等の濁点付き文字が NFD のまま展開される。テスト側で `FindEntity` ヘルパーが NFC/NFD の両方を試すフォールバック実装を持つ。
 - **ZipSlipWin 系のパスサニタイゼーション**: バックスラッシュを含むエントリ名は Windows 禁止文字を Private Use Area (`U+F02F` / `U+F05C`) にエスケープする。特定ファイル名ではなく「destDir 外に漏洩しない」ことだけを `Extract_ZipSlipWin` で検証する。
 - **CJK パスワードでの ZIP 作成**: upstream regression。`ZipCrypto` / `AES256` 共に `E_INVALIDARG` で失敗する（7z.exe CLI でも再現）。本家修正待ちのためテストケースから除外済み（`ArchiveWriterTest.cs` のコメント参照）。
