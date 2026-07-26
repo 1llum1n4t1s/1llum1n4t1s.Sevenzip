@@ -91,14 +91,20 @@ jobs:
           ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
           # Authenticode 検証関数。
-          # 未署名を成功として通すと、署名を剥がした差し替えバイナリが素通りして
-          # そのまま NuGet へ公開されるため、NotSigned は失敗として扱う。
+          #
+          # 重要: 本家 7-Zip は配布バイナリに Authenticode 署名を付けていない
+          # (26.02 の GitHub リリース installer と同梱 7z.dll はいずれも NotSigned を実測確認)。
+          # したがって「未署名なら失敗」にすると全てのリリースが不可能になる。
+          # 署名が付いている版では厳密に検証し、無い版は警告のうえ続行する。
+          # 未署名版に対する改ざん対策は、この関数ではなく HTTPS + 配信元ホスト allowlist
+          # (Assert-AllowedUrl) と、同梱バイナリの SHA256 を job summary へ記録して
+          # 事後追跡できるようにすることで担保している。
           function Test-7zSignature {
             param([string]$Path)
             $sig = Get-AuthenticodeSignature -FilePath $Path
             if ($sig.Status -eq 'NotSigned') {
-              Write-Host "::error::Authenticode verification FAILED — $Path is not signed"
-              return $false
+              Write-Host "::warning::$Path is not Authenticode-signed (upstream 7-Zip does not sign its binaries). Provenance relies on the HTTPS host allowlist."
+              return $true
             }
             $subjectOk = $sig.SignerCertificate.Subject -match '(?:^|,\s*)CN=Igor Pavlov(?:,|$)'
             $issuerOk  = ($sig.SignerCertificate.Issuer -match 'CN=[^,]*Sectigo') -or

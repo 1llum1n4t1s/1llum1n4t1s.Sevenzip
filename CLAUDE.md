@@ -171,4 +171,9 @@ COM Interop と P/Invoke は全面的に AOT 互換 API に移行済み:
 
 ## CI/CD
 
-GitHub Actions で `release/**` ブランチへの push 時に、7-zip.org から最新 7z.dll を取得 → ビルド → NuGet パッケージを自動公開（`.github/workflows/publish.yml`）。`main` ブランチには公開トリガーは設定されていない。
+GitHub Actions で `release/**` ブランチへの push 時に、7-zip.org から最新 7z.dll を取得 → ビルド → テスト → NuGet パッケージを自動公開（`.github/workflows/publish.yml`）。`main` ブランチには公開トリガーは設定されていない。
+
+**本家 7-Zip のバイナリは Authenticode 署名されていない**（26.02 の GitHub リリース installer と同梱 `7z.dll` はいずれも `Get-AuthenticodeSignature` が `NotSigned` を返すことを実測確認）。そのため `Test-7zSignature` は「署名があれば厳密検証、無ければ警告して続行」とする。**ここを「未署名なら失敗」に変えるとリリースが全て止まる**。未署名版に対する改ざん対策は次の 2 つで担保している。
+
+- `Assert-AllowedUrl` による HTTPS 強制 + 配信元ホスト allowlist（`www.7-zip.org` / `7-zip.org` / `github.com` / `objects.githubusercontent.com`）。ダウンロード URL はページのスクレイプ由来なので、ホストを限定しないと任意の配信元へ誘導されうる。
+- 同梱した 7z.dll の FileVersion と SHA256 を job summary へ記録（CI ログは保持期間で消えるため、後から「どの DLL が入ったパッケージか」を切り分けるための証跡）。
