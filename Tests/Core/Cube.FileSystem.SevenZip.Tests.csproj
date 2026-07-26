@@ -2,7 +2,12 @@
     <PropertyGroup>
         <StartupObject>Cube.FileSystem.SevenZip.Tests.Program</StartupObject>
         <OutputType>Exe</OutputType>
-        <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+        <!-- RID は Platform に追従させる。win-x64 固定だと -p:Platform=arm64 のとき
+             PlatformTarget=arm64 と衝突して NETSDK1032 でビルドできない。
+             AnyCPU は既定の x64 テスト実行を維持するため win-x64 に寄せる。
+             arm64 のテスト実行自体は arm64 ホストが必要。 -->
+        <RuntimeIdentifier Condition="'$(Platform)' == 'arm64'">win-arm64</RuntimeIdentifier>
+        <RuntimeIdentifier Condition="'$(Platform)' != 'arm64'">win-x64</RuntimeIdentifier>
         <SelfContained>false</SelfContained>
         <IsPackable>false</IsPackable>
         <SatelliteResourceLanguages>_</SatelliteResourceLanguages>

@@ -328,13 +328,16 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
             return (int)SevenZipCode.Success;
         }
 
-        _index = resolved;
+        // 並行 GetStream (ThreadCount > 1) で _index が別エントリに上書きされると、
+        // イベント (FileCompressing / FileCompressed) と Logger.Warn が誤ったファイルを指す。
+        // 書き込みをロックで保護し、以降はローカルの resolved を使って自分のエントリを参照する。
+        lock (_stateLock) _index = resolved;
 
         var dest = default(ISequentialInStream);
-        var src  = Current();
+        var src  = Current(resolved);
 
         // FileCompressing イベントを発火する（ファイル読み取りの直前）
-        if (FireFileEvent(OnFileStarted, src, _index))
+        if (FireFileEvent(OnFileStarted, src, resolved))
         {
             stream = null;
             return (int)SevenZipCode.Cancel;
@@ -383,10 +386,15 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         if (FireFileEvent(OnFileFinished, Current(), _index))
             return (int)SevenZipCode.Cancel;
 
-        // 成功の場合は Success 状態、失敗の場合は例外を含む Failed 状態を報告する
-        return code == SevenZipCode.Success ?
-               Report(ProgressState.Success, Current()) :
-               Report(new SevenZipException(code), Current());
+        if (code == SevenZipCode.Success) return Report(ProgressState.Success, Current());
+
+        // 失敗は Exceptions へ積んでから Failed を報告する（ExtractCallback.SetOperationResult と同じ規約）。
+        // Report は Failed で Cancel=true を立て 7z.dll へ Cancel コードを返すため、積んでおかないと
+        // ThrowIfError が「純粋なユーザーキャンセル」と誤判定して OperationCanceledException を投げ、
+        // 失敗コードと対象エントリ名が失われる。
+        var error = new SevenZipException(code);
+        PushException(error);
+        return Report(error, Current());
     }
 
     /// <summary>
@@ -431,20 +439,33 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         // (ストリーム) に触らない。各ストリームは自身の finalizer / SafeHandle が
         // 回収する (ArchiveReader.Dispose の同ガード参照)。一時ディレクトリ削除は
         // 純粋な OS 呼び出しなので finalizer 経路でも実行する。
+        // 共有可変状態はロック配下でスナップショットを取ってから触る (並行 GetStream 対策)。
+        ArchiveStreamReader[] streams;
+        string tempDir;
+        lock (_stateLock)
+        {
+            streams = [.. _streams];
+            _streams.Clear();
+            tempDir = _tempDir;
+            _tempDir = null;
+        }
+
         if (disposing)
         {
             // ここで一括解放する。詳細は SetOperationResult のコメントを参照。
-            foreach (var stream in _streams)
+            foreach (var stream in streams)
             {
                 try { stream.Dispose(); } catch { /* 解放失敗は無視 */ }
             }
         }
-        _streams.Clear();
 
-        // ロック中ファイルの一時コピーを削除する
-        if (_tempDir is not null && Directory.Exists(_tempDir))
+        // ロック中ファイルの一時コピーを削除する。
+        // finalizer 経路 (disposing == false) では上のストリーム解放を行わないため、
+        // 一時コピーのハンドルが開いたままで削除は失敗する (下の catch に落ちる)。
+        // この経路は Dispose 漏れ時のみで、両方の呼び出し元が using を使っている。
+        if (tempDir is not null && Directory.Exists(tempDir))
         {
-            try { Directory.Delete(_tempDir, recursive: true); }
+            try { Directory.Delete(tempDir, recursive: true); }
             catch { /* クリーンアップ失敗は無視 */ }
         }
     }
@@ -475,9 +496,13 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
             stream = File.OpenRead(tempPath);
         }
 
-        // ストリームを開き、Dispose 時に解放できるようリストに登録する
+        // ストリームを開き、Dispose 時に解放できるようリストに登録する。
+        // GetStream は 7z.dll のマルチスレッド圧縮から並行に呼ばれる (ThreadCount > 1) ため、
+        // List<T>.Add を無同期で行うと登録が失われて Dispose の一括解放から漏れ
+        // (write ロックが GC まで残留)、内部配列の resize 競合で
+        // IndexOutOfRangeException が出て圧縮全体が間欠的に失敗する。
         var dest = new ArchiveStreamReader(stream);
-        _streams.Add(dest);
+        lock (_stateLock) _streams.Add(dest);
         return dest;
     }
 
@@ -487,30 +512,40 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     /// </summary>
     private string CopyLockedFile(string sourcePath)
     {
-        // 一時ディレクトリを遅延作成（乱数名で衝突回避）
-        if (_tempDir is null)
+        // 一時ディレクトリを遅延作成（乱数名で衝突回避）。
+        // GetStream → Open → ここは並行に到達しうるため、check-then-act をロックで囲む。
+        // 無同期だと 2 スレッドが同時に別ディレクトリを作って後勝ちで _tempDir が上書きされ、
+        // 先のディレクトリが Dispose の削除対象から漏れてロック中ファイルの平文コピーが
+        // %TEMP% に恒久残留する。
+        string tempDir;
+        lock (_stateLock)
         {
-            _tempDir = Path.Combine(Path.GetTempPath(), $"SevenZip_{Guid.NewGuid():N}");
-            Directory.CreateDirectory(_tempDir);
-
-            // RDS/Citrix 等の共有 %TEMP% 環境で攻撃者がシンボリックリンクを事前配置している
-            // 可能性を排除するため、作成したディレクトリが実ディレクトリであることを検証する。
-            // Directory.CreateDirectory は既存ディレクトリ (リパースポイント含む) でも例外を
-            // 投げないため、明示的に Attributes でチェックする必要がある。
-            var dirInfo = new DirectoryInfo(_tempDir);
-            if ((dirInfo.Attributes & FileAttributes.ReparsePoint) != 0)
+            if (_tempDir is null)
             {
-                // 攻撃の可能性がある。別の tempdir を作り直す。
-                _tempDir = null;
-                throw new IOException(
-                    $"Refusing to use reparse point as temp directory: '{dirInfo.FullName}'. " +
-                    $"This may indicate a symlink attack on the shared %TEMP% directory.");
+                var candidate = Path.Combine(Path.GetTempPath(), $"SevenZip_{Guid.NewGuid():N}");
+                Directory.CreateDirectory(candidate);
+
+                // RDS/Citrix 等の共有 %TEMP% 環境で攻撃者がシンボリックリンクを事前配置している
+                // 可能性を排除するため、作成したディレクトリが実ディレクトリであることを検証する。
+                // Directory.CreateDirectory は既存ディレクトリ (リパースポイント含む) でも例外を
+                // 投げないため、明示的に Attributes でチェックする必要がある。
+                var dirInfo = new DirectoryInfo(candidate);
+                if ((dirInfo.Attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    // 攻撃の可能性がある。_tempDir へは代入しないので次回は作り直しになる。
+                    throw new IOException(
+                        $"Refusing to use reparse point as temp directory: '{dirInfo.FullName}'. " +
+                        $"This may indicate a symlink attack on the shared %TEMP% directory.");
+                }
+
+                _tempDir = candidate;
             }
+            tempDir = _tempDir;
         }
 
         // GUID プレフィックスで同名ファイルの衝突を防止
         var tempFileName = $"{Guid.NewGuid():N}_{Path.GetFileName(sourcePath)}";
-        var tempPath = Path.Combine(_tempDir, tempFileName);
+        var tempPath = Path.Combine(tempDir, tempFileName);
 
         // 共通の 1MB バッファで write syscall 回数を削減
         const int bufferSize = FileSystemHelper.DefaultBufferSize;
@@ -534,7 +569,22 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     /// <summary>
     /// 現在処理中のエンティティを返す。
     /// </summary>
-    private RawEntity Current() => (_index >= 0 && _index < _items.Count) ? _items[_index] : null;
+    /// <remarks>
+    /// 並行 GetStream では <see cref="_index"/> が他スレッドに上書きされうるため、
+    /// 自分が解決したインデックスを持っている呼び出し元は <see cref="Current(int)"/> を使う。
+    /// </remarks>
+    private RawEntity Current()
+    {
+        int index;
+        lock (_stateLock) index = _index;
+        return Current(index);
+    }
+
+    /// <summary>
+    /// 指定したインデックスのエンティティを返す。範囲外の場合は null を返す。
+    /// </summary>
+    private RawEntity Current(int index) =>
+        (index >= 0 && index < _items.Count) ? _items[index] : null;
 
     /// <summary>
     /// 7-zip コールバックインデックスを <see cref="_items"/> 内のインデックスに変換する。
@@ -595,6 +645,9 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     // SetCompleted の並行呼び出し (ZIP Ultra 等のマルチスレッド圧縮) で _maxCompletedBytes を
     // 保護するロック
     private readonly object _completedLock = new();
+    // 並行 GetStream (ZIP Ultra 等のマルチスレッド圧縮) から触られる共有可変状態
+    // (_streams / _tempDir / _index) を保護するロック
+    private readonly object _stateLock = new();
     // 最後に進捗を報告した TickCount64（スロットリング用）
     private long _lastReportedTicks;
     // 進捗報告の最小間隔は CallbackBase.ReportIntervalMs に集約

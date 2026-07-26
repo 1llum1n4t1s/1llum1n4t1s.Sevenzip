@@ -135,7 +135,11 @@ internal sealed class UpdatePlan
             // パス区切り文字を正規化（外部作成 ZIP は '/' を使用する場合がある）
             var path = existingPaths(i).Replace('/', '\\');
 
-            if (replaceMap.TryGetValue(path, out var newIdx))
+            // 既存側にケースだけ違う重複パス (非 Windows 製アーカイブの "README" と "readme" 等) が
+            // あると、OrdinalIgnoreCase の replaceMap では両方が同じ新規アイテムにヒットして
+            // 出力に同一パスのエントリが 2 つ並び、片方の元データが意図せず失われる。
+            // 先にヒットした 1 件だけを置換し、残りは Keep に倒して挙動を決定的にする。
+            if (replaceMap.TryGetValue(path, out var newIdx) && !usedNewIndices.Contains(newIdx))
             {
                 // 置換: 新規アイテムのデータ/プロパティで既存エントリを上書きする。
                 // indexInArchive に元インデックスを渡すことで 7-zip がデータを再利用できる。

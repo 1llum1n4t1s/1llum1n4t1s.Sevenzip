@@ -1,8 +1,8 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <PackageId>1llum1n4t1s.Sevenzip</PackageId>
         <Company></Company>
-        <Description>7-Zip wrapper library for .NET. Windows x64 / arm64 (bundles 7-Zip 26.00 native binaries).</Description>
+        <Description>7-Zip wrapper library for .NET. Windows x64 / arm64 (bundles the 7-Zip native binaries; the exact version is the latest available at package build time).</Description>
         <PackageTags>Cube;7-Zip;7z;SevenZip;Zip;x64;arm64;win-x64;win-arm64</PackageTags>
         <PackageLicenseExpression>LGPL-3.0-or-later</PackageLicenseExpression>
         <PackageIcon>images\Icon.png</PackageIcon>
@@ -13,7 +13,8 @@
         <ProjectReference Include="..\Cube.Core\Cube.Core.csproj" PrivateAssets="all" />
     </ItemGroup>
     <ItemGroup>
-        <!-- 本家 7-Zip 26.00 のネイティブアセット (https://www.7-zip.org/)
+        <!-- 本家 7-Zip のネイティブアセット (https://www.7-zip.org/)
+             リリース時は publish.yml が最新版を取得して差し替えるため、ここに版を書かない。
              Pack と CopyToOutputDirectory の関心を分離する:
                - Pack 系: 常に x64 / arm64 の両方をパッケージに同梱する (Platform 非依存)
                - Copy 系: ライブラリ自身のビルド出力 (tests / dev run) には現在の Platform に合う
@@ -28,7 +29,26 @@
     <ItemGroup>
         <None Include="..\..\icon\app_icon.png" Pack="true" PackagePath="images\Icon.png" />
         <None Include="..\..\Readme.md" Pack="true" PackagePath="README.md" />
-        <None Include="..\Cube.Core\bin\$(Configuration)\$(TargetFramework)\Cube.Core.dll" Pack="true" PackagePath="lib\$(TargetFramework)\Cube.Core.dll" Visible="false" Link="Cube.Core.dll" />
-        <None Include="bin\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml" Pack="true" PackagePath="lib\$(TargetFramework)\$(AssemblyName).xml" Visible="false" Condition="Exists('bin\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml')" />
     </ItemGroup>
+    <!-- Cube.Core は PrivateAssets="all" 参照なので NuGet が自動同梱しない。DLL / XML doc を
+         BuildOutputInPackage へ足して同梱する。
+         PackagePath="lib\$(TargetFramework)\..." で手置きすると、NuGet が正規化した
+         lib\net10.0-windows8.0\ (本体 DLL の配置先) と別フォルダ lib\net10.0-windows8\ に
+         分かれてしまう。正規化後の短縮名は評価時点では未確定 ($(NuGetShortFolderName) は空)
+         なため、TFM フォルダの解決は NuGet 側に任せる。
+         本体 (Cube.FileSystem.SevenZip) の DLL / XML doc は SDK が自動で同梱する。 -->
+    <PropertyGroup>
+        <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);AddCubeCoreToPackage</TargetsForTfmSpecificBuildOutput>
+    </PropertyGroup>
+    <Target Name="AddCubeCoreToPackage">
+        <ItemGroup>
+            <!-- ProjectReference 経由で本体と同じ出力先へコピー済みのものを使う。
+                 Cube.Core 側の bin を直接見に行くと、Platform の解決が本体 DLL とずれたときに
+                 別 Platform のアセンブリを掴む。$(OutputPath) は SDK が TFM を付加済み
+                 (例 bin\Release\net10.0-windows8\) で、Platform 別出力にも追従する。 -->
+            <BuildOutputInPackage Include="$(OutputPath)Cube.Core.dll" />
+            <BuildOutputInPackage Include="$(OutputPath)Cube.Core.xml"
+                                  Condition="Exists('$(OutputPath)Cube.Core.xml')" />
+        </ItemGroup>
+    </Target>
 </Project>

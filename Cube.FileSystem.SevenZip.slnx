@@ -4,9 +4,28 @@
     <Platform Name="x64" />
     <Platform Name="arm64" />
   </Configurations>
-  <Project Path="Libraries/Core/Cube.FileSystem.SevenZip.csproj" />
-  <Project Path="Libraries/Cube.Core/Cube.Core.csproj" />
-  <Project Path="Libraries/Cube.Logging/Cube.Logging.csproj" />
-  <Project Path="Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj" />
-  <Project Path="Tests/Private/Cube.Private.Tests.csproj" />
+  <!-- Platform の明示 mapping が無いと、solution 経由のビルドは -p:Platform=x64 / arm64 を
+       指定しても全 project が AnyCPU へ解決され、同梱ネイティブ 7z.dll の選択 (Libraries/Core
+       の Condition="'$(Platform)' == 'arm64'") と出力先 bin\x64\ / bin\arm64\ が効かなくなる。
+       AnyCPU は既定解決なので mapping 不要。 -->
+  <Project Path="Libraries/Core/Cube.FileSystem.SevenZip.csproj">
+    <Platform Solution="*|x64" Project="x64" />
+    <Platform Solution="*|arm64" Project="arm64" />
+  </Project>
+  <Project Path="Libraries/Cube.Core/Cube.Core.csproj">
+    <Platform Solution="*|x64" Project="x64" />
+    <Platform Solution="*|arm64" Project="arm64" />
+  </Project>
+  <Project Path="Libraries/Cube.Logging/Cube.Logging.csproj">
+    <Platform Solution="*|x64" Project="x64" />
+    <Platform Solution="*|arm64" Project="arm64" />
+  </Project>
+  <Project Path="Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj">
+    <Platform Solution="*|x64" Project="x64" />
+    <Platform Solution="*|arm64" Project="arm64" />
+  </Project>
+  <Project Path="Tests/Private/Cube.Private.Tests.csproj">
+    <Platform Solution="*|x64" Project="x64" />
+    <Platform Solution="*|arm64" Project="arm64" />
+  </Project>
 </Solution>

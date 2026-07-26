@@ -182,9 +182,19 @@ internal struct PropVariant
     /// ボックス化を回避して DateTime 値を直接取得する。
     /// </summary>
     /// <returns>VT_FILETIME の場合は変換された DateTime；それ以外は default。</returns>
-    public DateTime GetFileTime() =>
+    public DateTime GetFileTime()
+    {
         // VT_FILETIME 以外の型の場合はデフォルト値を返す
-        VarType == VarEnum.VT_FILETIME ? DateTime.FromFileTime(_v64) : default;
+        if (VarType != VarEnum.VT_FILETIME) return default;
+
+        // _v64 はアーカイブ由来（= 攻撃者が細工できる）ため範囲を検証する。
+        // DateTime.FromFileTime は負値や DateTime.MaxValue 超で ArgumentOutOfRangeException を
+        // 投げ、これは ArchiveReader.Items の列挙中に発生してライブラリの例外契約
+        // (SevenZipException / UnknownFormatException) の外へ漏れる。
+        // 取得できない場合の既定値と同じ default へ倒し、列挙は完走させる。
+        if (_v64 < 0 || _v64 > MaxFileTime) return default;
+        return DateTime.FromFileTime(_v64);
+    }
 
     #endregion
 
@@ -234,6 +244,12 @@ internal struct PropVariant
     #endregion
 
     #region Fields
+    // DateTime.FromFileTime が受け付ける FILETIME の上限。これを超えると
+    // ArgumentOutOfRangeException になる。FILETIME の起点 (1601-01-01) 分を
+    // DateTime.MaxValue から引いて導出する（マジックナンバーを置かない）。
+    private static readonly long MaxFileTime =
+        DateTime.MaxValue.Ticks - DateTime.FromFileTimeUtc(0).Ticks;
+
     [FieldOffset(0)] private ushort _vt;        // VARTYPE: VarEnum の値を格納する
     [FieldOffset(8)] private IntPtr _vstr;       // 文字列ポインタ（VT_BSTR / VT_LPWSTR / VT_LPSTR）
     [FieldOffset(8)] private uint   _v32u;       // 32-bit 符号なし整数（VT_UI4 / VT_UINT）

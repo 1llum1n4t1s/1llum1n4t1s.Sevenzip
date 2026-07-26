@@ -108,6 +108,17 @@ using (var reader = new ArchiveReader(@"path\to\archive", password, options))
 
 ArchiveWriter および ArchiveReader は、生成から破棄まで同一スレッドで実行する必要があります。非同期に圧縮・解凍したい場合は、一連の処理全体を `Task.Run()` で実行してください。
 
+### ログの有効化
+
+本ライブラリは既定では何も出力しません。無視されたオプション、アーカイブのオープン失敗コード、スキップしたファイル、`.bak` の削除失敗といった診断情報は警告ログにのみ出るため、切り分けが必要な場合はログの出力先を設定してください。
+
+```csharp
+// 任意の ILoggerSource 実装を渡す（未設定時は何も出力しない）
+Cube.Logger.Configure(new MyLoggerSource());
+```
+
+`Cube.Logger` / `Cube.ILoggerSource` は同梱の `Cube.Core.dll` に含まれます。例外として通知される失敗（`SevenZipException` / `ArchiveUpdateException` 等）はログ設定に関係なくスローされ、per-file の進捗・失敗は `IProgress<Report>` と `FileCompressing` / `FileExtracting` / `FileSkipped` イベントでも受け取れます。
+
 ## Upstream からの変更点・注意事項
 
 本フォークでは NativeAOT 対応のために COM Interop を `[ComImport]` から `[GeneratedComInterface]` / `[GeneratedComClass]` へ、P/Invoke を `[DllImport]` から `[LibraryImport]` へ全面移行しています。これに伴い、upstream と比較して以下の仕様変更および注意点があります。
@@ -123,7 +134,7 @@ ArchiveWriter および ArchiveReader は、生成から破棄まで同一スレ
 | `Io.Open(string, FileShare)` | **新規追加** — FileShare 指定付きオープン | Cube.Core の `IoController` にも対応オーバーロード追加。 |
 | `ArchiveReader(Stream, ...)` 等 | **v1.0.66 で追加** — Stream ベース API | path 版と並列運用。`leaveOpen` で所有権制御。 |
 | `ArchiveReader.Extract(int, Stream)` | **v1.0.66** — 単一エントリを直接 Stream に展開 | 辞書版 `Extract(IReadOnlyDictionary<int, Stream>)` も提供。 |
-| `ArchiveWriter.Save(Stream, ...)` | **v1.0.66** — Stream に直接書き込み | `VolumeSize` は未サポート (警告ログ発火)。 |
+| `ArchiveWriter.Save(Stream, ...)` | **v1.0.66** — Stream に直接書き込み | `VolumeSize` は未サポート (警告ログ発火 → [ログの有効化](#ログの有効化))。 |
 | `ArchiveWriter.Add(Stream, name)` | **v1.0.66** — Stream エントリ追加 (一時ファイル経由シム) | `name` は `SafePath` でサニタイズ。 |
 | `ArchiveWriter.Update(Stream, Stream, renameMap?, ...)` | **v1.0.66** — Stream ベース更新 + rename マップ | 自己参照 Stream は `CanSeek` 必須。 |
 | `ArchiveReader.FileExtracting` / `FileExtracted` | **v1.0.66** — per-file 展開イベント | `ArchiveFileEventArgs.Cancel=true` でキャンセル可。 |
@@ -140,10 +151,17 @@ ArchiveWriter および ArchiveReader は、生成から破棄まで同一スレ
 | `CompressionOption.AtomicSave` | **v1.0.69** — tmp → atomic rename パターン | NTFS 同一ボリューム前提。`VolumeSize` との併用不可 (例外)。 |
 | `CompressionOption.KeepBackupOnUpdate` | **v1.0.69** — Save/Update 完了後も .bak を保持 | 前回値は次回操作で自動削除され孤立しない。 |
 | `ArchiveWriter.LastBackupPath` / `BackupPaths` / `LastTempPath` | **v1.0.69〜v1.0.70** — .bak / tmp パスの公開 | `BackupPaths` は全履歴 (v1.0.70)。`LastTempPath` は異常終了時のクリーンアップ用 (v1.0.70)。 |
-| `CompressionOption.Validate(Format)` | **v1.0.70** — オプション矛盾の早期検出 | AtomicSave+VolumeSize / Tar+Password / 負値ガード。 |
+| `CompressionOption.Validate(Format)`（内部メソッド） | **v1.0.70** — オプション矛盾の早期検出 | AtomicSave+VolumeSize / Tar+Password / 負値ガード。利用者が直接呼ぶ API ではなく、`ArchiveWriter` の ctor / `Save()` が内部で検証して例外を投げる。 |
 | `Update(Stream, Stream, ..., allowDestructiveOnWritebackFailure)` | **v1.0.70** — 自己参照書き戻し失敗時の dest 挙動をオプトイン化 | デフォルト false = 部分書き込み保持 / true = 全消失 (旧動作)。 |
+| `CompressionOption.SkipInaccessibleFiles` / `ArchiveWriter.FileSkipped` / `FileSkippedEventArgs` | **v1.0.76** — 完全排他ファイルを skip して圧縮を続行 | 既定 `false`（従来通り `AccessException`）。`true` で `Add()` 時にアクセス不能なファイルを除外し、`FileSkipped` イベント（`FullName` / `RelativeName` / `Reason`）で通知する。適用範囲は `Add()` 時の fail-fast のみ。 |
 | `ArchiveWriter(Format, ...)` コンストラクタ | **v1.0.78** — 未対応フォーマットの fail-fast 検証 + ctor 失敗時クリーンアップ | `Format.Unknown` は `UnknownFormatException`、書き込み非対応フォーマット (Rar 等) は ctor で即例外 (従来は `Save()` 時に失敗)。失敗時は取得済みリソースを同期解放。 |
 | 圧縮進捗 (`Report.Bytes`) の精度修正 | **v1.0.79** — 大規模アーカイブで進捗が早期に 100% へ張り付くバグを修正 | 7-Zip の completeValue をグローバル累積値として単調最大値で集計（旧実装はマルチスレッド圧縮の値後退を二重加算していた）。 |
+| `ArchiveReader.Extract(...)` / `Save(string, uint[], ...)` のインデックス正規化 | **v1.0.82** — 展開対象インデックスを内部で昇順・重複なしへ正規化 | 従来は非昇順の `Dictionary` / 配列を渡すと該当エントリが**例外なく未展開のまま**終わっていた（`Dictionary` のキー列挙順は仕様上不定）。呼び出し側の配列は変更しない。 |
+| `AsyncPasswordQuery.AllowBlockingOnCapturedContext` | **v1.0.82** — デッドロックガードのオプトアウト | ガードの判定を型名の denylist から「同期コンテキストが捕捉されていれば危険」へ変更。Avalonia / Blazor / Unity / 独自コンテキストでもガードが働く。ブロックしても安全と分かっている場合のみ `true` にする。ASP.NET Core / コンソール / `Task.Run` 配下は `Current` が null なので影響なし。 |
+| `ArchiveReader` / `ArchiveWriter` の破棄後呼び出し | **v1.0.82** — `ObjectDisposedException` を投げる | 従来は破棄後に `Save()` / `Update()` を呼ぶとプロセスがクラッシュしうる状態だった。 |
+| `ArchiveReader` コンストラクタの失敗コード | **v1.0.82** — I/O 障害を書庫破損と区別 | 負の HRESULT（ネットワーク断・アクセス拒否等）では `Code` が `IsNotArc` ではなく `UnknownError` になり、`InnerException` に実 HRESULT に対応する例外が入る。S_FALSE（本当に書庫でない場合）は従来通り `IsNotArc`。 |
+| 圧縮失敗時の例外 | **v1.0.82** — 失敗が「利用者によるキャンセル」に化ける問題を修正 | 従来は per-file の圧縮失敗が空メッセージの `OperationCanceledException` になり、失敗コードと対象エントリ名が失われていた。 |
+| `ArchiveOption.Filter` の比較 | **v1.0.82** — カルチャ依存比較を Ordinal へ変更 | 従来は `tr-TR` 等で `I` / `ı` の扱いが変わり、同じアーカイブでも環境によって除外されるファイルが変わっていた。 |
 
 ### 新機能
 

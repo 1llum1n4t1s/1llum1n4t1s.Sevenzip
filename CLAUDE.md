@@ -27,7 +27,10 @@ rtk dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Pla
 
 **重要**:
 - Platform のデフォルトは `AnyCPU`（`Directory.Build.props` で `<Platforms>AnyCPU;x64;arm64</Platforms>`）。出力先は `bin\$(Configuration)\`。x64 / arm64 明示時は `bin\x64\...` / `bin\arm64\...` に分岐。
-- テスト実行時は Tests/Core が `RuntimeIdentifier=win-x64` を設定しているため、出力は `bin\Debug\net10.0-windows8\win-x64\` に配置される。
+- `-p:Platform` を各プロジェクトへ伝播させるには `.slnx` の per-project `<Platform Solution="*|x64" Project="x64" />` mapping が必要。これが無いと solution 経由のビルドは指定を無視して全プロジェクトを AnyCPU で解決し、同梱ネイティブ 7z.dll の選択と出力先分岐が効かなくなる（`.slnx` にプロジェクトを追加したら mapping も追加する）。
+- テスト実行時は Tests/Core が RID を Platform に追従させるため、出力は `bin\Debug\net10.0-windows8\win-x64\`（AnyCPU / x64）または `bin\arm64\Debug\net10.0-windows8\win-arm64\`（arm64）に配置される。RID を `win-x64` 固定にすると `-p:Platform=arm64` で `PlatformTarget` と衝突して `NETSDK1032` になる。arm64 のテスト実行自体は arm64 ホストが必要。
+- managed アセンブリはアーキ非依存で、NuGet パッケージは Platform に関係なく x64 / arm64 両方のネイティブ 7z.dll を同梱する。pack は AnyCPU で行えば十分。
+- Tests/Core の RID が Platform 依存なので、`Tests/Core/packages.lock.json` の RID セクション（`net10.0-windows8.0/win-x64`）も Platform 依存になる。**`-p:Platform=arm64` で restore / build すると `win-arm64` に書き換わる**。CI は `dotnet restore --locked-mode`（AnyCPU）で検証するため、arm64 を試した後は `git checkout -- Tests/Core/packages.lock.json` で戻してからコミットする。
 
 ## バージョン管理
 
@@ -145,7 +148,19 @@ COM Interop と P/Invoke は全面的に AOT 互換 API に移行済み:
 
 旧実装（〜1.0.78）の「値の減少 = ファイル切替リセット」ヒューリスティックは、この後退のたびにグローバル累積値を二重加算し、大規模アーカイブで進捗が早期に 100% へ張り付く原因だった（実測: 528k ファイル / 60GB の ZIP 圧縮 22 分中に 16 回の後退 → 23.7% 過剰計上 → 残り 9.2 分が 100% 表示のまま）。回帰テスト: `UpdateCallbackProgressTest`。
 
-関連の設計妥協: `UpdateCallback` は GetStream で開いた入力ストリームを **Dispose まで保持**する（早期解放は ZIP Ultra MT で COM 違反、`SetOperationResult` のコメント参照）。このため**圧縮中は全対象ファイルが FileShare.Read で write ロックされ続ける**（数十万ファイル × 数十分の圧縮では利用者のファイル保存が失敗しうる既知の制約）。
+関連の設計妥協: `UpdateCallback` は GetStream で開いた入力ストリームを **Dispose まで保持**する（早期解放は ZIP Ultra MT で COM 違反、`SetOperationResult` のコメント参照）。このため**圧縮中は全対象ファイルが FileShare.Read で write ロックされ続ける**（数十万ファイル × 数十分の圧縮では利用者のファイル保存が失敗しうる既知の制約）。なお `Io.Open` は既定バッファ (4096B) の `FileStream` を返すため、数十万ストリーム同時保持ではバッファ分のメモリも線形に増える（`ArchiveStreamReader` は呼び出し側 span へ直読するので `bufferSize: 1` にできるが、`Io` 抽象のオーバーロード追加が必要なため未対応）。
+
+## COM コールバックの並行呼び出し
+
+7z.dll のマルチスレッド圧縮（`CompressionOption.ThreadCount > 1`）は `GetStream` / `SetCompleted` / `SetOperationResult` を**並行に呼ぶ**。`UpdateCallback` の共有可変状態はロックで保護する:
+
+- `_completedLock` — `SetCompleted` の `_maxCompletedBytes` / `Bytes`
+- `_stateLock` — `_streams`（開いたストリームのリスト）/ `_tempDir`（ロック中ファイルの一時コピー先）/ `_index`（処理中エントリ）
+- `CallbackBase.PushException()` — `Exceptions` スタックへの積み込み。**`Exceptions.Push` を直接呼ばない**
+
+`_index` は上書きされうるため、自分の解決済みインデックスを持つ呼び出し元は `Current(int)` を使う（引数なしの `Current()` はロック経由で現在値を読む）。
+
+失敗を `Exceptions` へ積むのは必須である。`ThrowIfError` は `Exceptions` が空なら「純粋なユーザーキャンセル」と判定して `OperationCanceledException` を投げるため、積み忘れると実際の I/O 失敗が「利用者が中断した」に化ける。
 
 ## テストハーネス
 

@@ -17,6 +17,7 @@
 /* ------------------------------------------------------------------------- */
 using Cube.Tests.Fixtures;
 using NUnit.Framework;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -143,11 +144,21 @@ internal class ArchiveV2ApiTest : FileFixture
     /// ハンドラが空文字を返した場合は Cancel=true にすること。
     /// </summary>
     ///
+    /// <remarks>
+    /// NUnit はテスト実行スレッドに SafeSynchronizationContext を設定する。これはスレッドプールへ
+    /// 委譲する実装でブロックしても継続が進むため、AsyncPasswordQuery のデッドロックガードに対して
+    /// AllowBlockingOnCapturedContext=true で明示的にオプトアウトする（ガード自体の検証は
+    /// AsyncPasswordQuery_ThrowsOnCapturedContext で行う）。
+    /// </remarks>
+    ///
     /* --------------------------------------------------------------------- */
     [Test]
     public void AsyncPasswordQuery_ReturnsPassword()
     {
-        var q = new AsyncPasswordQuery(async _ => { await Task.Yield(); return "secret"; });
+        var q = new AsyncPasswordQuery(async _ => { await Task.Yield(); return "secret"; })
+        {
+            AllowBlockingOnCapturedContext = true,
+        };
         var msg = new QueryMessage<string, string>("test");
         q.Request(msg);
         Assert.That(msg.Value, Is.EqualTo("secret"));
@@ -157,7 +168,10 @@ internal class ArchiveV2ApiTest : FileFixture
     [Test]
     public void AsyncPasswordQuery_EmptyStringCancels()
     {
-        var q = new AsyncPasswordQuery(async _ => { await Task.Yield(); return string.Empty; });
+        var q = new AsyncPasswordQuery(async _ => { await Task.Yield(); return string.Empty; })
+        {
+            AllowBlockingOnCapturedContext = true,
+        };
         var msg = new QueryMessage<string, string>("test");
         q.Request(msg);
         Assert.That(msg.Cancel, Is.True);
@@ -171,10 +185,36 @@ internal class ArchiveV2ApiTest : FileFixture
         cts.Cancel();
         var q = new AsyncPasswordQuery(
             async ct => { await Task.Delay(5000, ct); return "unreached"; },
-            cts.Token);
+            cts.Token)
+        {
+            AllowBlockingOnCapturedContext = true,
+        };
         var msg = new QueryMessage<string, string>("test");
         q.Request(msg);
         Assert.That(msg.Cancel, Is.True);
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// AsyncPasswordQuery_ThrowsOnCapturedContext
+    ///
+    /// <summary>
+    /// 同期コンテキストが捕捉されている状態では、既定でデッドロックガードが働いて
+    /// InvalidOperationException を投げること（型名の denylist ではなく、捕捉の有無で判定する）。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [Test]
+    public void AsyncPasswordQuery_ThrowsOnCapturedContext()
+    {
+        // 旧実装は型名に Dispatcher / WindowsForms / AspNet を含むかで判定していたため、
+        // Avalonia / Blazor / Unity / 独自実装のような名前のコンテキストをすり抜けていた。
+        var q = new AsyncPasswordQuery(_ => Task.FromResult("secret"));
+        var msg = new QueryMessage<string, string>("test");
+
+        // NUnit 自身のコンテキスト (SafeSynchronizationContext) が捕捉されているため発火する
+        Assert.That(SynchronizationContext.Current, Is.Not.Null);
+        Assert.That(() => q.Request(msg), Throws.TypeOf<InvalidOperationException>());
     }
 
     /* --------------------------------------------------------------------- */
@@ -623,6 +663,91 @@ internal class ArchiveV2ApiTest : FileFixture
         w.Add(srcTxt);
         Assert.Throws<System.InvalidOperationException>(() => w.Save(dest),
             "AtomicSave + VolumeSize>0 は InvalidOperationException");
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// Validate_NegativeVolumeSize_ThrowsArgumentOutOfRange
+    ///
+    /// <summary>
+    /// CompressionOption.VolumeSize が負値の場合、Save 時に
+    /// ArgumentOutOfRangeException を投げること。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [Test]
+    public void Validate_NegativeVolumeSize_ThrowsArgumentOutOfRange()
+    {
+        var srcTxt = GetSource("Sample.txt");
+        var dest = Get(nameof(Validate_NegativeVolumeSize_ThrowsArgumentOutOfRange), "out.7z");
+
+        using var w = new ArchiveWriter(Format.SevenZip, new CompressionOption { VolumeSize = -1 });
+        w.Add(srcTxt);
+        Assert.Throws<ArgumentOutOfRangeException>(() => w.Save(dest));
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// Validate_NegativeThreadCount_ThrowsArgumentOutOfRange
+    ///
+    /// <summary>
+    /// CompressionOption.ThreadCount が負値の場合、Save 時に
+    /// ArgumentOutOfRangeException を投げること（0 は auto なので許容）。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [Test]
+    public void Validate_NegativeThreadCount_ThrowsArgumentOutOfRange()
+    {
+        var srcTxt = GetSource("Sample.txt");
+        var dest = Get(nameof(Validate_NegativeThreadCount_ThrowsArgumentOutOfRange), "out.7z");
+
+        using var w = new ArchiveWriter(Format.SevenZip, new CompressionOption { ThreadCount = -1 });
+        w.Add(srcTxt);
+        Assert.Throws<ArgumentOutOfRangeException>(() => w.Save(dest));
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// Validate_TarWithPassword_ThrowsInvalidOperation
+    ///
+    /// <summary>
+    /// Format.Tar は暗号化非対応なので、Password 指定時は Save で
+    /// InvalidOperationException を投げること（黙って無視しないこと）。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [Test]
+    public void Validate_TarWithPassword_ThrowsInvalidOperation()
+    {
+        var srcTxt = GetSource("Sample.txt");
+        var dest = Get(nameof(Validate_TarWithPassword_ThrowsInvalidOperation), "out.tar");
+
+        using var w = new ArchiveWriter(Format.Tar, new CompressionOption { Password = "secret" });
+        w.Add(srcTxt);
+        Assert.Throws<InvalidOperationException>(() => w.Save(dest));
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// ArchiveUpdateException_ExposesRecoveryPaths
+    ///
+    /// <summary>
+    /// ArchiveUpdateException が手動復旧に必要な OriginalPath / BackupPath と
+    /// 内側の例外を保持すること（README が公開契約として明記している）。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [Test]
+    public void ArchiveUpdateException_ExposesRecoveryPaths()
+    {
+        var inner = new IOException("move failed");
+        var src = new ArchiveUpdateException("failed", @"C:\dir\a.zip", @"C:\dir\a.bak", inner);
+
+        Assert.That(src.OriginalPath, Is.EqualTo(@"C:\dir\a.zip"));
+        Assert.That(src.BackupPath, Is.EqualTo(@"C:\dir\a.bak"));
+        Assert.That(src.InnerException, Is.SameAs(inner));
+        Assert.That(src.Message, Is.EqualTo("failed"));
     }
 
     /* --------------------------------------------------------------------- */

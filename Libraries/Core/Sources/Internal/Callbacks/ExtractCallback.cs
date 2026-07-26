@@ -330,6 +330,13 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
 
         // 外部 Stream 出力の場合または Destination 未指定の場合はファイル属性設定をスキップする
         if (streamOutput || !Destination.HasValue()) return;
+
+        // FullName が空のエントリ（エントリ名が ".." や "." でサニタイズ結果が空になったもの）は
+        // 展開自体をスキップしている (NewStream の同名ガード参照)。ここで属性設定へ進むと
+        // Io.Combine(Destination, "") が Destination 自身を返すため、アーカイブ由来の属性
+        // (Hidden / System / ReadOnly) とタイムスタンプが「展開先ディレクトリ」に適用される。
+        if (!src.FullName.HasValue()) return;
+
         // 元のファイル属性（更新日時など）をコピーして設定する
         src.SetAttributes(Destination);
     }
@@ -354,7 +361,7 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
 
         // エラーが発生した場合は例外をスタックに積んで Failed を報告する
         var obj = error ?? new SevenZipException(code);
-        Exceptions.Push(obj);
+        PushException(obj);
         return Report(obj, e);
     }
 

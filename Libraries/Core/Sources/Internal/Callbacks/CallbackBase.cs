@@ -1,4 +1,4 @@
-/* ------------------------------------------------------------------------- */
+﻿/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -63,12 +63,33 @@ internal abstract class CallbackBase : DisposableBase
     /// </summary>
     /// <remarks>
     /// 例外は LIFO 順で積まれる。呼び出し元は ThrowIfError() 等で確認すること。
+    /// 積む側は必ず <see cref="PushException"/> を使う（COM コールバックは
+    /// マルチスレッド圧縮時に並行実行されるため、Stack へ直接 Push すると内部配列が壊れる）。
+    /// 取り出しは処理完了後の単一スレッドから行う想定。
     /// </remarks>
     public Stack<Exception> Exceptions { get; } = new();
 
     #endregion
 
     #region Methods
+
+    #region Exceptions
+
+    /// <summary>
+    /// 発生した例外を <see cref="Exceptions"/> へ積む。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Stack{T}.Push"/> はスレッドセーフでないため、並行コールバックからの
+    /// 積み込みを直列化する。無同期だと内部配列と _size が壊れて
+    /// IndexOutOfRangeException が COM 境界へ漏れる、または例外が失われて
+    /// ThrowIfError が本当の失敗を OperationCanceledException に化かす。
+    /// </remarks>
+    protected void PushException(Exception error)
+    {
+        lock (_exceptionLock) Exceptions.Push(error);
+    }
+
+    #endregion
 
     #region Report
 
@@ -80,8 +101,16 @@ internal abstract class CallbackBase : DisposableBase
     /// <returns>
     /// <see cref="Report.Cancel"/> が true の場合は Cancel コード；それ以外は None。
     /// </returns>
-    protected int Report(ProgressState state, Entity entity) =>
-        Report(Make(state, entity, null));
+    protected int Report(ProgressState state, Entity entity)
+    {
+        // 購読者が居ない場合は Report オブジェクトを確保しない。この経路はファイル毎に
+        // 複数回通るため (528k ファイルなら数百万個の短命割り当てになる)。
+        // 戻り値は Make が Failed のとき Cancel=true を立てるのと完全に同一に保つ。
+        if (_inner is null)
+            return (int)(state == ProgressState.Failed ? SevenZipCode.Cancel : SevenZipCode.Success);
+
+        return Report(Make(state, entity, null));
+    }
 
     /// <summary>
     /// エラー情報を含む進捗を報告する。
@@ -91,8 +120,12 @@ internal abstract class CallbackBase : DisposableBase
     /// <returns>
     /// <see cref="Report.Cancel"/> が true の場合は Cancel コード；それ以外は None。
     /// </returns>
-    protected int Report(Exception error, Entity entity) =>
-        Report(Make(ProgressState.Failed, entity, error));
+    protected int Report(Exception error, Entity entity)
+    {
+        // 購読者が居ない場合も Failed の戻り値 (Cancel) は変えない
+        if (_inner is null) return (int)SevenZipCode.Cancel;
+        return Report(Make(ProgressState.Failed, entity, error));
+    }
 
     /// <summary>
     /// 指定した Report オブジェクトで進捗を報告する。
@@ -182,7 +215,7 @@ internal abstract class CallbackBase : DisposableBase
         {
             // 例外を Exceptions スタックに積み、COM 境界を越えて .NET 例外を伝播させない。
             // 呼び出し元は処理完了後に Exceptions を確認することで元の例外を再スロー可能。
-            Exceptions.Push(e);
+            PushException(e);
             // aggregator が存在する場合は失敗を報告してコールバックを継続させる
             if (_inner is not null) return Report(e, entity());
             // aggregator なしの場合は例外の種類に応じたエラーコードを返す
@@ -201,7 +234,7 @@ internal abstract class CallbackBase : DisposableBase
     /// <see cref="AccessViolationException"/>: プロセスメモリが破損している可能性があり、続行不可。
     /// <see cref="StackOverflowException"/>: catch すら不可能だが念のため判定に含める。
     /// </remarks>
-    private static bool IsFatalException(Exception e) =>
+    protected static bool IsFatalException(Exception e) =>
         e is OutOfMemoryException ||
         e is AccessViolationException ||
         e is StackOverflowException;
@@ -247,7 +280,7 @@ internal abstract class CallbackBase : DisposableBase
         try { handler(args); }
         catch (System.Exception ex)
         {
-            Exceptions.Push(ex);
+            PushException(ex);
             return true;
         }
         return args.Cancel;
@@ -283,5 +316,7 @@ internal abstract class CallbackBase : DisposableBase
     #region Fields
     // 進捗通知の受信者。null の場合は報告をスキップする。
     private readonly IProgress<Report> _inner;
+    // 並行コールバックからの Exceptions への積み込みを直列化するロック
+    private readonly object _exceptionLock = new();
     #endregion
 }

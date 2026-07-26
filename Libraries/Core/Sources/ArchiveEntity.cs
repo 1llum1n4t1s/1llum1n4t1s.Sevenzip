@@ -145,7 +145,8 @@ public class ArchiveEntity : Entity
     //
     // CP437 / Shift_JIS 等のレガシーコードページを使う場合は、.NET Core では事前に
     // `System.Text.Encoding.RegisterProvider(CodePagesEncodingProvider.Instance)` の
-    // 呼び出しが必要です (System.Text.Encoding.CodePages パッケージを同梱済み)。
+    // 呼び出しが必要です。本パッケージは System.Text.Encoding.CodePages を依存に持たないため、
+    // 利用者側で `System.Text.Encoding.CodePages` を参照してください。
 
     #endregion
 

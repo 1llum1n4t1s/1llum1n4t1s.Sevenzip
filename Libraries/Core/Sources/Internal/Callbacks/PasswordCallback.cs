@@ -110,7 +110,20 @@ internal abstract partial class PasswordCallback : CallbackBase, ICryptoGetTextP
         if (Password is null) return (int)SevenZipCode.WrongPassword;
 
         var e = Query.NewMessage(Source);
-        Password.Request(e);
+
+        // 利用者実装の IQuery<string> を呼ぶため、他のユーザーコールバック (CallbackBase.Run /
+        // FireFileEvent) と同じ規約で保護する。これは CCW メソッドなので、例外を素通しすると
+        // HRESULT へ変換されてマネージ例外オブジェクトが破棄され、原因が完全に失われる。
+        // 例: AsyncPasswordQuery が UI スレッド検出時に投げる案内文付き InvalidOperationException が
+        // 「アーカイブではない」に化けてガードの目的が消える。Exceptions へ積めば呼び出し元が
+        // inner exception として内包して投げ直せる。
+        try { Password.Request(e); }
+        catch (Exception err) when (!IsFatalException(err))
+        {
+            PushException(err);
+            return (int)SevenZipCode.UnknownError;
+        }
+
         if (e.Cancel) return (int)SevenZipCode.Cancel;
 
         var done = e.Value.HasValue();

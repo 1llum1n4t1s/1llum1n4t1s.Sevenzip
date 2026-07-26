@@ -83,6 +83,21 @@ public sealed class AsyncPasswordQuery : IQuery<string>
 
     #endregion
 
+    #region Properties
+
+    /// <summary>
+    /// 同期コンテキストが捕捉された状態でのブロックを許可するかどうかを取得または設定する。
+    /// </summary>
+    /// <remarks>
+    /// 既定は <c>false</c>。<see cref="Request"/> は <see cref="SynchronizationContext.Current"/> が
+    /// 捕捉されているとデッドロックを避けるため <see cref="InvalidOperationException"/> を投げる。
+    /// ブロックしても継続が進むと分かっているカスタムコンテキストでのみ <c>true</c> にする。
+    /// 通常は代わりに <c>Task.Run</c> で ArchiveReader / ArchiveWriter の処理全体を包む。
+    /// </remarks>
+    public bool AllowBlockingOnCapturedContext { get; init; }
+
+    #endregion
+
     #region Methods
 
     /// <summary>
@@ -90,24 +105,26 @@ public sealed class AsyncPasswordQuery : IQuery<string>
     /// </summary>
     /// <param name="message">要求メッセージ。結果は Value / Cancel に設定される。</param>
     /// <exception cref="InvalidOperationException">
-    /// 呼び出し元が UI スレッド相当の同期コンテキスト (WinUI / WPF 等) の場合。
-    /// UI スレッドで同期ブロックするとハンドラからの <c>DispatcherQueue.TryEnqueue</c> 等が
-    /// デッドロックするため早期失敗させる。バックグラウンドスレッド (Task.Run 配下) から呼ぶこと。
+    /// 呼び出し元で同期コンテキストが捕捉されている場合 (WinUI / WPF / WinForms / Avalonia /
+    /// Blazor / Unity / 独自の単一スレッド実装など)。そのスレッドで同期ブロックすると、
+    /// ハンドラが同じコンテキストへマーシャルバックした時点でデッドロックするため早期失敗させる。
+    /// バックグラウンドスレッド (Task.Run 配下) から呼ぶこと。ブロックしても安全と分かっている
+    /// コンテキストでは <see cref="AllowBlockingOnCapturedContext"/> でオプトアウトできる。
     /// </exception>
     public void Request(QueryMessage<string, string> message)
     {
         if (message is null) throw new ArgumentNullException(nameof(message));
 
-        // UI スレッドからの直接呼び出しを検出してデッドロックを事前に防ぐ。
-        // SynchronizationContext.Current が非 null かつ DispatcherSynchronizationContext 系なら UI スレッド。
+        // 同期ブロックが危険なコンテキストからの直接呼び出しを検出してデッドロックを事前に防ぐ。
         var ctx = SynchronizationContext.Current;
-        if (ctx is not null && IsUiSynchronizationContext(ctx))
+        if (!AllowBlockingOnCapturedContext && IsBlockingUnsafe(ctx))
         {
             throw new InvalidOperationException(
-                "AsyncPasswordQuery.Request must not be called from a UI synchronization context " +
-                "(detected: " + ctx.GetType().FullName + "). " +
+                "AsyncPasswordQuery.Request must not be called while a synchronization context is " +
+                "captured (detected: " + ctx.GetType().FullName + "). " +
                 "Wrap the ArchiveReader/Writer call in Task.Run to avoid deadlock when the handler " +
-                "marshals back to the UI thread.");
+                "marshals back to that context. If the context is known to be safe to block, set " +
+                nameof(AllowBlockingOnCapturedContext) + " to true.");
         }
 
         try
@@ -180,20 +197,28 @@ public sealed class AsyncPasswordQuery : IQuery<string>
     }
 
     /// <summary>
-    /// 渡された <see cref="SynchronizationContext"/> が UI スレッドの同期コンテキストかを判定する。
+    /// 現在の <see cref="SynchronizationContext"/> 上で同期ブロックするのが危険かを判定する。
     /// </summary>
     /// <remarks>
-    /// WinUI 3 / WPF / WinForms / MAUI の DispatcherSynchronizationContext 系を型名の
-    /// 部分一致で検出する。ASP.NET Classic の AspNetSynchronizationContext は UI とは
-    /// 異なるがデッドロックリスクは同等なため同扱い。
+    /// <para>
+    /// 危険な条件は「呼び出しスレッドがハンドラの継続に必要かどうか」であり、特定の型名とは
+    /// 対応しない。かつては WinUI / WPF / WinForms / ASP.NET Classic を型名の部分一致
+    /// (denylist) で検出していたが、Avalonia の <c>AvaloniaSynchronizationContext</c>、
+    /// Blazor の <c>RendererSynchronizationContext</c>、Unity、独自の単一スレッド実装は
+    /// どれにも一致せず、ガードが無言で無効化されて恒久デッドロックに至っていた。
+    /// 安全ゲートに denylist は極性が逆なので、
+    /// 「コンテキストが捕捉されていれば危険」を既定とする allowlist 方式へ反転している。
+    /// </para>
+    /// <para>
+    /// 例外は <see cref="SynchronizationContext"/> そのもののインスタンスだけ。既定実装は
+    /// <see cref="SynchronizationContext.Post"/> をスレッドプールへ投げるため、ブロックしても
+    /// 継続が進み、デッドロックしない。ASP.NET Core は <c>Current</c> が null なので影響を受けない。
+    /// 独自だがブロックしても安全なコンテキストでは
+    /// <see cref="AllowBlockingOnCapturedContext"/> で明示的にオプトアウトできる。
+    /// </para>
     /// </remarks>
-    private static bool IsUiSynchronizationContext(SynchronizationContext ctx)
-    {
-        var typeName = ctx.GetType().FullName ?? string.Empty;
-        return typeName.Contains("Dispatcher", StringComparison.Ordinal) ||
-               typeName.Contains("WindowsForms", StringComparison.Ordinal) ||
-               typeName.Contains("AspNet", StringComparison.Ordinal);
-    }
+    private static bool IsBlockingUnsafe(SynchronizationContext ctx) =>
+        ctx is not null && ctx.GetType() != typeof(SynchronizationContext);
 
     #endregion
 

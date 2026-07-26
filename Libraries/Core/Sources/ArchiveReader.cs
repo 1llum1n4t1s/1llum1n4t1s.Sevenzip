@@ -263,6 +263,7 @@ public sealed class ArchiveReader : DisposableBase
         try
         {
             var lib = Hook(SevenZipLibrary.Acquire());
+            _lib  = lib;
             _core = lib.GetInArchive(format);
 
             // Format.Zip 以外で Encoding/CodePage 非デフォルト指定の場合は警告
@@ -326,7 +327,15 @@ public sealed class ArchiveReader : DisposableBase
                     if (inner is EncryptionException) throw inner;
                     throw new SevenZipException(SevenZipCode.HeadersError, inner);
                 }
-                throw new SevenZipException(SevenZipCode.IsNotArc);
+
+                // S_FALSE (1) は「アーカイブとして解釈できない」を意味するので IsNotArc が正しい。
+                // 一方で負の HRESULT はネットワーク断・アクセス拒否・共有違反などの障害であり、
+                // IsNotArc へ潰すと利用者が「書庫が壊れている / 非対応形式」と誤診して
+                // アーカイブ再生成に走る。実 HRESULT に対応する例外を inner として保持する。
+                if (code > 0) throw new SevenZipException(SevenZipCode.IsNotArc);
+                throw new SevenZipException(SevenZipCode.UnknownError,
+                    Marshal.GetExceptionForHR(code) ??
+                    new COMException($"IInArchive.Open failed. HRESULT: 0x{code:X8}", code));
             }
 
             Items = new ArchiveCollection(_core, (int)_core.GetNumberOfItems(), Source, format);
@@ -482,20 +491,31 @@ public sealed class ArchiveReader : DisposableBase
     /// Path of the directory to save. If the parameter is set to null
     /// or empty, the method invokes as a test mode.
     /// </param>
-    /// <param name="src">Source indices to extract.</param>
+    /// <param name="src">
+    /// Source indices to extract. 順序は問わない（内部で昇順へ正規化し重複を除去する）。
+    /// null を指定した場合は全エントリを対象とする。
+    /// </param>
     /// <param name="progress">Progress object.</param>
     ///
     /* --------------------------------------------------------------------- */
     public unsafe void Save(string dest, uint[] src, IProgress<Report> progress)
     {
+        ThrowIfDisposed();
+
+        // IInArchive::Extract は昇順ソート済みのインデックス配列を要求し、ExtractCallback の
+        // エントリ解決も前進専用の列挙で行うため、非昇順や重複を含む配列をそのまま渡すと
+        // 対象を追い越して該当エントリが例外なく未展開のまま終わる。呼び出し側の配列を
+        // 破壊しないようコピーしてから正規化する。
+        var indices = Normalize(src);
+
         try
         {
-            using var cb = CreateCallback(dest, src, progress, null);
-            var n    = (uint?)src?.Length ?? uint.MaxValue;
+            using var cb = CreateCallback(dest, indices, progress, null);
+            var n    = (uint?)indices?.Length ?? uint.MaxValue;
             var test = dest.HasValue() ? 0 : 1;
 
             int code;
-            fixed (uint* p = src)
+            fixed (uint* p = indices)
             {
                 code = _core.Extract(p, n, test, cb);
             }
@@ -540,13 +560,19 @@ public sealed class ArchiveReader : DisposableBase
     /* --------------------------------------------------------------------- */
     public unsafe void Extract(IReadOnlyDictionary<int, Stream> outputs, IProgress<Report> progress = null)
     {
+        ThrowIfDisposed();
         if (outputs is null) throw new ArgumentNullException(nameof(outputs));
         if (outputs.Count == 0) return;
 
-        // 展開対象の 7-zip インデックス配列を構築する（uint へ変換）
+        // 展開対象の 7-zip インデックス配列を構築する（uint へ変換）。
+        // IInArchive::Extract は昇順ソート済みのインデックス配列を要求し、ExtractCallback の
+        // エントリ解決も前進専用の列挙で行うため、非昇順のまま渡すと対象を追い越して
+        // 該当エントリが例外なく未展開のまま終わる。Dictionary のキー列挙順は仕様上不定なので
+        // ここで必ず昇順へ正規化する。
         var indices = new uint[outputs.Count];
         var i = 0;
         foreach (var key in outputs.Keys) indices[i++] = (uint)key;
+        Array.Sort(indices);
 
         try
         {
@@ -595,6 +621,15 @@ public sealed class ArchiveReader : DisposableBase
         // 切るだけでよい。
         if (!disposing)
         {
+            // ただし SevenZipLibrary の参照カウントだけは戻す。ここを省くと Dispose 漏れ
+            // 1 回で参照カウントが永久に 0 へ戻らず、以降に正しく Dispose された全インスタンスの
+            // 解放まで無効化される。ReleaseFromFinalizer は FinalRelease と DLL アンロードを
+            // 行わないため finalizer スレッドでも安全 (詳細は同メソッドの remarks)。
+            Logger.Warn($"[{nameof(ArchiveReader)}] Dispose が呼ばれずに finalize されました。" +
+                        "7z.dll はプロセス終了まで解放されません。using / Dispose を使用してください。");
+            try { _lib?.ReleaseFromFinalizer(); } catch { /* finalizer で例外を漏らさない */ }
+
+            _lib          = null;
             _core         = null;
             _openStream   = null;
             _openCallback = null;
@@ -652,6 +687,57 @@ public sealed class ArchiveReader : DisposableBase
 
     /* --------------------------------------------------------------------- */
     ///
+    /// ThrowIfDisposed
+    ///
+    /// <summary>
+    /// 破棄済みの場合に <see cref="ObjectDisposedException"/> を投げる。
+    /// </summary>
+    ///
+    /// <remarks>
+    /// 破棄後は _core が null 化されるため、ガードが無いと原因の分からない
+    /// NullReferenceException になる。ArchiveCollection と同じく明示的な例外で早期検出する。
+    /// </remarks>
+    ///
+    /* --------------------------------------------------------------------- */
+    private void ThrowIfDisposed()
+    {
+        if (Disposed) throw new ObjectDisposedException(nameof(ArchiveReader));
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// Normalize
+    ///
+    /// <summary>
+    /// 展開対象インデックス配列を昇順・重複なしへ正規化した新しい配列を返す。
+    /// </summary>
+    ///
+    /// <remarks>
+    /// IInArchive::Extract は昇順ソート済みの配列を要求し、ExtractCallback のエントリ解決も
+    /// 前進専用の列挙で行うため、非昇順や重複があると対象を追い越して該当エントリが
+    /// 例外なく未展開のまま終わる。呼び出し側の配列は破壊しない。
+    /// </remarks>
+    ///
+    /* --------------------------------------------------------------------- */
+    private static uint[] Normalize(uint[] src)
+    {
+        if (src is null || src.Length < 2) return src;
+
+        var dest = (uint[])src.Clone();
+        Array.Sort(dest);
+
+        // 重複を前方へ詰めて切り詰める（ソート済みなので隣接比較で足りる）
+        var n = 1;
+        for (var i = 1; i < dest.Length; ++i)
+        {
+            if (dest[i] == dest[n - 1]) continue;
+            dest[n++] = dest[i];
+        }
+        return n == dest.Length ? dest : dest[..n];
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
     /// CreateCallback
     ///
     /// <summary>
@@ -697,6 +783,9 @@ public sealed class ArchiveReader : DisposableBase
 
     #region Fields
     private IInArchive _core;  // Dispose で null 化するため readonly ではない
+    // finalizer 経路で参照カウントだけを戻すために保持する (_disposable にも入っているが、
+    // finalizer では _disposable 全体を Dispose できないため個別に参照が必要)。
+    private SevenZipLibrary _lib;
     private readonly PasswordQuery _password;
     private readonly DisposableContainer _disposable = new();
     // Prevent GC from collecting stream/callback whose CCWs are held by native 7-Zip.

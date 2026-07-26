@@ -3,7 +3,7 @@
         <!-- Managed .NET アセンブリ自体はアーキ非依存。x64 / arm64 の差は同梱ネイティブ 7z.dll のみ。 -->
         <Platform Condition="'$(Platform)' == ''">AnyCPU</Platform>
         <Platforms>AnyCPU;x64;arm64</Platforms>
-        <Version>1.0.81</Version>
+        <Version>1.0.82</Version>
         <!-- transitive 依存を packages.lock.json で固定してサプライチェーンの決定論性を担保 -->
         <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
         <Authors>clown,cube-soft,ゆろち</Authors>
@@ -22,16 +22,17 @@
         <RepositoryUrl>https://github.com/1llum1n4t1s/1llum1n4t1s.Sevenzip</RepositoryUrl>
         <PackageProjectUrl>https://github.com/1llum1n4t1s/1llum1n4t1s.Sevenzip</PackageProjectUrl>
     </PropertyGroup>
+    <!-- DocumentationFile は明示指定しない。この props は SDK が AssemblyName の既定値を
+         設定する前に評価されるため、$(AssemblyName) が空へ展開されて `.xml`（ベース名なし）
+         になってしまう。GenerateDocumentationFile=true だけ立てておけば、SDK 既定の
+         $(OutputPath)$(AssemblyName).xml が Platform 別 OutputPath に追従して正しく出力される。 -->
     <PropertyGroup Condition=" '$(Platform)' == 'AnyCPU' ">
         <OutputPath>bin\$(Configuration)\</OutputPath>
-        <DocumentationFile>bin\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml</DocumentationFile>
     </PropertyGroup>
     <PropertyGroup Condition=" '$(Platform)' == 'x64' ">
         <OutputPath>bin\x64\$(Configuration)\</OutputPath>
-        <DocumentationFile>bin\x64\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml</DocumentationFile>
     </PropertyGroup>
     <PropertyGroup Condition=" '$(Platform)' == 'arm64' ">
         <OutputPath>bin\arm64\$(Configuration)\</OutputPath>
-        <DocumentationFile>bin\arm64\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml</DocumentationFile>
     </PropertyGroup>
 </Project>

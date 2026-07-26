@@ -47,17 +47,22 @@ namespace Cube.FileSystem.SevenZip;
 /// </para>
 /// <list type="bullet">
 /// <item><description>
-/// _refCount / _tracked は共有シングルトン上で管理されるため、あるインスタンスの
-/// Dispose が他インスタンスの使用中 COM オブジェクトを解放するシナリオは防げない
-/// (Dispose は _refCount==0 のときのみ解放するが、複数インスタンスが均等に Acquire/Release
-/// していれば安全)。ただし、両者が同時に最後の Dispose を走らせると FinalRelease と
-/// 使用中が競合する可能性がある。
+/// <see cref="ArchiveReader"/> / <see cref="ArchiveWriter"/> は「生成から破棄まで同一スレッド」を
+/// 契約としており、この契約はコード上で強制されていない (スレッド ID の記録・検査は無い)。
+/// 破ったときの症状はネイティブ側のクラッシュや finalizer スレッドでの例外になり、
+/// 契約違反であることが分からない。
 /// </description></item>
 /// <item><description>
-/// 7z.dll 自体は内部状態を持たず thread-safe だが、本ラッパーの COM オブジェクト
-/// 追跡設計が直列化を前提としている。
+/// COM コールバック (UpdateCallback / ExtractCallback) は 7z.dll のマルチスレッド圧縮からの
+/// 並行呼び出しに対しては同期済みだが、これは「1 つの圧縮処理の内部」を守るためのもので、
+/// 複数インスタンスを跨いだ利用の検証は行っていない。
 /// </description></item>
 /// </list>
+/// <para>
+/// なお <c>_refCount</c> / <c>_tracked</c> 自体は <c>_lock</c> で保護されており、
+/// <c>_tracked.Remove</c> の成否で解放責任を一意化しているため二重 FinalRelease は起きない。
+/// つまり禁止の根拠はこれらのフィールドではなく、上記の未検証・未強制な部分にある。
+/// </para>
 /// <para>
 /// サーバーサイドや GUI アプリでは <see cref="System.Threading.SemaphoreSlim"/> や
 /// <c>Task.Run</c> での 1 スロット直列化を行うこと。
@@ -278,6 +283,44 @@ internal sealed class SevenZipLibrary : IDisposable
             if (obj is ComObject co) co.FinalRelease();
         }
         handleToClose?.Close();
+    }
+
+    /// <summary>
+    /// finalizer 経路から参照カウントだけを解放する。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// finalizer スレッドでは次の 2 つが危険なため、通常の <see cref="Dispose"/> は呼べない。
+    /// (1) 追跡中の COM ラッパーが既に finalize 済みの可能性があり、<c>FinalRelease</c> を
+    /// 呼ぶと未処理例外でプロセスごとクラッシュしうる。
+    /// (2) DLL をアンロードすると、後から finalize される ComObject の Release が
+    /// アンマップ領域へ到達して AccessViolation になる。
+    /// </para>
+    /// <para>
+    /// そのためここでは「参照カウントを戻し、追跡参照を手放し、共有インスタンスを切り離す」
+    /// だけを行い、DLL ハンドルの Close と FinalRelease は行わない。モジュールはプロセス終了まで
+    /// 残るが、Release 先が生きているので安全側に倒れる。次回 <see cref="Acquire"/> は
+    /// 新しいインスタンス (= 新規 LoadLibrary) を生成する。
+    /// </para>
+    /// <para>
+    /// これを行わないと、利用者が Dispose を 1 回忘れるだけで <c>_refCount</c> が永久に 0 へ
+    /// 戻らなくなり、以降に正しく Dispose された全インスタンスの解放処理まで無効化される
+    /// (<c>_tracked</c> も無制限に伸び続ける)。
+    /// </para>
+    /// </remarks>
+    public void ReleaseFromFinalizer()
+    {
+        lock (_lock)
+        {
+            if (--_refCount > 0) return;
+
+            // 追跡参照を手放して各 ComObject 自身の finalizer に Release を委ねる。
+            // DLL は生かしたままなので Release は有効なアドレスへ届く。
+            _tracked.Clear();
+
+            // _handle は Close しない (上記 remarks)。次回 Acquire に再生成させる。
+            _shared = null;
+        }
     }
 
     #endregion

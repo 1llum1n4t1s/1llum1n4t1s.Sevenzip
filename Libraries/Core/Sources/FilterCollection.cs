@@ -17,6 +17,7 @@
 //
 /* ------------------------------------------------------------------------- */
 using Cube.Text.Extensions;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 namespace Cube.FileSystem.SevenZip;
@@ -49,7 +50,20 @@ public class FilterCollection
     /// </param>
     ///
     /* --------------------------------------------------------------------- */
-    public FilterCollection(IEnumerable<string> src) => Names = src;
+    public FilterCollection(IEnumerable<string> src)
+    {
+        Names = src;
+
+        // 判定用のインデックスを一度だけ構築する。
+        // (1) Names を IEnumerable のまま毎エントリ再列挙すると、呼び出し側が LINQ クエリや
+        //     File.ReadLines を渡した場合にエントリ数に比例して再評価・再 I/O が走る。
+        // (2) 比較は Ordinal 系にする。旧実装の string.Compare(a, b, true) はカルチャ依存で、
+        //     tr-TR 等では I / ı の扱いが変わり「同じアーカイブでも環境によって除外される
+        //     ファイルが変わる」という再現性のない挙動になっていた。
+        _names = src is null
+               ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+               : new HashSet<string>(src.Where(e => e.HasValue()), StringComparer.OrdinalIgnoreCase);
+    }
 
     #endregion
 
@@ -85,13 +99,12 @@ public class FilterCollection
     /* --------------------------------------------------------------------- */
     public bool Match(Entity src)
     {
-        if (!Names.Any()) return false;
-        var parts = Split(src.FullName);
-        if (!parts.Any()) return false;
+        if (_names.Count == 0) return false;
 
-        foreach (var name in Names)
+        // パス要素ごとに O(1) で判定する（除外名の件数に依存しない）
+        foreach (var e in Split(src.FullName))
         {
-            if (parts.Any(e => string.Compare(e, name, true) == 0)) return true;
+            if (_names.Contains(e)) return true;
         }
         return false;
     }
@@ -109,9 +122,16 @@ public class FilterCollection
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    private IEnumerable<string> Split(string src) =>
-        src.Split(SafePath.SeparatorChars.ToArray())
+    private static IEnumerable<string> Split(string src) =>
+        src.Split(s_separators)
            .SkipWhile(s => !s.HasValue());
 
+    #endregion
+
+    #region Fields
+    // 区切り文字配列は呼び出しごとに確保しない（Match は全エントリで通る）
+    private static readonly char[] s_separators = [.. SafePath.SeparatorChars];
+    // Ordinal (大文字小文字無視) の判定用インデックス
+    private readonly HashSet<string> _names;
     #endregion
 }
