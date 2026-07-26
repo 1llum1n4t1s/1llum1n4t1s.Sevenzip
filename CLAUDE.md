@@ -131,7 +131,8 @@ COM Interop と P/Invoke は全面的に AOT 互換 API に移行済み:
 - `AllowUnsafeBlocks = true` — COM ポインタ操作のため（`ArchiveReader.Save(string, uint[], IProgress<Report>)` が `unsafe`）
 - `#region` でセクション分割（Constructors / Properties / Methods / Fields）
 - XML ドキュメントコメントは日本語
-- `ArchiveReader` / `ArchiveWriter` は**同一スレッドで生成から破棄まで実行する**（非同期は `Task.Run` で一連の処理を包む）
+- `ArchiveReader` / `ArchiveWriter` は**1 インスタンスを同時に触るスレッドを常に 1 つに保つ**（スレッドアフィニティは要求しない。`SemaphoreSlim` / `lock` / `await` による happens-before があればスレッドを跨いでよい。単純な非同期は `Task.Run` で一連の処理を包む）
+- finalizer 経路（`Dispose(false)`）の処理は**ログ出力を含めて全て try/catch で囲む**。未処理例外はプロセスごと即死するため。`SevenZipLibrary.ReleaseFromFinalizerSafe` に共通化済み
 
 ## 既知の 7-Zip 26.00 挙動変化
 

@@ -27,7 +27,10 @@ namespace Cube.FileSystem.SevenZip;
 /// </summary>
 /// <remarks>
 /// <para>
-/// 同一スレッドでの生成から破棄まで実行する必要がある（非同期利用は Task.Run で一連の処理を包む）。
+/// スレッドセーフではない。1 インスタンスを生成から破棄まで<b>同時に触るスレッドは常に 1 つ</b>に
+/// 保つ必要がある。スレッドを跨いで受け渡すこと自体は、直列化プリミティブ
+/// (<c>SemaphoreSlim</c> / <c>lock</c> / <c>await</c>) による happens-before があれば可
+/// (スレッドアフィニティは要求しない)。単純な非同期利用は一連の処理を Task.Run で包む。
 /// </para>
 /// <para>
 /// <b>スケーラビリティ注意</b>: 非常に大量のエントリ (10 万件超) を圧縮する場合、
@@ -93,7 +96,7 @@ public sealed class ArchiveWriter : DisposableBase
             // COM オブジェクトは即解放する。
             IOutArchive archive = null;
             try { archive = _lib.GetOutArchive(format); }
-            finally { SevenZipLibrary.ReleaseComWrapper(archive); }
+            finally { _lib.ReleaseComWrapper(archive); }
         }
         catch
         {
@@ -885,9 +888,8 @@ public sealed class ArchiveWriter : DisposableBase
             // アンマップ領域へ到達する。参照カウントだけを戻す専用経路を使う。
             // ここを省くと Dispose 漏れ 1 回で参照カウントが永久に 0 へ戻らず、
             // 以降に正しく Dispose された全インスタンスの解放まで無効化される。
-            Logger.Warn($"[{nameof(ArchiveWriter)}] Dispose が呼ばれずに finalize されました。" +
-                        "7z.dll はプロセス終了まで解放されません。using / Dispose を使用してください。");
-            _lib?.ReleaseFromFinalizer();
+            // 警告ログを含め全体を保護する (finalizer スレッドの未処理例外は致死)。
+            SevenZipLibrary.ReleaseFromFinalizerSafe(_lib, nameof(ArchiveWriter));
         }
 
         // Add(Stream) で作成した一時ディレクトリを削除する
@@ -1049,12 +1051,12 @@ public sealed class ArchiveWriter : DisposableBase
         finally
         {
             // COM オブジェクトを DLL アンロード前に確実に解放する
-            SevenZipLibrary.ReleaseComWrapper(setProps);
-            SevenZipLibrary.ReleaseComWrapper(outArchive);
+            _lib.ReleaseComWrapper(setProps);
+            _lib.ReleaseComWrapper(outArchive);
             if (inArchive is not null)
             {
                 inArchive.Close(); // アーカイブを閉じてからラッパーを解放する
-                SevenZipLibrary.ReleaseComWrapper(inArchive);
+                _lib.ReleaseComWrapper(inArchive);
             }
             openCb?.Dispose();
         }
@@ -1084,8 +1086,8 @@ public sealed class ArchiveWriter : DisposableBase
             finally
             {
                 // COM オブジェクトを DLL アンロード前に解放する (順序: setProps → archive)
-                SevenZipLibrary.ReleaseComWrapper(setProps);
-                SevenZipLibrary.ReleaseComWrapper(archive);
+                _lib.ReleaseComWrapper(setProps);
+                _lib.ReleaseComWrapper(archive);
             }
         }, src, destHint, progress);
     }
@@ -1455,7 +1457,7 @@ public sealed class ArchiveWriter : DisposableBase
     #region Fields
     // 7z.dll のラッパー（参照カウント付き共有シングルトン）。
     // ctor 失敗時に同期解放できるよう、フィールド初期化子ではなく ctor 内で取得する。
-    private readonly SevenZipLibrary _lib;
+    private readonly SevenZipLibrary.Lease _lib;
     // 追加するファイル/ディレクトリのリスト
     private readonly List<RawEntity> _items = [];
     // Update 時に削除するアイテムの相対パスセット（OrdinalIgnoreCase）

@@ -23,6 +23,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
+using System.Threading;
 namespace Cube.FileSystem.SevenZip;
 
 /// <summary>
@@ -31,14 +32,19 @@ namespace Cube.FileSystem.SevenZip;
 /// <remarks>
 /// <para>
 /// 参照カウント付きの共有シングルトンとして実装されている。
-/// <see cref="Acquire"/> で参照カウントをインクリメントし、
-/// <see cref="Dispose"/> でデクリメントする。
+/// <see cref="Acquire"/> が借用ハンドル (<see cref="Lease"/>) を返して参照カウントを
+/// インクリメントし、<see cref="Lease.Dispose"/> でデクリメントする。
 /// カウントが 0 になった時点で DLL をアンロードする。
+/// </para>
+/// <para>
+/// 参照カウント (<c>_refCount</c>) と追跡リスト (<c>_tracked</c>) はどちらもインスタンス
+/// フィールドで、「世代」(= 1 回の LoadLibrary に対応する 1 インスタンス) 単位に閉じている。
+/// 静的なのは現行世代を指す <c>_shared</c> と同期用の <c>_lock</c> だけである。
 /// </para>
 /// <para>
 /// COM オブジェクトのライフタイムは <see cref="_tracked"/> <see cref="HashSet{T}"/> で管理する。
 /// DLL アンロード前に全オブジェクトの FinalRelease を確実に実行する。
-/// HashSet により <see cref="ReleaseComWrapper"/> の除去コストを O(1) に保つ。
+/// HashSet により <see cref="Lease.ReleaseComWrapper"/> の除去コストを O(1) に保つ。
 /// </para>
 /// <para>
 /// <b>並列実行の制約:</b> 同一プロセス内で複数の
@@ -47,10 +53,13 @@ namespace Cube.FileSystem.SevenZip;
 /// </para>
 /// <list type="bullet">
 /// <item><description>
-/// <see cref="ArchiveReader"/> / <see cref="ArchiveWriter"/> は「生成から破棄まで同一スレッド」を
-/// 契約としており、この契約はコード上で強制されていない (スレッド ID の記録・検査は無い)。
-/// 破ったときの症状はネイティブ側のクラッシュや finalizer スレッドでの例外になり、
-/// 契約違反であることが分からない。
+/// <see cref="ArchiveReader"/> / <see cref="ArchiveWriter"/> の契約は「1 インスタンスを
+/// 同時に触るスレッドは常に 1 つ」であり、スレッドアフィニティ (同一スレッドで居続けること) は
+/// 要求しない。スレッドを跨ぐ受け渡しは、直列化プリミティブ
+/// (<see cref="System.Threading.SemaphoreSlim"/> / <c>lock</c> / <c>await</c>) による
+/// happens-before があれば安全である (thread-static / STA 依存の状態は持たない)。
+/// ただしこの契約もコード上で強制されておらず、破ったときの症状はネイティブ側のクラッシュに
+/// なるため、契約違反であることが分かりにくい。
 /// </description></item>
 /// <item><description>
 /// COM コールバック (UpdateCallback / ExtractCallback) は 7z.dll のマルチスレッド圧縮からの
@@ -68,7 +77,7 @@ namespace Cube.FileSystem.SevenZip;
 /// <c>Task.Run</c> での 1 スロット直列化を行うこと。
 /// </para>
 /// </remarks>
-internal sealed class SevenZipLibrary : IDisposable
+internal sealed class SevenZipLibrary
 {
     // StrategyBasedComWrappers はスレッドセーフかつシングルトンで問題ない
     private static readonly StrategyBasedComWrappers s_comWrappers = new();
@@ -76,14 +85,15 @@ internal sealed class SevenZipLibrary : IDisposable
     #region Constructors
 
     /// <summary>
-    /// 共有インスタンスの参照カウントをインクリメントして返す。
+    /// 共有インスタンスを借用し、その <see cref="Lease"/> を返す。
     /// </summary>
-    /// <returns>共有 SevenZipLibrary インスタンス。</returns>
+    /// <returns>借用ハンドル。利用者は必ず 1 回 Dispose する。</returns>
     /// <remarks>
-    /// 初回呼び出し時に 7z.dll をロードする。
-    /// ハンドルが無効になっている場合も再ロードする。
+    /// 初回呼び出し時 (および前世代がアンロード済みの場合) に 7z.dll をロードする。
+    /// 返す値はシングルトン本体ではなく借用ハンドルであるため、
+    /// 利用者側は「自分が借りた世代」だけを返却でき、他世代の参照カウントに触れない。
     /// </remarks>
-    public static SevenZipLibrary Acquire()
+    public static Lease Acquire()
     {
         lock (_lock)
         {
@@ -92,8 +102,8 @@ internal sealed class SevenZipLibrary : IDisposable
             {
                 _shared = new SevenZipLibrary();
             }
-            _refCount++;
-            return _shared;
+            _shared._refCount++;
+            return new Lease(_shared);
         }
     }
 
@@ -219,40 +229,58 @@ internal sealed class SevenZipLibrary : IDisposable
     /// <remarks>
     /// GC の Finalize が DLL アンロード後に Release を呼ぶことを防ぐために使用する。
     /// ComObject.FinalRelease() はアトミックに COM ポインタを解放してファイナライズを抑制する。
+    /// 借用元の世代 (<c>this</c>) の <see cref="_tracked"/> だけを見るため、世代を跨いだ
+    /// 誤解放は起こらない。
     /// </remarks>
-    public static void ReleaseComWrapper(object comWrapper)
+    private void ReleaseComWrapperCore(object comWrapper)
     {
         if (comWrapper is null) return;
 
         // 二重解放防止: lock 内で _tracked から Remove が成功した場合のみ FinalRelease する。
-        // Dispose 側も同様に lock 内で _tracked.Clear() してからスナップショットを取るため、
+        // Release 側も同様に lock 内で _tracked.Clear() してからスナップショットを取るため、
         // 「どちらか片方が Remove 責任を持つ」形に収束して二重 FinalRelease を防ぐ。
-        var shouldRelease = false;
-        lock (_lock)
-        {
-            // _shared が null (アンロード済み) でも _tracked 自体は前インスタンスに残り続けるが、
-            // このメソッドは外から呼ばれる経路 (QueryInterface の finally 等) で使われるため、
-            // 渡された comWrapper がどのインスタンスの _tracked にいるか不明。
-            // 安全策として _shared?._tracked.Remove の結果で判定する。
-            shouldRelease = _shared?._tracked.Remove(comWrapper) ?? false;
-        }
+        bool shouldRelease;
+        lock (_lock) shouldRelease = _tracked.Remove(comWrapper);
 
         if (shouldRelease && comWrapper is ComObject comObject)
         {
             // lock 外で FinalRelease (ネイティブ遷移中の再入デッドロック回避)
             comObject.FinalRelease();
         }
-        // shouldRelease=false の場合は Dispose 側が foreach で FinalRelease する責任を持つ。
+        // shouldRelease=false の場合は Release 側が foreach で FinalRelease する責任を持つ。
     }
 
     /// <summary>
-    /// 参照カウントをデクリメントし、0 になった場合はライブラリを解放する。
+    /// 借用を 1 つ返却し、この世代の参照カウントが 0 になった場合はライブラリを解放する。
     /// </summary>
+    /// <param name="fromFinalizer">finalizer スレッドからの返却の場合は true。</param>
     /// <remarks>
+    /// <para>
     /// カウントが 0 になる際は、全追跡 COM オブジェクトの FinalRelease を
     /// DLL アンロード前に実行する。これにより GC が後で Release を呼ぶことを防ぐ。
+    /// </para>
+    /// <para>
+    /// ただし finalizer スレッドでは次の 2 つが危険なため、この 2 つを行わない。
+    /// (1) 追跡中の COM ラッパーが既に finalize 済みの可能性があり、<c>FinalRelease</c> を
+    /// 呼ぶと未処理例外でプロセスごとクラッシュしうる。
+    /// (2) DLL をアンロードすると、後から finalize される ComObject の Release が
+    /// アンマップ領域へ到達して AccessViolation になる。
+    /// このとき行うのは「参照カウントを戻し、追跡参照を手放し、共有インスタンスを切り離す」
+    /// だけで、モジュールはプロセス終了まで残るが Release 先が生きているので安全側に倒れる。
+    /// 次回 <see cref="Acquire"/> は新しい世代 (= 新規 LoadLibrary) を生成する。
+    /// </para>
+    /// <para>
+    /// 一度でも finalizer 経路の返却が起きた世代は <see cref="_keepAlive"/> が立ち、
+    /// 以降その世代のハンドルは Close しない。追跡参照を手放した後に残りの借用が
+    /// 正常 Dispose されても、finalize 待ちの ComObject が生きているためである。
+    /// </para>
+    /// <para>
+    /// 返却自体を省くと、利用者が Dispose を 1 回忘れるだけで <c>_refCount</c> が永久に 0 へ
+    /// 戻らなくなり、以降に正しく Dispose された全インスタンスの解放処理まで無効化される
+    /// (<c>_tracked</c> も無制限に伸び続ける)。
+    /// </para>
     /// </remarks>
-    public void Dispose()
+    private void Release(bool fromFinalizer)
     {
         // FinalRelease はロック外で呼ぶ。ロック保持のままネイティブへ遷移すると、
         // ネイティブ→マネージド再入時の `lock (_lock)` で別スレッドが解放待ちに入り
@@ -262,65 +290,180 @@ internal sealed class SevenZipLibrary : IDisposable
 
         lock (_lock)
         {
-            // 参照カウントを減らし、まだ参照している呼び出し元がいる場合は何もしない
+            if (fromFinalizer) _keepAlive = true;
+
+            // 参照カウントを減らし、まだ借用している呼び出し元がいる場合は何もしない
             if (--_refCount > 0) return;
 
-            // 解放対象をローカルリストに取り出してから lock を抜ける
-            // HashSet.CopyTo で無駄なアロケーションを減らしつつスナップショットを取る
-            toRelease = new List<object>(_tracked);
+            // 解放対象をローカルリストに取り出してから lock を抜ける。
+            // finalizer 経路では FinalRelease を行わず、追跡参照を手放して
+            // 各 ComObject 自身の finalizer に Release を委ねる。
+            if (!fromFinalizer) toRelease = new List<object>(_tracked);
             _tracked.Clear();
 
-            // ネイティブ DLL ハンドルも lock 外で Close する
-            if (_handle != null && !_handle.IsClosed) handleToClose = _handle;
+            // ネイティブ DLL ハンドルも lock 外で Close する (_keepAlive の世代は Close しない)
+            if (!_keepAlive && _handle != null && !_handle.IsClosed) handleToClose = _handle;
 
-            // 共有インスタンスをクリアして次回 Acquire 時に再生成させる
-            _shared = null;
+            // 自分が現行世代の場合のみ共有参照をクリアして次回 Acquire 時に再生成させる。
+            // 旧世代の返却で現行世代を巻き添えにしない。
+            if (ReferenceEquals(_shared, this)) _shared = null;
         }
 
         // lock を抜けた後に FinalRelease / Close を実行する
-        foreach (var obj in toRelease)
+        if (toRelease is not null)
         {
-            if (obj is ComObject co) co.FinalRelease();
+            foreach (var obj in toRelease)
+            {
+                if (obj is ComObject co) co.FinalRelease();
+            }
         }
         handleToClose?.Close();
     }
 
     /// <summary>
-    /// finalizer 経路から参照カウントだけを解放する。
+    /// finalizer 経路から借用の返却を安全に実行する。
+    /// </summary>
+    /// <param name="lib">返却する借用ハンドル。ctor が失敗している場合は null。</param>
+    /// <param name="owner">呼び出し元のクラス名 (ログ出力用)。</param>
+    /// <remarks>
+    /// <para>
+    /// .NET の finalizer スレッドで発生した未処理例外は catch できずプロセスごと即死するため、
+    /// この経路で行う処理は全て try/catch で囲む必要がある。警告ログの出力もその対象に含める:
+    /// この経路が走るのはプロセス終了間際が典型で、ログシンクが既に閉じている・ログファイルが
+    /// ロックされている確率が高い。ログ出力が保護されていないと、後続の
+    /// <see cref="Lease.ReleaseFromFinalizer"/> の try/catch より手前で死ぬ。
+    /// </para>
+    /// <para>
+    /// <see cref="ArchiveReader"/> / <see cref="ArchiveWriter"/> の双方から呼ばれる共通処理。
+    /// </para>
+    /// </remarks>
+    public static void ReleaseFromFinalizerSafe(Lease lib, string owner)
+    {
+        try
+        {
+            Logger.Warn($"[{owner}] Dispose が呼ばれずに finalize されました。" +
+                        "7z.dll はプロセス終了まで解放されません。using / Dispose を使用してください。");
+        }
+        catch { /* finalizer で例外を漏らさない */ }
+
+        try { lib?.ReleaseFromFinalizer(); } catch { /* 同上 */ }
+    }
+
+    #endregion
+
+    #region Lease
+
+    /// <summary>
+    /// <see cref="SevenZipLibrary"/> の借用ハンドル。
     /// </summary>
     /// <remarks>
     /// <para>
-    /// finalizer スレッドでは次の 2 つが危険なため、通常の <see cref="Dispose"/> は呼べない。
-    /// (1) 追跡中の COM ラッパーが既に finalize 済みの可能性があり、<c>FinalRelease</c> を
-    /// 呼ぶと未処理例外でプロセスごとクラッシュしうる。
-    /// (2) DLL をアンロードすると、後から finalize される ComObject の Release が
-    /// アンマップ領域へ到達して AccessViolation になる。
+    /// <see cref="Acquire"/> が返す軽量な <see cref="IDisposable"/>。借用ハンドル自身が
+    /// 「返却済みか」を持つため <see cref="Dispose"/> は冪等であり、
+    /// <see cref="IDisposable"/> の規約 (複数回の Dispose を許容する) を満たす。
+    /// 呼び出し側の二重 Dispose ガードに依存しない。
     /// </para>
     /// <para>
-    /// そのためここでは「参照カウントを戻し、追跡参照を手放し、共有インスタンスを切り離す」
-    /// だけを行い、DLL ハンドルの Close と FinalRelease は行わない。モジュールはプロセス終了まで
-    /// 残るが、Release 先が生きているので安全側に倒れる。次回 <see cref="Acquire"/> は
-    /// 新しいインスタンス (= 新規 LoadLibrary) を生成する。
-    /// </para>
-    /// <para>
-    /// これを行わないと、利用者が Dispose を 1 回忘れるだけで <c>_refCount</c> が永久に 0 へ
-    /// 戻らなくなり、以降に正しく Dispose された全インスタンスの解放処理まで無効化される
-    /// (<c>_tracked</c> も無制限に伸び続ける)。
+    /// また借用時の世代 (<see cref="SevenZipLibrary"/> インスタンス) を保持するため、
+    /// finalizer 経路の返却で共有インスタンスが差し替わった後に旧世代の借用が返却されても、
+    /// 減るのは旧世代の参照カウントだけである。使用中の新世代を早期に解放してしまう
+    /// 世代跨ぎの誤カウントは構造的に起こらない。
     /// </para>
     /// </remarks>
-    public void ReleaseFromFinalizer()
+    public sealed class Lease : IDisposable
     {
-        lock (_lock)
+        /// <summary>
+        /// Lease クラスの新しいインスタンスを初期化する。
+        /// </summary>
+        /// <param name="library">借用元の世代。</param>
+        internal Lease(SevenZipLibrary library) => _library = library;
+
+        /// <summary>
+        /// 指定したフォーマットの InArchive オブジェクトを取得する。
+        /// </summary>
+        /// <param name="format">アーカイブフォーマット。</param>
+        /// <returns>IInArchive オブジェクト。</returns>
+        public IInArchive GetInArchive(Format format) => Library.GetInArchive(format);
+
+        /// <summary>
+        /// 指定したクラス ID の InArchive オブジェクトを取得する。
+        /// </summary>
+        /// <param name="clsid">クラス ID。</param>
+        /// <returns>IInArchive オブジェクト。</returns>
+        public IInArchive GetInArchive(Guid clsid) => Library.GetInArchive(clsid);
+
+        /// <summary>
+        /// 指定したアーカイブフォーマットの OutArchive オブジェクトを取得する。
+        /// </summary>
+        /// <param name="format">アーカイブフォーマット。</param>
+        /// <returns>IOutArchive オブジェクト。</returns>
+        public IOutArchive GetOutArchive(Format format) => Library.GetOutArchive(format);
+
+        /// <summary>
+        /// 指定したクラス ID の OutArchive オブジェクトを取得する。
+        /// </summary>
+        /// <param name="clsid">クラス ID。</param>
+        /// <returns>IOutArchive オブジェクト。</returns>
+        public IOutArchive GetOutArchive(Guid clsid) => Library.GetOutArchive(clsid);
+
+        /// <summary>
+        /// COM オブジェクトに対して特定のインターフェースを QueryInterface で問い合わせる。
+        /// </summary>
+        /// <typeparam name="T">取得するインターフェース型。</typeparam>
+        /// <param name="comObject">ComWrappers でラップされたソース COM オブジェクト。</param>
+        /// <returns>
+        /// ラップされたインターフェース；インターフェースがサポートされない場合は null。
+        /// </returns>
+        public T QueryInterface<T>(object comObject) where T : class =>
+            Library.QueryInterface<T>(comObject);
+
+        /// <summary>
+        /// UniqueInstance で生成した COM ラッパーを明示的に解放する。
+        /// </summary>
+        /// <param name="comWrapper">解放する COM ラッパーオブジェクト。</param>
+        /// <remarks>
+        /// 返却後は追跡側が既に解放済みのため何も行わない。
+        /// </remarks>
+        public void ReleaseComWrapper(object comWrapper) =>
+            _library?.ReleaseComWrapperCore(comWrapper);
+
+        /// <summary>
+        /// 借用を返却する。複数回呼び出しても 2 回目以降は何も行わない。
+        /// </summary>
+        public void Dispose() => Return(fromFinalizer: false);
+
+        /// <summary>
+        /// finalizer 経路から借用を返却する。
+        /// </summary>
+        /// <remarks>
+        /// FinalRelease と DLL アンロードを行わない点だけが <see cref="Dispose"/> と異なる
+        /// (詳細は <see cref="SevenZipLibrary.Release"/> の remarks)。
+        /// </remarks>
+        public void ReleaseFromFinalizer() => Return(fromFinalizer: true);
+
+        /// <summary>
+        /// 借用を 1 回だけ返却する。
+        /// </summary>
+        /// <param name="fromFinalizer">finalizer スレッドからの返却の場合は true。</param>
+        private void Return(bool fromFinalizer)
         {
-            if (--_refCount > 0) return;
+            // Interlocked で「最初の 1 回」を確定させ、二重返却による参照カウントの
+            // 過剰デクリメントを防ぐ (複数スレッドからの同時 Dispose も含めて安全)。
+            if (Interlocked.Exchange(ref _released, 1) != 0) return;
 
-            // 追跡参照を手放して各 ComObject 自身の finalizer に Release を委ねる。
-            // DLL は生かしたままなので Release は有効なアドレスへ届く。
-            _tracked.Clear();
-
-            // _handle は Close しない (上記 remarks)。次回 Acquire に再生成させる。
-            _shared = null;
+            var library = _library;
+            _library = null;
+            library?.Release(fromFinalizer);
         }
+
+        /// <summary>
+        /// 借用元の世代を取得する。返却済みの場合は例外を送出する。
+        /// </summary>
+        private SevenZipLibrary Library =>
+            _library ?? throw new ObjectDisposedException(nameof(Lease));
+
+        private SevenZipLibrary _library;
+        private int _released;
     }
 
     #endregion
@@ -384,12 +527,18 @@ internal sealed class SevenZipLibrary : IDisposable
     #endregion
 
     #region Fields
-    // 共有シングルトンインスタンス（null = 未初期化またはアンロード済み）
+    // 現行世代の共有インスタンス（null = 未初期化またはアンロード済み）
     private static SevenZipLibrary _shared;
-    // 共有インスタンスへの参照カウント
-    private static int _refCount;
-    // スレッドセーフな操作のための同期オブジェクト
+    // スレッドセーフな操作のための同期オブジェクト。
+    // _shared と、全世代の _refCount / _tracked / _keepAlive を保護する。
     private static readonly object _lock = new();
+
+    // この世代を借りている Lease の数（世代ごとに独立。static にすると世代跨ぎで誤カウントする）
+    private int _refCount;
+    // finalizer 経路の返却が一度でも起きた世代は DLL ハンドルを Close しない。
+    // 追跡参照を手放した後は、まだ finalize されていない ComObject が後から Release を
+    // 呼びうるため、ここで FreeLibrary するとアンマップ領域へ到達して AccessViolation になる。
+    private bool _keepAlive;
 
     // LoadLibrary で取得した 7z.dll のネイティブハンドル
     private readonly SafeLibraryHandle _handle;

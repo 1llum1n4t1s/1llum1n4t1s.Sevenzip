@@ -297,7 +297,7 @@ public sealed class ArchiveReader : DisposableBase
                 }
                 finally
                 {
-                    SevenZipLibrary.ReleaseComWrapper(setProps);
+                    lib.ReleaseComWrapper(setProps);
                 }
             }
 
@@ -625,9 +625,8 @@ public sealed class ArchiveReader : DisposableBase
             // 1 回で参照カウントが永久に 0 へ戻らず、以降に正しく Dispose された全インスタンスの
             // 解放まで無効化される。ReleaseFromFinalizer は FinalRelease と DLL アンロードを
             // 行わないため finalizer スレッドでも安全 (詳細は同メソッドの remarks)。
-            Logger.Warn($"[{nameof(ArchiveReader)}] Dispose が呼ばれずに finalize されました。" +
-                        "7z.dll はプロセス終了まで解放されません。using / Dispose を使用してください。");
-            try { _lib?.ReleaseFromFinalizer(); } catch { /* finalizer で例外を漏らさない */ }
+            // 警告ログを含め全体を保護する (finalizer スレッドの未処理例外は致死)。
+            SevenZipLibrary.ReleaseFromFinalizerSafe(_lib, nameof(ArchiveReader));
 
             _lib          = null;
             _core         = null;
@@ -647,7 +646,8 @@ public sealed class ArchiveReader : DisposableBase
             // ライブラリ参照カウントの解放は続行する (ctor 失敗クリーンアップ経路)。
             try { _core.Close(); }
             catch (Exception e) { Logger.Warn($"[Dispose] Close failed: {e.Message}"); }
-            SevenZipLibrary.ReleaseComWrapper(_core);
+            // _lib は ctor で Acquire に失敗した場合のみ null (その場合 _core も生成前)
+            _lib?.ReleaseComWrapper(_core);
             _core = null;
         }
         _openStream   = null;
@@ -785,7 +785,7 @@ public sealed class ArchiveReader : DisposableBase
     private IInArchive _core;  // Dispose で null 化するため readonly ではない
     // finalizer 経路で参照カウントだけを戻すために保持する (_disposable にも入っているが、
     // finalizer では _disposable 全体を Dispose できないため個別に参照が必要)。
-    private SevenZipLibrary _lib;
+    private SevenZipLibrary.Lease _lib;
     private readonly PasswordQuery _password;
     private readonly DisposableContainer _disposable = new();
     // Prevent GC from collecting stream/callback whose CCWs are held by native 7-Zip.

@@ -106,7 +106,7 @@ using (var reader = new ArchiveReader(@"path\to\archive", password, options))
 }
 ```
 
-ArchiveWriter および ArchiveReader は、生成から破棄まで同一スレッドで実行する必要があります。非同期に圧縮・解凍したい場合は、一連の処理全体を `Task.Run()` で実行してください。
+ArchiveWriter および ArchiveReader はスレッドセーフではありません。1 つのインスタンスを生成から破棄まで、同時に操作するスレッドが常に 1 つになるようにしてください。スレッドを跨いで受け渡すこと自体は、`SemaphoreSlim` / `lock` / `await` などで直列化されていれば問題ありません（同一スレッドに固定する必要はありません）。単純に非同期化したい場合は、一連の処理全体を `Task.Run()` で実行してください。
 
 ### ログの有効化
 
