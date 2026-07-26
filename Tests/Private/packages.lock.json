@@ -75,7 +75,7 @@
       "cube.logging": {
         "type": "Project",
         "dependencies": {
-          "Cube.Core": "[1.0.80, )",
+          "Cube.Core": "[1.0.81, )",
           "SuperLightLogger": "[1.0.10, )"
         }
       }
