@@ -174,15 +174,15 @@
       "cube.logging": {
         "type": "Project",
         "dependencies": {
-          "Cube.Core": "[1.0.82, )",
+          "Cube.Core": "[1.0.83, )",
           "SuperLightLogger": "[1.0.10, )"
         }
       },
       "cube.private.tests": {
         "type": "Project",
         "dependencies": {
-          "Cube.Core": "[1.0.82, )",
-          "Cube.Logging": "[1.0.82, )",
+          "Cube.Core": "[1.0.83, )",
+          "Cube.Logging": "[1.0.83, )",
           "NUnit": "[4.6.1, )"
         }
       }

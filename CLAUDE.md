@@ -171,9 +171,23 @@ COM Interop と P/Invoke は全面的に AOT 互換 API に移行済み:
 
 ## CI/CD
 
-GitHub Actions で `release/**` ブランチへの push 時に、7-zip.org から最新 7z.dll を取得 → ビルド → NuGet パッケージを自動公開（`.github/workflows/publish.yml`）。`main` ブランチには公開トリガーは設定されていない。
+GitHub Actions で `release/**` ブランチへの push 時に、7-zip.org から最新 7z.dll を取得 → ビルド → テスト → NuGet パッケージを自動公開（`.github/workflows/publish.yml`）。`main` ブランチには公開トリガーは設定されていない。
 
-**CI にテストゲートは未設定**（`Test` ステップはコメントアウトで退避中）。既存テストの一部が「SJIS エンコード ZIP のエントリ名をホストの ANSI コードページで解読する」前提になっており、非 ja-JP ロケールの runner では失敗する（`WithFilter` / `Extract("SampleComma.zip")` / `Extract("SampleKanji.zip")`。`ArchiveReaderTest.IgnoreCultureError` のコメントも同じ制約を認めている）。対象テストへ `ArchiveOption.CodePage = CodePage.Japanese` を明示指定してロケール非依存にしてから有効化する。**この状態でゲートを入れると全リリースが恒常的に停止する**。
+### テストのロケール非依存性
+
+CI の runner は **ja-JP ロケールではない**（OS の非 Unicode プログラム用コードページが CP932 ではない）。7-Zip 26.x は UTF-8 フラグ（bit11）の立っていない ZIP のエントリ名を自動検出しないため、**非 ASCII 名を含むアーカイブを扱うテストは `ArchiveOption.CodePage` を明示指定する**。指定を省くとホストのロケールで結果が変わり、ローカル（ja-JP）では通るのに CI で落ちる。
+
+実体のエンコーディングは各アーカイブの生バイト列から判定済み。
+
+| アーカイブ | bit11 | 生バイト列 | 指定 |
+|---|---|---|---|
+| `SampleComma.zip` / `SampleKanji.zip` / `SampleFilter.zip` / `SampleUnixSjis.zip` | なし | cp932 でのみデコード可 | `CodePage.Japanese` |
+| `SampleMac.zip` | なし | utf-8 でのみデコード可（NFD） | `CodePage.Utf8` |
+| `SampleUtf8.zip` | **あり** | — | 指定不要 |
+
+`ArchiveReaderTest.Test` は `TestCases` を `Extract` と共有しているため、引数を増やすときは**両メソッドのシグネチャを揃える**（片方だけだと `Too many arguments provided` で失敗する）。
+
+`Items_ExplicitCodePage_OverridesHostCodePage` が「正しい CodePage では期待名が得られ、誤った CodePage では得られない」ことを検証しており、デコードがホストのコードページではなく指定値に支配されている根拠になっている。`ArchiveReaderTest.IgnoreCultureError` は `EncryptionException` だけを非 ja-JP 環境で無視するヘルパーで、アサーション失敗は素通りするため**ロケール依存を隠す用途に使わない**。
 
 **本家 7-Zip のバイナリは Authenticode 署名されていない**（26.02 の GitHub リリース installer と同梱 `7z.dll` はいずれも `Get-AuthenticodeSignature` が `NotSigned` を返すことを実測確認）。そのため `Test-7zSignature` は「署名があれば厳密検証、無ければ警告して続行」とする。**ここを「未署名なら失敗」に変えるとリリースが全て止まる**。未署名版に対する改ざん対策は次の 2 つで担保している。
 

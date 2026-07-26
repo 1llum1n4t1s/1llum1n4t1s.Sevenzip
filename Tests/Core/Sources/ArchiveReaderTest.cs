@@ -48,14 +48,24 @@ internal class ArchiveReaderTest : FileFixture
     /// Tests the Save method with the specified archive.
     /// </summary>
     ///
+    /// <param name="filename">対象アーカイブ名。</param>
+    /// <param name="password">パスワード。不要な場合は空文字。</param>
+    /// <param name="codePage">
+    /// エントリ名のデコードに使うコードページ。
+    /// 既定の <see cref="CodePage.Oem"/> は「OS の非 Unicode プログラム用コードページに従う」を
+    /// 意味するため、UTF-8 フラグ (bit11) の立っていない非 ASCII 名を含むアーカイブでは
+    /// 実行環境のロケールによって結果が変わる。そのようなアーカイブは実体のエンコーディングを
+    /// 明示指定してロケール非依存にする (TestCases のコメント参照)。
+    /// </param>
+    ///
     /* --------------------------------------------------------------------- */
     [TestCaseSource(nameof(TestCases))]
-    public void Extract(string filename, string password) => IgnoreCultureError(() =>
+    public void Extract(string filename, string password, CodePage codePage = CodePage.Oem) => IgnoreCultureError(() =>
     {
         var src  = GetSource(filename);
         var dest = Get(nameof(Extract), filename);
 
-        using var archive = new ArchiveReader(src, password);
+        using var archive = new ArchiveReader(src, password, new() { CodePage = codePage });
         archive.Save(dest);
 
         foreach (var cmp in GetAnswer(filename))
@@ -112,11 +122,18 @@ internal class ArchiveReaderTest : FileFixture
     /// Tests the Test method with the specified archive in test mode.
     /// </summary>
     ///
+    /// <param name="filename">対象アーカイブ名。</param>
+    /// <param name="password">パスワード。不要な場合は空文字。</param>
+    /// <param name="codePage">
+    /// エントリ名のデコードに使うコードページ。<see cref="TestCases"/> を
+    /// <see cref="Extract"/> と共有しているため同じシグネチャを持つ。
+    /// </param>
+    ///
     /* --------------------------------------------------------------------- */
     [TestCaseSource(nameof(TestCases))]
-    public void Test(string filename, string password) => IgnoreCultureError(() => {
+    public void Test(string filename, string password, CodePage codePage = CodePage.Oem) => IgnoreCultureError(() => {
         var src = GetSource(filename);
-        using var archive = new ArchiveReader(src, password);
+        using var archive = new ArchiveReader(src, password, new() { CodePage = codePage });
         archive.Test();
     }, $"{filename}, {password}");
 
@@ -217,6 +234,57 @@ internal class ArchiveReaderTest : FileFixture
         reader.Save(dest);
     }
 
+    /* --------------------------------------------------------------------- */
+    ///
+    /// Items_ExplicitCodePage_OverridesHostCodePage
+    ///
+    /// <summary>
+    /// UTF-8 フラグ (bit11) の立っていないアーカイブについて、明示指定した
+    /// <see cref="CodePage"/> がエントリ名のデコードを支配していることを確認する。
+    /// </summary>
+    ///
+    /// <remarks>
+    /// <para>
+    /// これは「ロケール非依存になったこと」の機械的な根拠となる回帰テストである。
+    /// 正しい CodePage で期待名が得られ、かつ<b>誤った CodePage では得られない</b>ことを
+    /// 両方確認することで、デコードが OS の非 Unicode プログラム用コードページではなく
+    /// 指定値によって決まっていると言える (指定が無視されていれば、どちらの指定でも
+    /// ホストのコードページに従った同一の結果になるはずである)。
+    /// </para>
+    /// <para>
+    /// 各アーカイブの実体エンコーディングは生バイト列から判定した。
+    /// SampleComma.zip / SampleKanji.zip は cp932 でのみ、SampleMac.zip は utf-8 でのみ
+    /// デコード可能である。
+    /// </para>
+    /// </remarks>
+    ///
+    /* --------------------------------------------------------------------- */
+    [TestCase("SampleComma.zip", CodePage.Japanese, CodePage.Utf8,     "カンマ")]
+    [TestCase("SampleKanji.zip", CodePage.Japanese, CodePage.Utf8,     "似.txt")]
+    [TestCase("SampleMac.zip",   CodePage.Utf8,     CodePage.Japanese, "名称未設定フォルダ")]
+    public void Items_ExplicitCodePage_OverridesHostCodePage(
+        string filename, CodePage correct, CodePage wrong, string expected)
+    {
+        var src = GetSource(filename);
+
+        // 正しい CodePage では期待名が得られる（NFD 格納の SampleMac に備えて正規化して比較）
+        using (var reader = new ArchiveReader(src, "", new() { CodePage = correct }))
+        {
+            var names = reader.Items.Select(e => e.FullName.Normalize(NormalizationForm.FormC));
+            Assert.That(names.Any(e => e.Contains(expected)), Is.True,
+                $"{filename}: CodePage.{correct} で '{expected}' が得られること");
+        }
+
+        // 誤った CodePage では得られない = 指定が実際にデコードを制御している
+        using (var reader = new ArchiveReader(src, "", new() { CodePage = wrong }))
+        {
+            var names = reader.Items.Select(e => e.FullName.Normalize(NormalizationForm.FormC));
+            Assert.That(names.Any(e => e.Contains(expected)), Is.False,
+                $"{filename}: CodePage.{wrong} では '{expected}' が得られないこと " +
+                "(得られる場合は CodePage 指定が無視されており、ホストのロケール依存が残る)");
+        }
+    }
+
     #endregion
 
     #region TestCases
@@ -239,10 +307,17 @@ internal class ArchiveReaderTest : FileFixture
             yield return new TestCaseData("SampleReadOnly.zip", "");
             yield return new TestCaseData("SampleVolume.zip", "");
             yield return new TestCaseData("SampleVolume.rar.001", "");
-            yield return new TestCaseData("SampleComma.zip", "");
-            yield return new TestCaseData("SampleMac.zip", "");
+            // 以下 3 件は UTF-8 フラグ (bit11) が立っていない非 ASCII 名を含むため、
+            // CodePage を明示しないと OS の非 Unicode プログラム用コードページ依存になる
+            // (ja-JP では通るが en-US runner では文字化けして期待パスが見つからない)。
+            // 実体のエンコーディングは各アーカイブの生バイト列から判定した:
+            //   SampleComma.zip / SampleKanji.zip … cp932 でのみデコード可 → Japanese
+            //   SampleMac.zip                     … utf-8 でのみデコード可 (NFD) → Utf8
+            yield return new TestCaseData("SampleComma.zip", "", CodePage.Japanese);
+            yield return new TestCaseData("SampleMac.zip", "", CodePage.Utf8);
+            // SampleUtf8.zip は非 ASCII エントリに bit11 が立っているので指定不要。
             yield return new TestCaseData("SampleUtf8.zip", "");
-            yield return new TestCaseData("SampleKanji.zip", "");
+            yield return new TestCaseData("SampleKanji.zip", "", CodePage.Japanese);
             // SampleUnixSjis.zip は CodePage 指定が必須のため Extract_SampleUnixSjis で個別に扱う。
             yield return new TestCaseData("Sample 2018.02.13.zip", "");
             yield return new TestCaseData("Sample..DoubleDot.zip", "");

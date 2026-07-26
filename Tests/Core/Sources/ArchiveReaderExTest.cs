@@ -42,6 +42,13 @@ internal class ArchiveReaderExTest : FileFixture
     /// Tests the Extract method with filters.
     /// </summary>
     ///
+    /// <remarks>
+    /// SampleFilter.zip は UTF-8 フラグ (bit11) が立っていない SJIS (cp932) エンコードの
+    /// エントリ名を持つ (生バイト列が cp932 でのみデコード可能なことを確認済み)。
+    /// CodePage を明示しないと OS の非 Unicode プログラム用コードページ依存になり、
+    /// 非 ja-JP 環境では「フィルタリング テスト用」が文字化けして検証が失敗する。
+    /// </remarks>
+    ///
     /* --------------------------------------------------------------------- */
     [Test]
     public void WithFilter()
@@ -49,7 +56,11 @@ internal class ArchiveReaderExTest : FileFixture
         var src   = GetSource("SampleFilter.zip");
         var dest  = Get(nameof(WithFilter));
         var files = new[] { ".DS_Store", "Thumbs.db", "__MACOSX", "desktop.ini" };
-        var opts  = new ArchiveOption { Filter = Filter.From(files) };
+        var opts  = new ArchiveOption
+        {
+            Filter   = Filter.From(files),
+            CodePage = CodePage.Japanese,
+        };
 
         using (var archive = new ArchiveReader(src, opts)) archive.Save(dest);
 
