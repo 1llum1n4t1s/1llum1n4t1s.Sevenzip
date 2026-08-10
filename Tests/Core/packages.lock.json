@@ -157,8 +157,8 @@
       },
       "SuperLightLogger": {
         "type": "Transitive",
-        "resolved": "1.0.11",
-        "contentHash": "e5h+GVkyFH7DBaxsXnzolVGRrShAFJa1UjOdO4HuylJDnrNYe7DjJKcLY6V9lp1JRk2hvkhYEegqcr5RBUaT3A==",
+        "resolved": "1.0.12",
+        "contentHash": "f7h7z7tVUipTKYPQoZL5aMNXEqfEvqKd1mzv67cIvFj2lzsoMvIohHVSe67xQrFmPd6F+mNTPDdsW6bX+lUtqg==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.10",
           "Microsoft.Extensions.Logging": "10.0.10",
@@ -174,15 +174,15 @@
       "cube.logging": {
         "type": "Project",
         "dependencies": {
-          "Cube.Core": "[1.0.84, )",
-          "SuperLightLogger": "[1.0.11, )"
+          "Cube.Core": "[1.0.85, )",
+          "SuperLightLogger": "[1.0.12, )"
         }
       },
       "cube.private.tests": {
         "type": "Project",
         "dependencies": {
-          "Cube.Core": "[1.0.84, )",
-          "Cube.Logging": "[1.0.84, )",
+          "Cube.Core": "[1.0.85, )",
+          "Cube.Logging": "[1.0.85, )",
           "NUnit": "[4.6.1, )"
         }
       }
