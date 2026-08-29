@@ -32,7 +32,7 @@
 1. 利用者がパスまたは `Stream` から `ArchiveReader` を構築します。
 2. `SevenZipLibrary.Acquire()` が native library の lease を取得し、形式に対応する `IInArchive` を生成します。
 3. open callback が入力、パスワード、文字コードを 7-Zip へ提供し、reader がエントリ情報を `ArchiveEntity` として公開します。
-4. `Save` または `Extract` は対象 index を昇順かつ重複なしへ正規化し、`ExtractCallback` を通して出力先ファイルまたは指定された Stream へ書き込みます。
+4. `Save` または `Extract` は対象 index を昇順かつ重複なしへ正規化し、`ExtractCallback` を通して出力先ファイルまたは指定された Stream へ書き込みます。solid 書庫では選択対象より前の entry にも skip callback が来るため、callback は列挙位置ではなく archive index から対象を直接解決します。
 5. callback が filter、パス安全性、進捗、per-file イベント、属性・時刻の確定を担当します。
 6. dispose 時に COM object、入力 Stream の所有権、native library lease を解放します。
 
@@ -63,7 +63,8 @@
 - callback 内の失敗は共通の exception stack へ保存します。stack が空の場合だけ純粋な利用者キャンセルとして扱い、I/O 失敗を `OperationCanceledException` に変換しません。
 - 圧縮進捗の completed value は書庫全体の累積値です。並行処理による後退値を再加算せず、単調な最大値として採用し、total を上限にします。
 - `UpdateCallback` が開いた入力 Stream は callback の dispose まで保持します。これは multi-thread 圧縮時の COM 違反を防ぐ一方、処理中の write lock とメモリ使用量が対象ファイル数に比例するトレードオフです。
-- 完全排他ファイルの一時コピーと `SkipInaccessibleFiles` は `Add` 時点のアクセス不能を扱います。追加後に新しく取得された lock は通常の保存失敗として通知します。
+- 完全排他ファイルの一時コピーと `SkipInaccessibleFiles` は `Add` 時点のアクセス不能または再解析ポイントを扱います。追加後に新しく取得された lock は通常の保存失敗として通知します。
+- 再帰的な追加・copy・move は再解析ポイントを追跡せず、delete はリンク自体だけを削除します。展開先では destination 配下の既存パス要素を検査し、再解析ポイント経由の書き込みを拒否します。
 - 展開先は書庫内パスをそのまま信頼せず、destination 外へ書き出さないことを優先します。filter 比較は locale に依存しない ordinal 規則を使います。
 - ZIP の文字コードは host locale に依存させず、必要な入力では `ArchiveOption.CodePage` または `Encoding` を明示します。
 - `AtomicSave` と分割書き出しなど、同時に成立しない option は native 呼び出し前に `Validate` で拒否します。
@@ -106,9 +107,9 @@ SFX module の同梱と executable 連結は archive library の責務から外�
 公開 API の統合テストに加え、次の設計契約を個別に回帰検証します。
 
 - path / Stream の圧縮・展開・更新と所有権
-- 暗号化、文字コード、NFC/NFD、Zip Slip 防止
+- 暗号化、文字コード、NFC/NFD、Zip Slip・再解析ポイント越境防止
 - atomic save、backup、rollback、分割書き出し
 - dispose 後の呼び出し、constructor 失敗時、finalizer safety
 - lock 中ファイルの一時コピーと skip 通知
-- callback の並行呼び出しと、進捗値の単調最大・上限制御
+- callback の並行呼び出し、solid 書庫の部分展開、進捗値の単調最大・上限制御
 - x64 / arm64 の RID、native asset、NuGet package layout

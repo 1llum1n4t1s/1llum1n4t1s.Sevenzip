@@ -104,13 +104,15 @@ Sources/
 
 ロック判定は `IsFileLocked()` で HResult（`ERROR_SHARING_VIOLATION = 0x80070020`、`ERROR_LOCK_VIOLATION = 0x80070021`）を確認。
 
-#### 完全排他ファイルの skip 続行 (`CompressionOption.SkipInaccessibleFiles`)
+#### アクセス不能・再解析ポイントの skip 続行 (`CompressionOption.SkipInaccessibleFiles`)
 
 `FileShare.None` で他プロセスが排他保持しているファイル (Visual Studio の `.vsidx` 等) は、自動コピー機構（`FileShare.ReadWrite | FileShare.Delete` で再試行）でも開けず、既定では `AddItem()` の外側 catch が `AccessException` を投げて圧縮全体が失敗する。
 
-呼び出し側 (GUI アプリ等) で「1 ファイルアクセス不能で全体を死なせない」が要件のとき、`CompressionOption.SkipInaccessibleFiles = true` を渡すと:
+ジャンクションやシンボリックリンク等の再解析ポイントは、循環や追加元ツリー外への越境を防ぐためリンク先を追跡しない。`ArchiveWriter.Add()` と `Io.Copy` / `Io.Move` は拒否し、`Io.Delete` はリンク自体だけを削除する。展開時は destination 配下の既存パス要素に再解析ポイントがあれば書き込み前に拒否する。
 
-1. `AddItem()` の outer catch で `_items` に追加せずスキップする（`AccessException` を投げない）
+呼び出し側 (GUI アプリ等) で「1 アイテムのアクセス不能や再解析ポイントで全体を死なせない」が要件のとき、`CompressionOption.SkipInaccessibleFiles = true` を渡すと:
+
+1. `AddItem()` の outer catch で `_items` に追加せず、ディレクトリなら子孫列挙も止める（`AccessException` を投げない）
 2. `ArchiveWriter.FileSkipped` イベント（引数: `FileSkippedEventArgs { FullName, RelativeName, Reason }`）が発火する
 3. `Logger.Warn` にスキップ事実が記録される
 
