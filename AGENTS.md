@@ -82,7 +82,7 @@ Sources/
     │   └── CallbackBase.cs     # 共通進捗報告 + FireFileEvent ヘルパー
     ├── Options/             # CompressionOptionSetter 系 (既知キー + CustomParameters merge)
     ├── UpdatePlan.cs        # 更新プラン (Keep / Replace / Add / Rename / Remove)
-    ├── FileSystemHelper.cs  # IsFileLocked 共通化
+    ├── FileSystemHelper.cs  # ロック判定 + 展開先パス検証・ハンドル固定
     └── SevenZipLibrary.cs   # 7z.dll の参照カウント付き singleton + CreateObject 関数ポインタ
 ```
 
@@ -108,7 +108,7 @@ Sources/
 
 `FileShare.None` で他プロセスが排他保持しているファイル (Visual Studio の `.vsidx` 等) は、自動コピー機構（`FileShare.ReadWrite | FileShare.Delete` で再試行）でも開けず、既定では `AddItem()` の外側 catch が `AccessException` を投げて圧縮全体が失敗する。
 
-ジャンクションやシンボリックリンク等の再解析ポイントは、循環や追加元ツリー外への越境を防ぐためリンク先を追跡しない。`ArchiveWriter.Add()` と `Io.Copy` / `Io.Move` は拒否し、`Io.Delete` はリンク自体だけを削除する。展開時は destination 配下の既存パス要素に再解析ポイントがあれば書き込み前に拒否する。
+ジャンクションやシンボリックリンク等の再解析ポイントは、循環や追加元ツリー外への越境を防ぐためリンク先を追跡しない。`ArchiveWriter.Add()` と `Io.Copy` / `Io.Move` は拒否し、`Io.Delete` はリンク自体だけを削除する。展開時は destination から対象の親までを `FILE_FLAG_OPEN_REPARSE_POINT` で開き、`FILE_SHARE_DELETE` を許可しないハンドルをファイル書き込みまたは属性設定の完了まで保持する。既存要素の検査だけで済ませず、検査後の junction / symlink 差し替えも拒否する。
 
 呼び出し側 (GUI アプリ等) で「1 アイテムのアクセス不能や再解析ポイントで全体を死なせない」が要件のとき、`CompressionOption.SkipInaccessibleFiles = true` を渡すと:
 
@@ -158,10 +158,11 @@ COM Interop と P/Invoke は全面的に AOT 互換 API に移行済み:
 7z.dll のマルチスレッド圧縮（`CompressionOption.ThreadCount > 1`）は `GetStream` / `SetCompleted` / `SetOperationResult` を**並行に呼ぶ**。`UpdateCallback` の共有可変状態はロックで保護する:
 
 - `_completedLock` — `SetCompleted` の `_maxCompletedBytes` / `Bytes`
-- `_stateLock` — `_streams`（開いたストリームのリスト）/ `_tempDir`（ロック中ファイルの一時コピー先）/ `_index`（処理中エントリ）
+- `_stateLock` — `_streams`（開いたストリームのリスト）/ `_tempDir`（ロック中ファイルの一時コピー先）
+- `_currentIndex` — callback worker ごとの `ThreadLocal<int>`。`GetStream` と対応する `SetOperationResult` のエントリを他 worker と混同しない
 - `CallbackBase.PushException()` — `Exceptions` スタックへの積み込み。**`Exceptions.Push` を直接呼ばない**
 
-`_index` は上書きされうるため、自分の解決済みインデックスを持つ呼び出し元は `Current(int)` を使う（引数なしの `Current()` はロック経由で現在値を読む）。
+自分の解決済みインデックスを持つ呼び出し元は `Current(int)` を使い、引数なしの `Current()` は現在 callback worker の `_currentIndex` を読む。`SetOperationResult` は処理開始時に index と entity をローカルへ確定し、イベント・ログ・進捗で同じ組を使う。
 
 失敗を `Exceptions` へ積むのは必須である。`ThrowIfError` は `Exceptions` が空なら「純粋なユーザーキャンセル」と判定して `OperationCanceledException` を投げるため、積み忘れると実際の I/O 失敗が「利用者が中断した」に化ける。
 

@@ -18,6 +18,7 @@
 | `SevenZipLibrary` | `7z.dll` の探索・ロード、`CreateObject` 呼び出し、COM wrapper と DLL lifetime の共有管理 | unmanaged handle と managed object の境界 |
 | callbacks / interfaces | 7-Zip からの COM 呼び出しを Stream、ファイル I/O、進捗、イベント、例外へ変換 | `[GeneratedComInterface]` / `[GeneratedComClass]` による AOT 対応境界 |
 | `UpdatePlan` | 既存エントリと追加・置換・改名・削除要求を、出力エントリ列へ統合 | 更新方針と COM callback の分離 |
+| `FileSystemHelper` | 展開先の containment 検証、再解析ポイント拒否、親ディレクトリと出力ファイルのハンドル固定 | 書庫内パスと Windows filesystem namespace の境界 |
 | `CompressionOption` / `ArchiveOption` | 形式別の圧縮、暗号化、文字コード、filter、保存耐性などを表現・検証 | 公開設定と 7-Zip property の境界 |
 | `Libraries/Cube.Core` | `Io` / `IoController`、dispose 基盤、query、進捗型などの共通機能 | OS ファイルシステムを差し替え可能な抽象へ変換 |
 | `Libraries/Cube.Logging` | SuperLightLogger を `Cube.ILoggerSource` へ接続 | テストハーネス専用で、配布パッケージの公開依存にはしない |
@@ -33,7 +34,7 @@
 2. `SevenZipLibrary.Acquire()` が native library の lease を取得し、形式に対応する `IInArchive` を生成します。
 3. open callback が入力、パスワード、文字コードを 7-Zip へ提供し、reader がエントリ情報を `ArchiveEntity` として公開します。
 4. `Save` または `Extract` は対象 index を昇順かつ重複なしへ正規化し、`ExtractCallback` を通して出力先ファイルまたは指定された Stream へ書き込みます。solid 書庫では選択対象より前の entry にも skip callback が来るため、callback は列挙位置ではなく archive index から対象を直接解決します。
-5. callback が filter、パス安全性、進捗、per-file イベント、属性・時刻の確定を担当します。
+5. callback が filter、パス安全性、進捗、per-file イベント、属性・時刻の確定を担当します。filesystem 出力では destination から親までを再解析ポイント非追跡で開き、削除・改名を許可しないハンドルを出力 Stream または属性設定の完了まで保持します。
 6. dispose 時に COM object、入力 Stream の所有権、native library lease を解放します。
 
 ### 新規書庫の作成
@@ -59,13 +60,14 @@
 - x64 / arm64 以外のプロセスでは、native library を誤ってロードせず `PlatformNotSupportedException` で fail-fast します。
 - COM object の lifetime は `StrategyBasedComWrappers` と参照カウント付き lease で明示管理し、DLL unload 後に wrapper や finalizer が native codeへ触れない順序を守ります。
 - finalizer 経路はログを含む全処理を例外境界内で実行し、未処理例外をプロセスへ漏らしません。
-- 7-Zip の multi-thread 圧縮は callback を並行呼び出しするため、進捗状態、入力 Stream 一覧、一時ディレクトリ、現在 entry はそれぞれの lock で保護します。
+- 7-Zip の multi-thread 圧縮は callback を並行呼び出しするため、進捗状態、入力 Stream 一覧、一時ディレクトリはそれぞれの lock で保護します。現在 entry は callback worker ごとの `ThreadLocal<int>` に保持し、`GetStream` と対応する `SetOperationResult` のイベント・ログを同じ entry に結び付けます。
 - callback 内の失敗は共通の exception stack へ保存します。stack が空の場合だけ純粋な利用者キャンセルとして扱い、I/O 失敗を `OperationCanceledException` に変換しません。
 - 圧縮進捗の completed value は書庫全体の累積値です。並行処理による後退値を再加算せず、単調な最大値として採用し、total を上限にします。
 - `UpdateCallback` が開いた入力 Stream は callback の dispose まで保持します。これは multi-thread 圧縮時の COM 違反を防ぐ一方、処理中の write lock とメモリ使用量が対象ファイル数に比例するトレードオフです。
 - 完全排他ファイルの一時コピーと `SkipInaccessibleFiles` は `Add` 時点のアクセス不能または再解析ポイントを扱います。追加後に新しく取得された lock は通常の保存失敗として通知します。
-- 再帰的な追加・copy・move は再解析ポイントを追跡せず、delete はリンク自体だけを削除します。展開先では destination 配下の既存パス要素を検査し、再解析ポイント経由の書き込みを拒否します。
+- 再帰的な追加・copy・move は再解析ポイントを追跡せず、delete はリンク自体だけを削除します。展開先では destination から対象までを `FILE_FLAG_OPEN_REPARSE_POINT` で開き、親ハンドルでは `FILE_SHARE_DELETE` を許可しません。ハンドルを操作完了まで保持することで、検査後の junction / symlink 差し替えを含む再解析ポイント経由の書き込みを拒否します。
 - 展開先は書庫内パスをそのまま信頼せず、destination 外へ書き出さないことを優先します。filter 比較は locale に依存しない ordinal 規則を使います。
+- 更新時の rename は null / 空文字だけを明示的な削除要求として扱い、非空入力が安全化後に空となる場合は `ArgumentException` で拒否します。更新元の open 失敗は reader と同様に callback 例外、`S_FALSE`、負の HRESULT を区別します。
 - ZIP の文字コードは host locale に依存させず、必要な入力では `ArchiveOption.CodePage` または `Encoding` を明示します。
 - `AtomicSave` と分割書き出しなど、同時に成立しない option は native 呼び出し前に `Validate` で拒否します。
 - `packages.lock.json` は通常 restore で生成し、CI と公開前検証では `--locked-mode` で manifest と依存 graph の一致を要求します。
@@ -107,9 +109,9 @@ SFX module の同梱と executable 連結は archive library の責務から外�
 公開 API の統合テストに加え、次の設計契約を個別に回帰検証します。
 
 - path / Stream の圧縮・展開・更新と所有権
-- 暗号化、文字コード、NFC/NFD、Zip Slip・再解析ポイント越境防止
+- 暗号化、文字コード、NFC/NFD、Zip Slip・再解析ポイント越境防止と差し替え競合
 - atomic save、backup、rollback、分割書き出し
 - dispose 後の呼び出し、constructor 失敗時、finalizer safety
 - lock 中ファイルの一時コピーと skip 通知
-- callback の並行呼び出し、solid 書庫の部分展開、進捗値の単調最大・上限制御
+- callback の並行呼び出しと worker ごとの entry 対応、solid 書庫の部分展開、進捗値の単調最大・上限制御
 - x64 / arm64 の RID、native asset、NuGet package layout
