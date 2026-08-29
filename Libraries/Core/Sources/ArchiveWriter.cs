@@ -131,10 +131,10 @@ public sealed class ArchiveWriter : DisposableBase
 
     /// <summary>
     /// <see cref="CompressionOption.SkipInaccessibleFiles"/> が true のとき、
-    /// 読み取り不能ファイルをスキップした際に発火するイベント。
+    /// 読み取り不能または安全に追跡できないアイテムをスキップした際に発火するイベント。
     /// </summary>
     /// <remarks>
-    /// イベント引数 (<see cref="FileSkippedEventArgs"/>) には対象ファイルパス・相対パス・
+    /// イベント引数 (<see cref="FileSkippedEventArgs"/>) には対象アイテムのパス・相対パス・
     /// 原因例外が入る。呼び出し側はログ出力や UI 通知に利用できる。
     /// </remarks>
     public event EventHandler<FileSkippedEventArgs> FileSkipped;
@@ -1228,7 +1228,7 @@ public sealed class ArchiveWriter : DisposableBase
         // フィルタ関数が true を返した場合はこのアイテムとその子孫をスキップする
         if (Options.Filter?.Invoke(src) ?? false) return;
 
-        AddItem(src);
+        if (!AddItem(src)) return;
         // ファイルの場合は再帰不要
         if (!src.IsDirectory) return;
 
@@ -1317,10 +1317,16 @@ public sealed class ArchiveWriter : DisposableBase
     /// <summary>
     /// 指定したファイルまたはディレクトリをアイテムリストに追加する。
     /// </summary>
-    private void AddItem(RawEntity src)
+    private bool AddItem(RawEntity src)
     {
         try
         {
+            // ジャンクションやシンボリックリンクを辿ると、循環したり追加元ツリー外の
+            // ファイルを意図せず取り込んだりするため、明示的な追跡オプションが無い
+            // 現状では拒否する。
+            if ((src.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new IOException($"Refusing to archive reparse point: '{src.FullName}'.");
+
             if (!src.IsDirectory)
             {
                 // ファイルが読み取り可能かどうかを事前に確認する（フェイルファスト）
@@ -1339,18 +1345,20 @@ public sealed class ArchiveWriter : DisposableBase
                 }
             }
             _items.Add(src);
+            return true;
         }
         catch (Exception e)
         {
             // アクセスエラーをログに記録してラップした例外をスローする
             Logger.Debug($"Path:{src.FullName.Quote()}, Error:{e.Message} ({e.GetType().Name})");
 
-            // SkipInaccessibleFiles=true: アーカイブ全体を死なせず当該ファイルをスキップ。
+            // SkipInaccessibleFiles=true: アーカイブ全体を死なせず当該アイテムをスキップ。
             // FileShare.None で他プロセスが排他保持しているファイル (Visual Studio の .vsidx 等) を
-            // 想定。_items に追加しないので Save 時の GetStream にも到達しない。
+            // 想定。再解析ポイントも追跡せず同じ通知経路で除外する。_items に追加しないので
+            // Save 時の GetStream にも到達せず、ディレクトリの場合は呼び出し元が子孫列挙を止める。
             if (Options?.SkipInaccessibleFiles == true)
             {
-                Logger.Warn($"Skipped inaccessible file: Path:{src.FullName.Quote()}, " +
+                Logger.Warn($"Skipped inaccessible or unsafe item: Path:{src.FullName.Quote()}, " +
                             $"Reason:{e.Message} ({e.GetType().Name})");
                 FileSkipped?.Invoke(this, new FileSkippedEventArgs
                 {
@@ -1358,7 +1366,7 @@ public sealed class ArchiveWriter : DisposableBase
                     RelativeName = src.RelativeName,
                     Reason       = e,
                 });
-                return;
+                return false;
             }
 
             throw new AccessException(src.RawName, e);

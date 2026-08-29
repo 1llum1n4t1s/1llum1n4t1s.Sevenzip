@@ -262,14 +262,22 @@ public static class Io
     /* --------------------------------------------------------------------- */
     public static void Delete(string path)
     {
-        if (IsDirectory(path))
+        if (!Exists(path)) return;
+
+        var entity = GetEntity(path);
+        if ((entity.Attributes & FileAttributes.ReparsePoint) != 0)
+        {
+            // 再解析ポイントの子を列挙するとリンク先を削除してしまうため、リンク自体だけを削除する。
+            _controller.Delete(path);
+        }
+        else if (entity.IsDirectory)
         {
             foreach (var f in GetFiles(path)) Delete(f);
             foreach (var d in GetDirectories(path)) Delete(d);
             SetAttributes(path, FileAttributes.Normal | FileAttributes.Directory);
             _controller.Delete(path);
         }
-        else if (Exists(path))
+        else
         {
             SetAttributes(path, FileAttributes.Normal);
             _controller.Delete(path);
@@ -568,6 +576,7 @@ public static class Io
     /* --------------------------------------------------------------------- */
     private static void CopyRecursive(string src, string dest, bool overwrite)
     {
+        ThrowIfReparsePoint(src, "copy");
         if (!Exists(dest)) CreateDirectory(dest, new(src));
         foreach (var e in GetFiles(src)) CopyOne(e, Combine(dest, GetFileName(e)), overwrite);
         foreach (var e in GetDirectories(src)) CopyRecursive(e, Combine(dest, GetFileName(e)), overwrite);
@@ -582,8 +591,11 @@ public static class Io
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    private static void CopyOne(string src, string dest, bool overwrite) =>
+    private static void CopyOne(string src, string dest, bool overwrite)
+    {
+        ThrowIfReparsePoint(src, "copy");
         MoveOrCopy(src, dest, (s, d) => _controller.Copy(s, d, overwrite));
+    }
 
     /* --------------------------------------------------------------------- */
     ///
@@ -597,6 +609,7 @@ public static class Io
     /* --------------------------------------------------------------------- */
     private static void MoveRecursive(string src, string dest, bool overwrite)
     {
+        ThrowIfReparsePoint(src, "move");
         if (!Exists(dest)) CreateDirectory(dest, new(src));
         foreach (var e in GetFiles(src)) MoveOne(e, Combine(dest, GetFileName(e)), overwrite);
         foreach (var e in GetDirectories(src)) MoveRecursive(e, Combine(dest, GetFileName(e)), overwrite);
@@ -614,6 +627,8 @@ public static class Io
     /* --------------------------------------------------------------------- */
     private static void MoveOne(string src, string dest, bool overwrite)
     {
+        ThrowIfReparsePoint(src, "move");
+
         static void move(string s, string d) => MoveOrCopy(s, d, _controller.Move);
 
         if (!Exists(dest)) { move(src, dest); return; }
@@ -685,6 +700,21 @@ public static class Io
         }
 
         if (Exists(dest)) Logger.Try(() => SetAttributes(dest, e.Attributes));
+    }
+
+    /// <summary>
+    /// 現在の I/O コントローラーを介してファイルシステム情報を取得する。
+    /// </summary>
+    private static Entity GetEntity(string path) => new(_controller.GetEntitySource(path), true);
+
+    /// <summary>
+    /// 再帰操作が再解析ポイントのリンク先へ越境することを防ぐ。
+    /// </summary>
+    private static void ThrowIfReparsePoint(string path, string operation)
+    {
+        var entity = GetEntity(path);
+        if ((entity.Attributes & FileAttributes.ReparsePoint) != 0)
+            throw new IOException($"Refusing to {operation} reparse point: '{entity.FullName}'.");
     }
 
     #endregion

@@ -18,6 +18,8 @@
 /* ------------------------------------------------------------------------- */
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
@@ -152,17 +154,68 @@ internal partial class OpenCallback : PasswordCallback, IArchiveOpenCallback, IA
     /* --------------------------------------------------------------------- */
     public int GetStream(string name, out IInStream stream)
     {
-        stream = null;
-
-        var src = Io.Exists(name) ? name : Combine(Io.GetDirectoryName(Source), name);
-        if (Io.Exists(src))
+        var dest = default(IInStream);
+        try
         {
-            var dest = new ArchiveStreamReader(Io.Open(src));
-            Streams.Add(dest);
+            return Run(() =>
+            {
+                var src = ResolveVolumePath(name);
+                if (string.IsNullOrEmpty(src)) return 1; // S_FALSE
+                // 欠落ボリュームは従来どおり null stream + S_OK で通知し、7z.dll に
+                // 開けた範囲の書庫情報を保持させる。安全でないパスだけを S_FALSE で拒否する。
+                if (!Io.Exists(src)) return (int)SevenZipCode.Success;
+
+                var reader = new ArchiveStreamReader(Io.Open(src));
+                Streams.Add(reader);
+                dest = reader;
+                return (int)SevenZipCode.Success;
+            }, ProgressState.Start, (Entity)null);
+        }
+        finally
+        {
             stream = dest;
         }
+    }
 
-        return (int)SevenZipCode.Success;
+    #endregion
+
+    #region Implementations
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// ResolveVolumePath
+    ///
+    /// <summary>
+    /// Resolves a safe volume path relative to the source archive.
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    private string ResolveVolumePath(string name)
+    {
+        if (string.IsNullOrEmpty(Source) || string.IsNullOrEmpty(name)) return null;
+
+        var normalized = name.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+        var source = Path.GetFullPath(Source);
+        var root = Path.GetDirectoryName(source);
+        if (string.IsNullOrEmpty(root)) return null;
+
+        // 7z.dll は GetProperty(kpidName) で渡した絶対 Source を基に、次のボリュームも
+        // 絶対パスで要求する。絶対パス自体は許可するが、Source と同じディレクトリ配下へ拘束する。
+        if (!Path.IsPathRooted(normalized) && !IsSafeRelativePath(normalized)) return null;
+
+        var candidate = Path.GetFullPath(Path.IsPathRooted(normalized) ?
+            normalized : Path.Combine(root, normalized));
+        var relative = Path.GetRelativePath(root, candidate);
+        return IsSafeRelativePath(relative) ? candidate : null;
+
+        static bool IsSafeRelativePath(string path)
+        {
+            if (string.IsNullOrEmpty(path) || Path.IsPathRooted(path)) return false;
+            var parts = path.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+            var invalid = Path.GetInvalidFileNameChars();
+            return parts.Length > 0 && parts.All(e =>
+                e is not "." and not ".." && e.IndexOfAny(invalid) < 0);
+        }
     }
 
     #endregion

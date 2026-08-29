@@ -170,9 +170,11 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
     /// <param name="mode">操作モード（Extract / Test / Skip）。</param>
     public int PrepareOperation(AskMode mode)
     {
-        _mode = mode;
+        // Filter は 7z.dll から見ると Extract のままだが、コールバック内部では Skip として
+        // 扱い、開始・終了イベントと SetOperationResult 側の二重カウントを抑止する。
+        _mode = _skipCurrent ? AskMode.Skip : mode;
         // Skip の場合は進捗報告しない（カウントにも含めない）
-        if (mode == AskMode.Skip) return (int)SevenZipCode.Success;
+        if (_mode == AskMode.Skip) return (int)SevenZipCode.Success;
 
         // FileExtracting イベントを発火する（Extract / Test モードのみ）
         var cancelled = FireFileEvent(OnFileStarted, Current(), Current()?.Index ?? -1);
@@ -189,9 +191,9 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
     {
         if (code != SevenZipCode.Success) Logger.Warn($"[{code}] Index:{Current()?.Index ?? -1}, Name:{Current()?.RawName ?? ""}");
 
-        // _iterator が無効な状態で SetOperationResult が呼ばれるケース（破損アーカイブで
-        // 7z.dll が GetStream をスキップしたとき等）に備え、以降の Finalize / イベント発火をガードする
-        var iteratorValid = _iterator.Valid;
+        // GetStream が対象を解決できないまま SetOperationResult が呼ばれるケースに備え、
+        // 以降の Finalize / イベント発火をガードする。
+        var current = Current();
 
         // WrongPassword または PasswordTimes>0 時の DataError は、誤パスワードが
         // PasswordQuery._cache に永続して UI 再試行を無視する問題を防ぐため、cache をクリアする。
@@ -208,18 +210,22 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
         // パスワード試行済みの DataError は WrongPassword として扱う
         if (code == SevenZipCode.DataError && PasswordTimes > 0) return (int)SevenZipCode.WrongPassword;
         // Skip モードの場合はエラーコードを無視して Success を返す
-        if (_mode == AskMode.Skip) return (int)SevenZipCode.Success;
+        if (_mode == AskMode.Skip)
+        {
+            _skipCurrent = false;
+            return (int)SevenZipCode.Success;
+        }
 
         try
         {
-            // Extract モードの場合、ストリームを閉じてファイル属性を設定する (iterator が valid のときのみ)
-            if (_mode == AskMode.Extract && iteratorValid) Finalize(_iterator.Current);
+            // Extract モードの場合、ストリームを閉じてファイル属性を設定する。
+            if (_mode == AskMode.Extract && current is not null) Finalize(current);
             Count++;
 
-            // FileExtracted イベントを発火する（Extract モードのみ、成功・失敗問わず / iterator valid 時のみ）
-            if (_mode == AskMode.Extract && iteratorValid)
+            // FileExtracted イベントを発火する（Extract モードのみ、成功・失敗問わず）。
+            if (_mode == AskMode.Extract && current is not null)
             {
-                var cancelled = FireFileEvent(OnFileFinished, _iterator.Current, _iterator.Current?.Index ?? -1);
+                var cancelled = FireFileEvent(OnFileFinished, current, current.Index);
                 if (cancelled) return (int)SevenZipCode.Cancel;
             }
 
@@ -261,16 +267,14 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
     /// </summary>
     private ArchiveStreamWriter NewStream(uint index, AskMode mode)
     {
-        // イテレータを進めて対象インデックスのエントリを見つける
-        while (_iterator.MoveNext())
-        {
-            if (_iterator.Current.Index == index) break;
-        }
+        // ソリッド書庫では、要求対象より前の同一ブロック内エントリにも kSkip で
+        // GetStream が呼ばれる。選択対象だけの前進イテレータをここで進めると、最初の
+        // kSkip で対象を消費してしまうため、アーカイブ index から直接解決する。
+        var e = _iterator.Get(index);
+        _current = e;
+        _skipCurrent = false;
 
-        // 対象インデックスが見つからない場合、または Extract モードでない場合は null を返す
-        if (!_iterator.Valid || mode != AskMode.Extract) return null;
-
-        var e = _iterator.Current;
+        if (mode != AskMode.Extract) return null;
 
         // StreamOutputs に一致するエントリは外部 Stream へ直接書き込む
         if (StreamOutputs is not null && StreamOutputs.TryGetValue(e.Index, out var external) && external is not null)
@@ -287,6 +291,7 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
             if (Filter?.Invoke(e) ?? false)
             {
                 // フィルタに一致したアイテムはスキップする
+                _skipCurrent = true;
                 Skip(e);
             }
             else if (e.IsDirectory)
@@ -300,7 +305,8 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
                 if (!Destination.HasValue()) return null;
 
                 // ファイルの場合は書き込みストリームを生成して辞書に登録する
-                var stream = Io.Create(Combine(Destination, e.FullName));
+                var path   = FileSystemHelper.GetExtractionPath(Destination, e.FullName);
+                var stream = Io.Create(path);
                 var dest   = new ArchiveStreamWriter(stream);
                 _streams.Add(e.Index, dest);
                 return dest;
@@ -368,19 +374,23 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
     /// <summary>
     /// 現在処理中のアーカイブエントリを返す。
     /// </summary>
-    private ArchiveEntity Current() => _iterator.Valid ? _iterator.Current : null;
+    private ArchiveEntity Current() => _current;
 
     #endregion
 
     #region Fields
     // 展開対象アイテムのイテレータ
     private readonly ArchiveEnumerator _iterator;
+    // 直近の GetStream で解決したアーカイブエントリ
+    private ArchiveEntity _current;
     // インデックス → 書き込みストリームのマップ（Finalize まで保持する）
     private readonly Dictionary<int, ArchiveStreamWriter> _streams = new();
     // 外部 Stream 出力対象となったエントリのインデックス（属性設定スキップ用）
     private readonly HashSet<int> _streamOutputIndices = new();
     // 現在の操作モード（Extract / Test / Skip）
     private AskMode _mode = AskMode.Extract;
+    // 現在のエントリを Filter により内部的にスキップしたかどうか
+    private bool _skipCurrent;
     // 複数回 Extract を呼んだ場合のバイトオフセット補正値
     private long _hack;
     // 最後に進捗を報告した TickCount64（スロットリング用）

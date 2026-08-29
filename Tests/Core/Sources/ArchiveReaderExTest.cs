@@ -18,6 +18,8 @@
 using Cube.Tests.Fixtures;
 using NUnit.Framework;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 namespace Cube.FileSystem.SevenZip.Tests;
 
 /* ------------------------------------------------------------------------- */
@@ -62,7 +64,15 @@ internal class ArchiveReaderExTest : FileFixture
             CodePage = CodePage.Japanese,
         };
 
-        using (var archive = new ArchiveReader(src, opts)) archive.Save(dest);
+        var started  = new List<string>();
+        var finished = new List<string>();
+
+        using (var archive = new ArchiveReader(src, opts))
+        {
+            archive.FileExtracting += (_, e) => started.Add(e.Target?.FullName ?? string.Empty);
+            archive.FileExtracted  += (_, e) => finished.Add(e.Target?.FullName ?? string.Empty);
+            archive.Save(dest);
+        }
 
         Assert.That(Io.Exists(Io.Combine(dest, @"フィルタリング テスト用")),              Is.True);
         Assert.That(Io.Exists(Io.Combine(dest, @"フィルタリング テスト用\.DS_Store")),    Is.False);
@@ -71,6 +81,8 @@ internal class ArchiveReaderExTest : FileFixture
         Assert.That(Io.Exists(Io.Combine(dest, @"フィルタリング テスト用\Thumbs.db")),    Is.False);
         Assert.That(Io.Exists(Io.Combine(dest, @"フィルタリング テスト用\__MACOSX")),     Is.False);
         Assert.That(Io.Exists(Io.Combine(dest, @"フィルタリング テスト用\フィルタリングされないファイル.txt")), Is.True);
+        Assert.That(started.Where(name => files.Any(name.EndsWith)), Is.Empty);
+        Assert.That(finished.Where(name => files.Any(name.EndsWith)), Is.Empty);
     }
 
     /* --------------------------------------------------------------------- */

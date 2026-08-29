@@ -271,9 +271,9 @@ public class CompressionOption : ArchiveOption
     /// SkipInaccessibleFiles
     ///
     /// <summary>
-    /// <see cref="ArchiveWriter.Add(string, string)"/> 時にファイルを読み取れず
-    /// <see cref="AccessException"/> 相当の状況になった場合、例外を投げずに
-    /// 当該ファイルをスキップしてアーカイブから除外するかどうかを取得する。
+    /// <see cref="ArchiveWriter.Add(string, string)"/> 時にアイテムを読み取れないか、
+    /// 安全のため追跡しない再解析ポイントだった場合、例外を投げずに
+    /// 当該アイテムをスキップしてアーカイブから除外するかどうかを取得する。
     /// </summary>
     /// <remarks>
     /// <para>
@@ -292,6 +292,11 @@ public class CompressionOption : ArchiveOption
     /// <c>FileShare.None</c> で握っている等、共有モード <c>None</c> で他プロセスが排他保持している
     /// ファイル。これらはライブラリの一時コピー機構 (<c>UpdateCallback</c>) でも開けないため、
     /// 事前 (Add 時) の fail-fast 段階でスキップ判定する。
+    /// </para>
+    /// <para>
+    /// ジャンクションやシンボリックリンク等の再解析ポイントは、循環や追加元ツリー外の
+    /// 取り込みを防ぐため既定では <see cref="AccessException"/> として拒否し、この値が
+    /// <c>true</c> の場合だけ <see cref="ArchiveWriter.FileSkipped"/> で通知して除外する。
     /// </para>
     /// <para>
     /// <b>適用範囲 (現状):</b> Add 時の fail-fast のみ。Add 通過後に Save 中で他プロセスが

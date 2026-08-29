@@ -113,7 +113,7 @@ public abstract class FileFixture : SourceFileFixture
     private void Delete(string directory)
     {
         foreach (var e in Io.GetFiles(directory)) { Io.Delete(e); }
-        foreach (var e in Io.GetDirectories(directory)) { Delete(e); Io.Delete(e); }
+        foreach (var e in Io.GetDirectories(directory)) { Io.Delete(e); }
     }
 
     #endregion

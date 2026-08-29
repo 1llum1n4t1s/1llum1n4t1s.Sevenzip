@@ -143,6 +143,22 @@ internal class ArchiveEnumerator : DisposableBase, IEnumerator<ArchiveEntity>
 
     /* --------------------------------------------------------------------- */
     ///
+    /// Get
+    ///
+    /// <summary>
+    /// Gets the source entry for the specified archive index without
+    /// changing the enumeration position.
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    public ArchiveEntity Get(uint index)
+    {
+        if (index >= _source.Count) throw new ArgumentOutOfRangeException(nameof(index));
+        return _source[(int)index];
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
     /// MoveNext
     ///
     /// <summary>

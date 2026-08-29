@@ -48,6 +48,49 @@ internal static class FileSystemHelper
     }
 
     /// <summary>
+    /// 展開先ルートとアーカイブ内相対パスから、安全な出力パスを取得する。
+    /// </summary>
+    /// <exception cref="IOException">
+    /// 出力パスがルート外へ出るか、既存の再解析ポイントを経由する場合。
+    /// </exception>
+    public static string GetExtractionPath(string root, string relativePath)
+    {
+        if (string.IsNullOrEmpty(root)) throw new ArgumentException("Extraction root is required.", nameof(root));
+        if (relativePath is null) throw new ArgumentNullException(nameof(relativePath));
+
+        var rootPath = Path.GetFullPath(root);
+        var output   = Path.GetFullPath(Path.Combine(rootPath, relativePath));
+        var prefix   = rootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
+                       Path.DirectorySeparatorChar;
+
+        if (!string.Equals(output, rootPath, StringComparison.OrdinalIgnoreCase) &&
+            !output.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new IOException($"Refusing to extract outside destination: '{output}'.");
+        }
+
+        var relative = Path.GetRelativePath(rootPath, output);
+        if (relative == ".") return output;
+
+        var current = rootPath;
+        foreach (var segment in relative.Split(
+                     new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, segment);
+            try
+            {
+                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException($"Refusing to extract through reparse point: '{current}'.");
+            }
+            catch (FileNotFoundException) { break; }
+            catch (DirectoryNotFoundException) { break; }
+        }
+
+        return output;
+    }
+
+    /// <summary>
     /// 指定したパスのファイルに対して <c>FlushFileBuffers</c> 相当の
     /// ディスク同期フラッシュを実行する。
     /// </summary>

@@ -27,7 +27,7 @@ namespace Cube.FileSystem.SevenZip;
 public class FileSkippedEventArgs : EventArgs
 {
     /// <summary>
-    /// スキップしたファイルの絶対パス。
+    /// スキップしたファイルまたはディレクトリの絶対パス。
     /// </summary>
     public string FullName { get; init; }
 
@@ -38,8 +38,8 @@ public class FileSkippedEventArgs : EventArgs
 
     /// <summary>
     /// スキップの原因となった例外。
-    /// 通常は <see cref="AccessException"/> でラップされたファイル共有違反 (SharingViolation /
-    /// LockViolation) や権限不足 (UnauthorizedAccessException)。
+    /// 通常はファイル共有違反 (SharingViolation / LockViolation)、権限不足
+    /// (UnauthorizedAccessException)、または再解析ポイント追跡拒否を表す IOException。
     /// </summary>
     public Exception Reason { get; init; }
 }
