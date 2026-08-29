@@ -10,10 +10,11 @@ on:
       - 'release/**'
   workflow_dispatch:
 
-# 最小権限: NuGet 公開に必要な GITHUB_TOKEN アクセスは無く、
-# secrets.NUGET_API_KEY のみで公開する。リポジトリ書き込み権限は不要。
+# 最小権限: checkout 用の read と、NuGet.org の Trusted Publishing で
+# 短期資格情報を取得する OIDC token 発行だけを許可する。
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   publish:
@@ -184,10 +185,23 @@ jobs:
       - name: Pack
         run: dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Platform=AnyCPU --no-build -o Libraries/Core/bin -p:NoDefaultExcludes=true
 
+      - name: Authenticate to NuGet.org
+        id: login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: ${{ vars.NUGET_USER }}
+
       - name: Publish to NuGet
-        run: |
-          $apiKey = $env:NUGET_API_KEY
-          .\publish.ps1
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: |
+          $packages = @(Get-ChildItem -Path "Libraries\Core\bin" -Filter "1llum1n4t1s.Sevenzip.*.nupkg" -File)
+          if ($packages.Count -ne 1) {
+            Write-Error "Expected exactly one 1llum1n4t1s.Sevenzip package, found $($packages.Count)."
+            exit 1
+          }
+          dotnet nuget push $packages[0].FullName `
+            --api-key $env:NUGET_API_KEY `
+            --source https://api.nuget.org/v3/index.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         shell: pwsh
