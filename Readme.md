@@ -154,6 +154,9 @@ Cube.Logger.Configure(new MyLoggerSource());
 | `CompressionOption.Validate(Format)`（内部メソッド） | **v1.0.70** — オプション矛盾の早期検出 | AtomicSave+VolumeSize / Tar+Password / 負値ガード。利用者が直接呼ぶ API ではなく、`ArchiveWriter` の ctor / `Save()` が内部で検証して例外を投げる。 |
 | `Update(Stream, Stream, ..., allowDestructiveOnWritebackFailure)` | **v1.0.70** — 自己参照書き戻し失敗時の dest 挙動をオプトイン化 | デフォルト false = 部分書き込み保持 / true = 全消失 (旧動作)。 |
 | `CompressionOption.SkipInaccessibleFiles` / `ArchiveWriter.FileSkipped` / `FileSkippedEventArgs` | **v1.0.76〜v1.0.86** — アクセス不能または安全に追跡できないアイテムを skip して圧縮を続行 | 既定 `false`（`AccessException`）。`true` で `Add()` 時にアクセス不能なファイルや再解析ポイントを除外し、`FileSkipped` イベント（`FullName` / `RelativeName` / `Reason`）で通知する。v1.0.86 以降はジャンクションやシンボリックリンクのリンク先を再帰的に取り込まない。適用範囲は `Add()` 時の fail-fast のみ。 |
+| 展開先の再解析ポイント競合対策 | **v1.0.87** — 展開中の親ディレクトリ差し替えを防止 | 親ディレクトリを削除・改名不能なハンドルで固定し、ジャンクションやシンボリックリンクへの競合差し替えによる destination 外への書き込みを拒否する。 |
+| `ArchiveWriter.FileCompressed` の並行処理 | **v1.0.87** — マルチスレッド圧縮時のエントリ対応を修正 | 7-Zip からコールバックが並行しても、完了イベントと失敗ログが実際に処理したエントリを指す。 |
+| `ArchiveWriter.Update(...)` の入力・例外処理 | **v1.0.87** — rename と更新元オープン失敗を厳密化 | 安全化後に空となる rename は暗黙の削除にせず `ArgumentException` とし、更新元の暗号化・形式・I/Oエラーは `ArchiveReader` と同じ例外契約で通知する。 |
 | `ArchiveWriter(Format, ...)` コンストラクタ | **v1.0.78** — 未対応フォーマットの fail-fast 検証 + ctor 失敗時クリーンアップ | `Format.Unknown` は `UnknownFormatException`、書き込み非対応フォーマット (Rar 等) は ctor で即例外 (従来は `Save()` 時に失敗)。失敗時は取得済みリソースを同期解放。 |
 | 圧縮進捗 (`Report.Bytes`) の精度修正 | **v1.0.79** — 大規模アーカイブで進捗が早期に 100% へ張り付くバグを修正 | 7-Zip の completeValue をグローバル累積値として単調最大値で集計（旧実装はマルチスレッド圧縮の値後退を二重加算していた）。 |
 | `ArchiveReader.Extract(...)` / `Save(string, uint[], ...)` のインデックス正規化 | **v1.0.82** — 展開対象インデックスを内部で昇順・重複なしへ正規化 | 従来は非昇順の `Dictionary` / 配列を渡すと該当エントリが**例外なく未展開のまま**終わっていた（`Dictionary` のキー列挙順は仕様上不定）。呼び出し側の配列は変更しない。 |
