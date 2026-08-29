@@ -17,6 +17,7 @@
 //
 /* ------------------------------------------------------------------------- */
 using System;
+using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip.Kernel32;
@@ -73,6 +74,27 @@ internal static partial class NativeMethods
     [LibraryImport(LibName)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool FreeLibrary(IntPtr hModule);
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// CreateFile
+    ///
+    /// <summary>
+    /// Opens a file system object without automatically following its final
+    /// reparse point.
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [LibraryImport(LibName, EntryPoint = "CreateFileW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
+    public static partial SafeFileHandle CreateFile(
+        string fileName,
+        uint desiredAccess,
+        uint shareMode,
+        IntPtr securityAttributes,
+        uint creationDisposition,
+        uint flagsAndAttributes,
+        IntPtr templateFile
+    );
 
     #endregion
 

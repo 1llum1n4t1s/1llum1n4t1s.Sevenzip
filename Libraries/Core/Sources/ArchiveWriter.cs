@@ -20,6 +20,7 @@ using Cube.Text.Extensions;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 namespace Cube.FileSystem.SevenZip;
 
 /// <summary>
@@ -937,8 +938,20 @@ public sealed class ArchiveWriter : DisposableBase
             // パスワードコールバックを生成する（暗号化アーカイブの読み取り用）
             openCb = new OpenCallback(sourceHint ?? string.Empty) { Password = new PasswordQuery(sourcePassword) };
             var openCode = inArchive.Open(inStream, IntPtr.Zero, openCb);
-            if (openCode != 0) throw new IOException(
-                $"Failed to open archive{(sourceHint.HasValue() ? $": {sourceHint}" : "")} (code={openCode})");
+            if (openCode != 0)
+            {
+                if (openCb.Exceptions.Count > 0)
+                {
+                    var inner = openCb.Exceptions.Pop();
+                    if (inner is EncryptionException) throw inner;
+                    throw new SevenZipException(SevenZipCode.HeadersError, inner);
+                }
+
+                if (openCode > 0) throw new SevenZipException(SevenZipCode.IsNotArc);
+                throw new SevenZipException(SevenZipCode.UnknownError,
+                    Marshal.GetExceptionForHR(openCode) ??
+                    new COMException($"IInArchive.Open failed. HRESULT: 0x{openCode:X8}", openCode));
+            }
 
             var existingCount = inArchive.GetNumberOfItems();
 
@@ -991,9 +1004,16 @@ public sealed class ArchiveWriter : DisposableBase
                     if (kv.Key < 0 || (uint)kv.Key >= existingCount) continue;
                     // rename 値もサニタイズ (Zip Slip 生成側対策)。
                     // 値が null/empty は「削除」意図なのでそのまま渡す (UpdatePlan 側で削除扱い)。
-                    planRenameMap[(uint)kv.Key] = string.IsNullOrEmpty(kv.Value)
-                        ? kv.Value
-                        : SanitizeRelativeName(kv.Value);
+                    if (string.IsNullOrEmpty(kv.Value))
+                    {
+                        planRenameMap[(uint)kv.Key] = kv.Value;
+                        continue;
+                    }
+
+                    var sanitized = SanitizeRelativeName(kv.Value);
+                    if (string.IsNullOrEmpty(sanitized)) throw new ArgumentException(
+                        "The renamed archive path must contain at least one safe path segment.", nameof(renameMap));
+                    planRenameMap[(uint)kv.Key] = sanitized;
                 }
             }
 

@@ -23,6 +23,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
+using System.Threading;
 namespace Cube.FileSystem.SevenZip;
 
 /// <summary>
@@ -328,10 +329,9 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
             return (int)SevenZipCode.Success;
         }
 
-        // 並行 GetStream (ThreadCount > 1) で _index が別エントリに上書きされると、
-        // イベント (FileCompressing / FileCompressed) と Logger.Warn が誤ったファイルを指す。
-        // 書き込みをロックで保護し、以降はローカルの resolved を使って自分のエントリを参照する。
-        lock (_stateLock) _index = resolved;
+        // 7z 形式の並行圧縮では複数のワーカースレッドが GetStream / SetOperationResult を
+        // 対で呼ぶため、処理中インデックスをコールバックスレッドごとに保持する。
+        _currentIndex.Value = resolved;
 
         var dest = default(ISequentialInStream);
         var src  = Current(resolved);
@@ -365,7 +365,9 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     /// <returns>操作結果コード。</returns>
     public int SetOperationResult(SevenZipCode code)
     {
-        if (code != SevenZipCode.Success) Logger.Warn($"[{code}] Index:{_index}, Name:{Current()?.RawName ?? ""}");
+        var index = _currentIndex.Value;
+        var current = Current(index);
+        if (code != SevenZipCode.Success) Logger.Warn($"[{code}] Index:{index}, Name:{current?.RawName ?? ""}");
 
         // Stream 早期解放の設計メモ (検証済の現時点での結論):
         // 以下の 2 案で早期解放を試みたがどちらも破綻したため、Dispose 時一括解放に集約している:
@@ -383,10 +385,10 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         // 時一括解放でハンドル上限に余裕があるため、現状の設計で妥協している。
 
         // FileCompressed イベントを発火する（成功・失敗問わず）
-        if (FireFileEvent(OnFileFinished, Current(), _index))
+        if (FireFileEvent(OnFileFinished, current, index))
             return (int)SevenZipCode.Cancel;
 
-        if (code == SevenZipCode.Success) return Report(ProgressState.Success, Current());
+        if (code == SevenZipCode.Success) return Report(ProgressState.Success, current);
 
         // 失敗は Exceptions へ積んでから Failed を報告する（ExtractCallback.SetOperationResult と同じ規約）。
         // Report は Failed で Cancel=true を立て 7z.dll へ Cancel コードを返すため、積んでおかないと
@@ -394,7 +396,7 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         // 失敗コードと対象エントリ名が失われる。
         var error = new SevenZipException(code);
         PushException(error);
-        return Report(error, Current());
+        return Report(error, current);
     }
 
     /// <summary>
@@ -457,6 +459,7 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
             {
                 try { stream.Dispose(); } catch { /* 解放失敗は無視 */ }
             }
+            _currentIndex.Dispose();
         }
 
         // ロック中ファイルの一時コピーを削除する。
@@ -570,14 +573,12 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     /// 現在処理中のエンティティを返す。
     /// </summary>
     /// <remarks>
-    /// 並行 GetStream では <see cref="_index"/> が他スレッドに上書きされうるため、
+    /// 並行 GetStream では処理中インデックスが他スレッドと競合しうるため、
     /// 自分が解決したインデックスを持っている呼び出し元は <see cref="Current(int)"/> を使う。
     /// </remarks>
     private RawEntity Current()
     {
-        int index;
-        lock (_stateLock) index = _index;
-        return Current(index);
+        return Current(_currentIndex.Value);
     }
 
     /// <summary>
@@ -635,7 +636,7 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     // 更新プラン（null = 新規作成モード、非 null = 更新モード）
     private readonly UpdatePlan _plan;
     // 現在処理中のアイテムを指す _items インデックス（未処理は -1）
-    private int _index = -1;
+    private readonly ThreadLocal<int> _currentIndex = new(() => -1);
     // ロック中ファイルの一時コピー先ディレクトリ（遅延作成、Dispose 時に削除）
     private string _tempDir;
     // 最後に処理したコールバックインデックス（UpdateItemProgress の重複検出用）
@@ -646,7 +647,7 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     // 保護するロック
     private readonly object _completedLock = new();
     // 並行 GetStream (ZIP Ultra 等のマルチスレッド圧縮) から触られる共有可変状態
-    // (_streams / _tempDir / _index) を保護するロック
+    // (_streams / _tempDir) を保護するロック
     private readonly object _stateLock = new();
     // 最後に進捗を報告した TickCount64（スロットリング用）
     private long _lastReportedTicks;

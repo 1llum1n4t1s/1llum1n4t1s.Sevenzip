@@ -305,8 +305,7 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
                 if (!Destination.HasValue()) return null;
 
                 // ファイルの場合は書き込みストリームを生成して辞書に登録する
-                var path   = FileSystemHelper.GetExtractionPath(Destination, e.FullName);
-                var stream = Io.Create(path);
+                var stream = FileSystemHelper.CreateExtractionFile(Destination, e.FullName);
                 var dest   = new ArchiveStreamWriter(stream);
                 _streams.Add(e.Index, dest);
                 return dest;

@@ -47,8 +47,7 @@ public static class ArchiveEntityExtension
     public static void CreateDirectory(this ArchiveEntity src, string root)
     {
         if (!src.IsDirectory) return;
-        var path = FileSystemHelper.GetExtractionPath(root, src.FullName);
-        Io.CreateDirectory(path);
+        FileSystemHelper.CreateExtractionDirectory(root, src.FullName);
         src.SetAttributes(root);
     }
 
@@ -67,13 +66,13 @@ public static class ArchiveEntityExtension
     /* --------------------------------------------------------------------- */
     public static void SetAttributes(this ArchiveEntity src, string root)
     {
-        var path = FileSystemHelper.GetExtractionPath(root, src.FullName);
-        if (!Io.Exists(path)) return;
-
-        Logger.Try(() => SetCreationTime(src, path));
-        Logger.Try(() => SetLastWriteTime(src, path));
-        Logger.Try(() => SetLastAccessTime(src, path));
-        Logger.Try(() => Io.SetAttributes(path, src.Attributes));
+        FileSystemHelper.ApplyExtractionAttributes(root, src.FullName, path =>
+        {
+            Logger.Try(() => SetCreationTime(src, path));
+            Logger.Try(() => SetLastWriteTime(src, path));
+            Logger.Try(() => SetLastAccessTime(src, path));
+            Logger.Try(() => Io.SetAttributes(path, src.Attributes));
+        });
     }
 
     #endregion

@@ -17,7 +17,12 @@
 //
 /* ------------------------------------------------------------------------- */
 using System;
+using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
+using System.Runtime.InteropServices;
+using Cube.FileSystem.SevenZip.Kernel32;
+using Microsoft.Win32.SafeHandles;
 namespace Cube.FileSystem.SevenZip;
 
 /// <summary>
@@ -89,6 +94,229 @@ internal static class FileSystemHelper
 
         return output;
     }
+
+    /// <summary>
+    /// 再解析ポイントを辿らず、展開先ディレクトリを安全に作成します。
+    /// </summary>
+    public static void CreateExtractionDirectory(string root, string relativePath)
+    {
+        var output = GetExtractionPath(root, relativePath);
+        var handles = LockDirectoryChain(root, output, create: true);
+        Dispose(handles);
+    }
+
+    /// <summary>
+    /// 親ディレクトリを削除・改名不能なハンドルで固定し、展開先ファイルを作成します。
+    /// </summary>
+    public static Stream CreateExtractionFile(string root, string relativePath)
+    {
+        var output = GetExtractionPath(root, relativePath);
+        var parent = Path.GetDirectoryName(output) ?? throw new IOException(
+            $"Extraction path has no parent directory: '{output}'.");
+        var handles = LockDirectoryChain(root, parent, create: true);
+        SafeFileHandle file = null;
+
+        try
+        {
+            file = NativeMethods.CreateFile(
+                ToExtendedPath(output),
+                GenericWrite,
+                ShareNone,
+                IntPtr.Zero,
+                OpenAlways,
+                FileAttributeNormal | FileFlagOpenReparsePoint,
+                IntPtr.Zero
+            );
+            ThrowIfInvalid(file, output);
+            ThrowIfReparsePoint(output);
+
+            var stream = new ExtractionFileStream(file, handles);
+            file = null;
+            handles = null;
+            try
+            {
+                stream.SetLength(0);
+                return stream;
+            }
+            catch
+            {
+                stream.Dispose();
+                throw;
+            }
+        }
+        finally
+        {
+            file?.Dispose();
+            Dispose(handles);
+        }
+    }
+
+    /// <summary>
+    /// 展開済みパスを再解析ポイント競合から固定した状態で属性設定を実行します。
+    /// </summary>
+    public static void ApplyExtractionAttributes(string root, string relativePath, Action<string> action)
+    {
+        if (action is null) throw new ArgumentNullException(nameof(action));
+
+        var output = GetExtractionPath(root, relativePath);
+        var parent = Path.GetDirectoryName(output) ?? output;
+        var handles = LockDirectoryChain(root, parent, create: false);
+        if (handles is null) return;
+
+        SafeFileHandle target = null;
+        try
+        {
+            target = NativeMethods.CreateFile(
+                ToExtendedPath(output),
+                AccessNone,
+                ShareRead | ShareWrite,
+                IntPtr.Zero,
+                OpenExisting,
+                FileFlagBackupSemantics | FileFlagOpenReparsePoint,
+                IntPtr.Zero
+            );
+            if (target.IsInvalid)
+            {
+                var error = Marshal.GetLastPInvokeError();
+                if (error is ErrorFileNotFound or ErrorPathNotFound) return;
+                throw new Win32Exception(error, $"Failed to lock extraction path: '{output}'.");
+            }
+
+            ThrowIfReparsePoint(output);
+            action(output);
+        }
+        finally
+        {
+            target?.Dispose();
+            Dispose(handles);
+        }
+    }
+
+    private static List<SafeFileHandle> LockDirectoryChain(string root, string target, bool create)
+    {
+        var rootPath = Path.GetFullPath(root);
+        var targetPath = Path.GetFullPath(target);
+        var relative = Path.GetRelativePath(rootPath, targetPath);
+        if (relative != "." && (Path.IsPathRooted(relative) || relative == ".." ||
+            relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal) ||
+            relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal)))
+            throw new IOException($"Refusing to lock path outside destination: '{targetPath}'.");
+
+        var handles = new List<SafeFileHandle>();
+        try
+        {
+            if (create) Directory.CreateDirectory(rootPath);
+            else if (!Directory.Exists(rootPath)) return null;
+            handles.Add(OpenDirectory(rootPath));
+
+            if (relative == ".") return handles;
+            var current = rootPath;
+            foreach (var segment in relative.Split(
+                         new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+                         StringSplitOptions.RemoveEmptyEntries))
+            {
+                current = Path.Combine(current, segment);
+                if (create) Directory.CreateDirectory(current);
+                else if (!Directory.Exists(current))
+                {
+                    Dispose(handles);
+                    return null;
+                }
+                handles.Add(OpenDirectory(current));
+            }
+            return handles;
+        }
+        catch
+        {
+            Dispose(handles);
+            throw;
+        }
+    }
+
+    private static SafeFileHandle OpenDirectory(string path)
+    {
+        var handle = NativeMethods.CreateFile(
+            ToExtendedPath(path),
+            AccessNone,
+            ShareRead | ShareWrite,
+            IntPtr.Zero,
+            OpenExisting,
+            FileFlagBackupSemantics | FileFlagOpenReparsePoint,
+            IntPtr.Zero
+        );
+        try
+        {
+            ThrowIfInvalid(handle, path);
+            ThrowIfReparsePoint(path);
+            return handle;
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
+        }
+    }
+
+    private static void ThrowIfInvalid(SafeFileHandle handle, string path)
+    {
+        if (!handle.IsInvalid) return;
+        var error = Marshal.GetLastPInvokeError();
+        throw new Win32Exception(error, $"Failed to lock extraction path: '{path}'.");
+    }
+
+    private static void ThrowIfReparsePoint(string path)
+    {
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            throw new IOException($"Refusing to extract through reparse point: '{path}'.");
+    }
+
+    private static string ToExtendedPath(string path)
+    {
+        if (path.StartsWith(@"\\?\", StringComparison.Ordinal)) return path;
+        return path.StartsWith(@"\\", StringComparison.Ordinal)
+            ? @"\\?\UNC\" + path[2..]
+            : @"\\?\" + path;
+    }
+
+    private static void Dispose(List<SafeFileHandle> handles)
+    {
+        if (handles is null) return;
+        for (var i = handles.Count - 1; i >= 0; i--) handles[i].Dispose();
+    }
+
+    private sealed class ExtractionFileStream : FileStream
+    {
+        public ExtractionFileStream(SafeFileHandle handle, List<SafeFileHandle> guards) :
+            base(handle, FileAccess.Write, 4096, false) => _guards = guards;
+
+        protected override void Dispose(bool disposing)
+        {
+            try { base.Dispose(disposing); }
+            finally
+            {
+                if (disposing)
+                {
+                    FileSystemHelper.Dispose(_guards);
+                    _guards = null;
+                }
+            }
+        }
+
+        private List<SafeFileHandle> _guards;
+    }
+
+    private const uint AccessNone = 0;
+    private const uint GenericWrite = 0x40000000;
+    private const uint ShareNone = 0;
+    private const uint ShareRead = 0x00000001;
+    private const uint ShareWrite = 0x00000002;
+    private const uint OpenExisting = 3;
+    private const uint OpenAlways = 4;
+    private const uint FileAttributeNormal = 0x00000080;
+    private const uint FileFlagOpenReparsePoint = 0x00200000;
+    private const uint FileFlagBackupSemantics = 0x02000000;
+    private const int ErrorFileNotFound = 2;
+    private const int ErrorPathNotFound = 3;
 
     /// <summary>
     /// 指定したパスのファイルに対して <c>FlushFileBuffers</c> 相当の

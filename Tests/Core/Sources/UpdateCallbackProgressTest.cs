@@ -20,6 +20,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
 
@@ -164,6 +165,45 @@ internal class UpdateCallbackProgressTest
             Assert.That(cb.Bytes, Is.EqualTo(900L));
         }
         finally { File.Delete(src); }
+    }
+
+    [Test]
+    public void SetOperationResult_ConcurrentStreamsKeepsOwnIndex()
+    {
+        var first = Path.Combine(Path.GetTempPath(), $"UpdateCallbackProgressTest_{Guid.NewGuid():N}_a.bin");
+        var second = Path.Combine(Path.GetTempPath(), $"UpdateCallbackProgressTest_{Guid.NewGuid():N}_b.bin");
+        File.WriteAllBytes(first, [1]);
+        File.WriteAllBytes(second, [2]);
+        try
+        {
+            var items = new List<RawEntity> { new(first, "a.bin"), new(second, "b.bin") };
+            var finished = new string[2];
+            using var cb = new UpdateCallback(items, new SilentProgress())
+            {
+                OnFileFinished = e => finished[e.Index] = ((RawEntity)e.Target).RelativeName,
+            };
+            using var barrier = new Barrier(2);
+
+            var tasks = new Task[2];
+            for (var i = 0; i < tasks.Length; i++)
+            {
+                var index = i;
+                tasks[i] = Task.Run(() =>
+                {
+                    Assert.That(cb.GetStream((uint)index, out _), Is.Zero);
+                    barrier.SignalAndWait();
+                    Assert.That(cb.SetOperationResult(SevenZipCode.Success), Is.Zero);
+                });
+            }
+            Task.WaitAll(tasks);
+
+            Assert.That(finished, Is.EqualTo(new[] { "a.bin", "b.bin" }));
+        }
+        finally
+        {
+            File.Delete(first);
+            File.Delete(second);
+        }
     }
 
     /* --------------------------------------------------------------------- */

@@ -135,6 +135,35 @@ internal class ArchiveV2ApiTest : FileFixture
         Assert.That(r2.Items[0].FullName, Is.EqualTo("keep.txt"));
     }
 
+    [Test]
+    public void RenameMap_ParentOnlyValueThrowsWithoutDeleting()
+    {
+        using var original = new MemoryStream();
+        using (var w = new ArchiveWriter(Format.Zip))
+        {
+            w.Add(GetSource("Sample.txt"), "keep.txt");
+            w.Save(original);
+        }
+
+        using var updated = new MemoryStream();
+        using var writer = new ArchiveWriter(Format.Zip);
+        original.Position = 0;
+        Assert.That(() => writer.Update(original, updated,
+            renameMap: new Dictionary<int, string> { { 0, "../.." } }),
+            Throws.TypeOf<ArgumentException>());
+    }
+
+    [Test]
+    public void Update_HeaderEncryptedWrongPasswordUsesReaderErrorContract()
+    {
+        using var source = File.OpenRead(GetSource("PasswordHeader.7z"));
+        using var destination = new MemoryStream();
+        using var writer = new ArchiveWriter(Format.SevenZip);
+
+        Assert.That(() => writer.Update(source, destination, sourcePassword: "wrong"),
+            Throws.TypeOf<SevenZipException>());
+    }
+
     /* --------------------------------------------------------------------- */
     ///
     /// AsyncPasswordQuery_ReturnsPassword
