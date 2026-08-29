@@ -10,19 +10,19 @@ This file provides guidance to Claude Code and other coding agents working in th
 
 ```bash
 # ソリューション全体のビルド（Managed DLL は AnyCPU、ネイティブ 7z.dll のみ RID で分岐）
-rtk dotnet build Cube.FileSystem.SevenZip.slnx -c Debug -p:Platform=AnyCPU
+dotnet build Cube.FileSystem.SevenZip.slnx -c Debug -p:Platform=AnyCPU
 
 # Release ビルド
-rtk dotnet build Cube.FileSystem.SevenZip.slnx -c Release -p:Platform=AnyCPU
+dotnet build Cube.FileSystem.SevenZip.slnx -c Release -p:Platform=AnyCPU
 
 # テスト全実行（--no-build を付けるとビルドをスキップ）
-rtk dotnet test Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj -c Debug -p:Platform=AnyCPU --no-build
+dotnet test Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj -c Debug -p:Platform=AnyCPU --no-build
 
 # 単一テスト実行（FullyQualifiedName で絞り込み）
-rtk dotnet test Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj -c Debug -p:Platform=AnyCPU --no-build --filter "FullyQualifiedName~TestMethodName"
+dotnet test Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj -c Debug -p:Platform=AnyCPU --no-build --filter "FullyQualifiedName~TestMethodName"
 
 # NuGet パック（NoDefaultExcludes=true がないとネイティブアセットが packing されない）
-rtk dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Platform=AnyCPU -o Libraries/Core/bin -p:NoDefaultExcludes=true
+dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Platform=AnyCPU -o Libraries/Core/bin -p:NoDefaultExcludes=true
 ```
 
 **重要**:
