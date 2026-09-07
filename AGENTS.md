@@ -60,6 +60,8 @@ NuGet パッケージの `runtimes/win-{x64,arm64}/native/7z.dll` として配�
 
 7-Zip 本体の追従は `publish.yml` のリリースワークフロー内で自動化。`release/**` ブランチ push 時に 7-zip.org から最新の 7z.dll をダウンロードし、NuGet パッケージに同梱する。リポジトリ内の vendored DLL はローカル開発・テスト用のフォールバック。
 
+ネイティブバイナリまたは配布処理を更新するときは、DLL と同じ配布物のライセンスも同期し、pack 後の `.nupkg` に両アーキテクチャの DLL と `licenses/7-Zip/License.txt` が含まれることを確認する。取得元と配置の設計は [DESIGN.md](DESIGN.md#native-binary-を-nuget-に同梱する) を参照する。
+
 ### 7-Zip COM Interop 構造（Libraries/Core）
 
 ```

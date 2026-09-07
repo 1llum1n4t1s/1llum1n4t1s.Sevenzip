@@ -84,6 +84,8 @@ x64 / arm64 の `7z.dll` を両方とも runtime asset として同梱し、利�
 
 リポジトリ内の binary はローカル開発用の fallback です。公開 workflow は release branch 上で 7-zip.org から最新版を取得し、HTTPS と配信元 host allowlist を検査します。upstream binary が未署名の場合は署名を必須にせず、取得元制限と SHA256 の job summary 記録で追跡可能性を確保します。
 
+7-Zip のライセンス情報をバイナリと合わせて配布するため、公開 workflow は DLL と同じ配布物から `License.txt` を取得し、見つからない場合は失敗します。取得したファイルは `Libraries/Core/Native/License.txt` に配置し、NuGet パッケージの `licenses/7-Zip/License.txt` に収録します。
+
 ### I/O を `Io` / `IoController` に集約する
 
 ファイル操作を共通層へ集約し、production の OS I/O とテスト用 controller を同じ呼び出し面で扱います。global configuration を持つため、テスト teardown では標準 controller へ必ず戻します。
