@@ -49,7 +49,6 @@ UpgradeLog.htm
 launchSettings.json
 [Tt]est[Rr]esult*
 .claude/settings.local.json
-.serena/
 
 # 本家 7-Zip のベンダードネイティブバイナリ (https://www.7-zip.org/)
 # ローカル開発・テスト用のフォールバック。リリース成果物は publish.yml が最新版へ差し替える。

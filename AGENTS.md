@@ -36,6 +36,8 @@ dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Platfor
 
 バージョンは `Directory.Build.props` の `<Version>` タグで一元管理（全プロジェクト共通）。patch を +1 ずつインクリメント（`/vava` スキルで自動化）。コミットメッセージは日本語。
 
+`1llum1n4t1s.Sevenzip` の直接参照元、更新対象ファイル、復元条件、検証コマンドは、リポジトリ直下の `vava.config.json` を正本とする。直接参照元を追加・削除したときは、同じ変更内で `consumerUpdates.targets` を同期する。
+
 ## アーキテクチャ
 
 ### プロジェクト構成
@@ -48,7 +50,7 @@ dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Platfor
 
 ### ベンダードネイティブバイナリ
 
-`Libraries/Core/Native/x64/7z.dll` および `Libraries/Core/Native/arm64/7z.dll` (7-Zip 26.02) を直接 vendor し、NuGet パッケージの `runtimes/win-x64/native/` と `runtimes/win-arm64/native/` に同梱する。これらは **`.gitignore` の `*.dll` ルール** に引っかかるため、末尾の例外ルール `!Libraries/Core/Native/**/*.dll` により明示的に追跡している。
+`Libraries/Core/Native/x64/7z.dll` および `Libraries/Core/Native/arm64/7z.dll` (7-Zip 26.03) を直接 vendor し、NuGet パッケージの `runtimes/win-x64/native/` と `runtimes/win-arm64/native/` に同梱する。これらは **`.gitignore` の `*.dll` ルール** に引っかかるため、末尾の例外ルール `!Libraries/Core/Native/**/*.dll` により明示的に追跡している。
 
 `7z.dll` は `SevenZipLibrary` (Libraries/Core/Sources/Internal/SevenZipLibrary.cs) がアセンブリ隣から `LoadLibrary` で読み込む。.NET SDK の runtime asset 規約により、実行時の RID に応じて `runtimes/win-{rid}/native/7z.dll` が自動的にアセンブリ隣に配置される。x64 / arm64 以外のプロセスでは構築時に `PlatformNotSupportedException` を投げる（ランタイムガード）。
 

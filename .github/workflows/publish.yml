@@ -145,6 +145,12 @@ jobs:
 
             if (-not (Test-7zSignature $dll.FullName)) { exit 1 }
 
+            # DLL と同じ配布物のライセンス情報をパッケージへ同梱する。
+            $license = Join-Path $dll.DirectoryName 'License.txt'
+            if (-not (Test-Path -LiteralPath $license)) {
+              throw "License.txt not found in $arch installer"
+            }
+            Copy-Item -LiteralPath $license -Destination 'Libraries/Core/Native/License.txt' -Force
             Copy-Item $dll.FullName "Libraries/Core/Native/$arch/7z.dll" -Force
             $ver  = [System.Diagnostics.FileVersionInfo]::GetVersionInfo("Libraries/Core/Native/$arch/7z.dll").FileVersion
             $hash = (Get-FileHash "Libraries/Core/Native/$arch/7z.dll" -Algorithm SHA256).Hash

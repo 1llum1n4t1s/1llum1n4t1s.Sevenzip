@@ -21,6 +21,7 @@
                           方のみをコピーする。両方コピーすると Link="7z.dll" が衝突するため。 -->
         <None Include="Native\x64\7z.dll"   Pack="true" PackagePath="runtimes\win-x64\native\7z.dll"   Visible="false" />
         <None Include="Native\arm64\7z.dll" Pack="true" PackagePath="runtimes\win-arm64\native\7z.dll" Visible="false" />
+        <None Include="Native\License.txt" Pack="true" PackagePath="licenses\7-Zip\License.txt" Visible="false" />
         <None Include="Native\x64\7z.dll"   Link="7z.dll" CopyToOutputDirectory="PreserveNewest" Visible="false"
               Condition="'$(Platform)' != 'arm64'" />
         <None Include="Native\arm64\7z.dll" Link="7z.dll" CopyToOutputDirectory="PreserveNewest" Visible="false"
