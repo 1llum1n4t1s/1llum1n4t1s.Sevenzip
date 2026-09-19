@@ -68,10 +68,10 @@ public static class ArchiveEntityExtension
     {
         FileSystemHelper.ApplyExtractionAttributes(root, src.FullName, path =>
         {
-            Logger.Try(() => SetCreationTime(src, path));
-            Logger.Try(() => SetLastWriteTime(src, path));
-            Logger.Try(() => SetLastAccessTime(src, path));
-            Logger.Try(() => Io.SetAttributes(path, src.Attributes));
+            SetCreationTime(src, path);
+            SetLastWriteTime(src, path);
+            SetLastAccessTime(src, path);
+            Io.SetAttributes(path, src.Attributes);
         });
     }
 

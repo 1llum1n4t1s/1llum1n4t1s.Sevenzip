@@ -88,7 +88,13 @@ internal static class CallbackExtension
     /* --------------------------------------------------------------------- */
     public static void ThrowIfError(this CallbackBase src, int code, bool checkPassword = false)
     {
-        if (code == (int)SevenZipCode.Success) return;
+        // COM 実装が誤って S_OK を返しても、Stream 側で捕捉済みの I/O 例外は
+        // 成功扱いにしない。元例外を inner に保持して呼び出し元へ返す。
+        if (code == (int)SevenZipCode.Success)
+        {
+            if (!src.HasExceptions) return;
+            throw src.GetException((int)SevenZipCode.UnknownError);
+        }
         if (checkPassword && code == (int)SevenZipCode.WrongPassword) throw new EncryptionException();
         if (code == (int)SevenZipCode.Cancel)
         {

@@ -63,16 +63,16 @@ public class ZipArchiveEntity : ArchiveEntity
     private static string TryGetString(IInArchive core, int index, ItemPropId pid)
     {
         try { return core.GetString(index, pid); }
-        catch (COMException ex) { Logger.Debug($"ZipArchiveEntity[{index}] {pid}: {ex.Message}"); }
-        catch (InvalidOperationException ex) { Logger.Debug($"ZipArchiveEntity[{index}] {pid}: {ex.Message}"); }
+        catch (COMException) { }
+        catch (InvalidOperationException) { }
         return null;
     }
 
     private static long TryGetUInt64(IInArchive core, int index, ItemPropId pid)
     {
         try { return (long)core.GetUInt64(index, pid); }
-        catch (COMException ex) { Logger.Debug($"ZipArchiveEntity[{index}] {pid}: {ex.Message}"); }
-        catch (InvalidOperationException ex) { Logger.Debug($"ZipArchiveEntity[{index}] {pid}: {ex.Message}"); }
+        catch (COMException) { }
+        catch (InvalidOperationException) { }
         return 0L;
     }
 

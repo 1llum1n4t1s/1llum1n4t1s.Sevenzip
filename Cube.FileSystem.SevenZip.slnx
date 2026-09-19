@@ -16,10 +16,6 @@
     <Platform Solution="*|x64" Project="x64" />
     <Platform Solution="*|arm64" Project="arm64" />
   </Project>
-  <Project Path="Libraries/Cube.Logging/Cube.Logging.csproj">
-    <Platform Solution="*|x64" Project="x64" />
-    <Platform Solution="*|arm64" Project="arm64" />
-  </Project>
   <Project Path="Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj">
     <Platform Solution="*|x64" Project="x64" />
     <Platform Solution="*|arm64" Project="arm64" />

@@ -326,25 +326,16 @@ internal static class FileSystemHelper
     /// <remarks>
     /// 書き込み済みファイルを短時間 FileShare.Read で開き直し、<see cref="FileStream.Flush(bool)"/>
     /// を <c>flushToDisk: true</c> で呼ぶことで NTFS 等のファイルキャッシュをディスクに書き出す。
-    /// ファイルが存在しない場合やロックされている場合は黙って失敗する (クリティカルではない)。
+    /// ファイルが存在しない場合は処理しない。オープンまたはフラッシュに失敗した場合は、
+    /// 呼び出し元へ例外を返す。
     /// </remarks>
     public static void FlushFile(string path)
     {
         if (string.IsNullOrEmpty(path) || !File.Exists(path)) return;
-        try
-        {
-            // FileMode.Open + FileAccess.Write で開くと truncate されないため安全。
-            // SeekOrigin.End に進めてから Flush を呼ぶ。書き込み先は空でも OK。
-            using var fs = new FileStream(path, FileMode.Open, FileAccess.Write,
-                FileShare.Read, bufferSize: 1);
-            fs.Flush(flushToDisk: true);
-        }
-        catch (Exception ex)
-        {
-            // アンチウイルス等で SharingViolation が発生するとこの経路を通り、FlushToDisk が
-            // サイレントに失敗する。デバッグ可能なよう Warn ログを残す (path は secret ではない)。
-            Logger.Warn($"[FlushFile] Failed to flush '{path}': {ex.GetType().Name}: {ex.Message}");
-        }
+        // FileMode.Open + FileAccess.Write で開くと truncate されないため安全。
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Write,
+            FileShare.Read, bufferSize: 1);
+        fs.Flush(flushToDisk: true);
     }
 
     /// <summary>
@@ -359,19 +350,11 @@ internal static class FileSystemHelper
         if (stream is null) return;
         if (stream is FileStream fs)
         {
-            try { fs.Flush(flushToDisk: true); }
-            catch (Exception ex)
-            {
-                Logger.Warn($"[FlushToDisk] FileStream.Flush(true) failed: {ex.GetType().Name}: {ex.Message}");
-            }
+            fs.Flush(flushToDisk: true);
         }
         else
         {
-            try { stream.Flush(); }
-            catch (Exception ex)
-            {
-                Logger.Warn($"[FlushToDisk] Stream.Flush failed: {ex.GetType().Name}: {ex.Message}");
-            }
+            stream.Flush();
         }
     }
 

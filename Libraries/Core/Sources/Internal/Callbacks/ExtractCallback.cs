@@ -189,8 +189,6 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
     /// <param name="code">操作結果コード。</param>
     public int SetOperationResult(SevenZipCode code)
     {
-        if (code != SevenZipCode.Success) Logger.Warn($"[{code}] Index:{Current()?.Index ?? -1}, Name:{Current()?.RawName ?? ""}");
-
         // GetStream が対象を解決できないまま SetOperationResult が呼ばれるケースに備え、
         // 以降の Finalize / イベント発火をガードする。
         var current = Current();
@@ -280,7 +278,7 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
         if (StreamOutputs is not null && StreamOutputs.TryGetValue(e.Index, out var external) && external is not null)
         {
             // 外部 Stream は呼び出し側が所有するため dispose=false で包む
-            var w = new ArchiveStreamWriter(external, dispose: false);
+            var w = new ArchiveStreamWriter(external, dispose: false, CaptureException);
             _streams.Add(e.Index, w);
             _streamOutputIndices.Add(e.Index);
             return w;
@@ -306,7 +304,7 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
 
                 // ファイルの場合は書き込みストリームを生成して辞書に登録する
                 var stream = FileSystemHelper.CreateExtractionFile(Destination, e.FullName);
-                var dest   = new ArchiveStreamWriter(stream);
+                var dest   = new ArchiveStreamWriter(stream, dispose: true, CaptureException);
                 _streams.Add(e.Index, dest);
                 return dest;
             }
@@ -331,8 +329,6 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
             _ = _streams.Remove(src.Index);
         }
 
-        Logger.Trace($"[{nameof(Finalize)}] Index:{src.Index}, Name:{src.FullName.Quote()}");
-
         // 外部 Stream 出力の場合または Destination 未指定の場合はファイル属性設定をスキップする
         if (streamOutput || !Destination.HasValue()) return;
 
@@ -349,11 +345,11 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
     /// <summary>
     /// 現在の対象アイテムのスキップ処理を実行する。
     /// </summary>
-    private void Skip(ArchiveEntity src) => Logger.Try(() => {
+    private void Skip(ArchiveEntity src)
+    {
         // ディレクトリのスキップはカウントに含めない
         if (!src.IsDirectory) Count++;
-        Logger.Debug($"[{nameof(Skip)}] ({Count}/{TotalCount}) {src.FullName.Quote()}");
-    });
+    }
 
     /// <summary>
     /// 7-zip 操作結果コードと例外に基づいて進捗を報告する。
@@ -366,7 +362,9 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
 
         // エラーが発生した場合は例外をスタックに積んで Failed を報告する
         var obj = error ?? new SevenZipException(code);
-        PushException(obj);
+        // Stream I/O 例外は ArchiveStreamBase から既に積まれている。ここで汎用例外を
+        // 上積みすると ThrowIfError が元の IOException ではなく汎用例外を返してしまう。
+        if (error is not null || !HasExceptions) PushException(obj);
         return Report(obj, e);
     }
 

@@ -7,7 +7,6 @@
     </PropertyGroup>
     <ItemGroup>
         <ProjectReference Include="..\..\Libraries\Cube.Core\Cube.Core.csproj" />
-        <ProjectReference Include="..\..\Libraries\Cube.Logging\Cube.Logging.csproj" />
         <PackageReference Include="NUnit" Version="4.6.1" />
     </ItemGroup>
 </Project>

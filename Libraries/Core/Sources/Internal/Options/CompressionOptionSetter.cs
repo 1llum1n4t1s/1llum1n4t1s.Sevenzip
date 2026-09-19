@@ -18,6 +18,7 @@
 /* ------------------------------------------------------------------------- */
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 namespace Cube.FileSystem.SevenZip;
@@ -123,7 +124,10 @@ internal class CompressionOptionSetter
             foreach (var kv in custom)
             {
                 if (string.IsNullOrEmpty(kv.Key)) continue;
-                src[kv.Key] = PropVariant.Create(kv.Value ?? string.Empty);
+
+                var replacement = PropVariant.Create(kv.Value ?? string.Empty);
+                if (src.TryGetValue(kv.Key, out var current)) current.Clear();
+                src[kv.Key] = replacement;
             }
         }
 
@@ -138,7 +142,12 @@ internal class CompressionOptionSetter
         }
 
         var obj = GCHandle.Alloc(v, GCHandleType.Pinned);
-        try { _ = dest.SetProperties(k, obj.AddrOfPinnedObject(), (uint)k.Length); }
+        try
+        {
+            var hr = dest.SetProperties(k, obj.AddrOfPinnedObject(), (uint)k.Length);
+            if (hr != 0) throw new IOException(
+                $"圧縮プロパティの設定に失敗しました (HRESULT: 0x{hr:X8})", hr);
+        }
         finally
         {
             obj.Free();

@@ -52,7 +52,8 @@ public class ArchiveOption
     /// </summary>
     /// <remarks>
     /// <b>Format.Zip 形式のみ有効</b>。他フォーマット (7z / Tar / Rar / GZip 等) は
-    /// 内部的に UTF-16 ネイティブのため、この設定は**無視**される (ログで警告)。
+    /// 内部的に UTF-16 ネイティブのため、非既定値を指定すると
+    /// <see cref="ArgumentException"/> をスローする。
     /// </remarks>
     ///
     /* --------------------------------------------------------------------- */
@@ -69,7 +70,7 @@ public class ArchiveOption
     /// <b>Format.Zip 形式のみ有効</b>。非 null の場合 <see cref="CodePage"/> より優先される。
     /// CP437 や Shift_JIS など <see cref="SevenZip.CodePage"/> enum に含まれない
     /// コードページを指定したい場合に使う（例: <c>Encoding.GetEncoding(437)</c>）。
-    /// 他フォーマットで指定した場合はこの設定は無視される (ログで警告)。
+    /// 他フォーマットで指定した場合は <see cref="ArgumentException"/> をスローする。
     /// </remarks>
     /* --------------------------------------------------------------------- */
     public Encoding Encoding { get; init; }

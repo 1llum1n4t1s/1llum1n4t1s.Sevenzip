@@ -18,7 +18,9 @@
 /* ------------------------------------------------------------------------- */
 using System;
 using System.IO;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
+using System.Threading;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -48,12 +50,14 @@ internal class ArchiveStreamBase : DisposableBase
     /// Value indicating whether to discard the BaseStream object when
     /// disposed.
     /// </param>
+    /// <param name="errorHandler">Stream I/O 例外の通知先。</param>
     ///
     /* --------------------------------------------------------------------- */
-    protected ArchiveStreamBase(Stream src, bool dispose)
+    protected ArchiveStreamBase(Stream src, bool dispose, Action<Exception> errorHandler = null)
     {
         BaseStream = src;
         _dispose   = dispose;
+        _errorHandler = errorHandler;
     }
 
     #endregion
@@ -91,8 +95,37 @@ internal class ArchiveStreamBase : DisposableBase
     /* --------------------------------------------------------------------- */
     public virtual void Seek(long offset, SeekOrigin origin, IntPtr result)
     {
-        var pos = BaseStream.Seek(offset, origin);
-        if (result != IntPtr.Zero) Marshal.WriteInt64(result, pos);
+        try
+        {
+            var pos = BaseStream.Seek(offset, origin);
+            if (result != IntPtr.Zero) Marshal.WriteInt64(result, pos);
+        }
+        catch (Exception e)
+        {
+            Capture(e);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// COM 境界で HRESULT に変換された最初の Stream 例外を呼び出し元へ戻す。
+    /// </summary>
+    internal void ThrowIfError() => Volatile.Read(ref _error)?.Throw();
+
+    /// <summary>
+    /// Stream I/O 例外の通知先を設定する。
+    /// </summary>
+    internal void SetErrorHandler(Action<Exception> errorHandler) => _errorHandler = errorHandler;
+
+    /// <summary>
+    /// COM 境界を越えられない Stream 例外を保持し、HRESULT を返す。
+    /// </summary>
+    protected int Capture(Exception error)
+    {
+        var captured = ExceptionDispatchInfo.Capture(error);
+        if (Interlocked.CompareExchange(ref _error, captured, null) is null)
+            _errorHandler?.Invoke(error);
+        return error.HResult;
     }
 
     /* --------------------------------------------------------------------- */
@@ -119,5 +152,7 @@ internal class ArchiveStreamBase : DisposableBase
 
     #region Fields
     private readonly bool _dispose = true;
+    private Action<Exception> _errorHandler;
+    private ExceptionDispatchInfo _error;
     #endregion
 }

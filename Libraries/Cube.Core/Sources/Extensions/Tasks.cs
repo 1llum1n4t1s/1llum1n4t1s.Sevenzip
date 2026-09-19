@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -35,14 +35,13 @@ public static class Methods
     /// Forget
     ///
     /// <summary>
-    /// Executes the specified task in the Fire&amp;Forget pattern.
+    /// Discards the specified task without observing or logging its failure.
     /// </summary>
     ///
     /// <param name="src">Source object.</param>
-    ///
     /* --------------------------------------------------------------------- */
-    public static void Forget(this Task src) =>
-        src.ContinueWith(e => Logger.Warn(e.Exception), TaskContinuationOptions.OnlyOnFaulted);
+    [Obsolete("Await the task so that failures are handled by the caller.")]
+    public static void Forget(this Task src) => ArgumentNullException.ThrowIfNull(src);
 
     /* --------------------------------------------------------------------- */
     ///

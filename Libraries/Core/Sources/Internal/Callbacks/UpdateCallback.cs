@@ -21,6 +21,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 using System.Threading;
@@ -298,8 +299,7 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
                 else value.Clear();
                 break;
             default:
-                // 未知のプロパティ ID はトレースログに記録して空値を返す
-                Logger.Trace($"Pid:{pid}");
+                // 未知のプロパティ ID は空値を返す
                 value.Clear();
                 break;
         }
@@ -367,8 +367,6 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     {
         var index = _currentIndex.Value;
         var current = Current(index);
-        if (code != SevenZipCode.Success) Logger.Warn($"[{code}] Index:{index}, Name:{current?.RawName ?? ""}");
-
         // Stream 早期解放の設計メモ (検証済の現時点での結論):
         // 以下の 2 案で早期解放を試みたがどちらも破綻したため、Dispose 時一括解放に集約している:
         //
@@ -395,7 +393,8 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         // ThrowIfError が「純粋なユーザーキャンセル」と誤判定して OperationCanceledException を投げ、
         // 失敗コードと対象エントリ名が失われる。
         var error = new SevenZipException(code);
-        PushException(error);
+        // 入力 Stream の元例外が既に積まれている場合は汎用例外で覆い隠さない。
+        if (!HasExceptions) PushException(error);
         return Report(error, current);
     }
 
@@ -452,25 +451,43 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
             _tempDir = null;
         }
 
+        var errors = new List<Exception>();
         if (disposing)
         {
             // ここで一括解放する。詳細は SetOperationResult のコメントを参照。
             foreach (var stream in streams)
             {
-                try { stream.Dispose(); } catch { /* 解放失敗は無視 */ }
+                try { stream.Dispose(); }
+                catch (Exception e) { errors.Add(e); }
             }
-            _currentIndex.Dispose();
+            try { _currentIndex.Dispose(); }
+            catch (Exception e) { errors.Add(e); }
         }
 
         // ロック中ファイルの一時コピーを削除する。
         // finalizer 経路 (disposing == false) では上のストリーム解放を行わないため、
         // 一時コピーのハンドルが開いたままで削除は失敗する (下の catch に落ちる)。
         // この経路は Dispose 漏れ時のみで、両方の呼び出し元が using を使っている。
-        if (tempDir is not null && Directory.Exists(tempDir))
+        if (disposing)
         {
-            try { Directory.Delete(tempDir, recursive: true); }
-            catch { /* クリーンアップ失敗は無視 */ }
+            if (tempDir is not null && Directory.Exists(tempDir))
+            {
+                try { Directory.Delete(tempDir, recursive: true); }
+                catch (Exception e) { errors.Add(e); }
+            }
         }
+        else
+        {
+            try
+            {
+                if (tempDir is not null && Directory.Exists(tempDir))
+                    Directory.Delete(tempDir, recursive: true);
+            }
+            catch { /* finalizer から例外を漏らさない */ }
+        }
+
+        if (errors.Count == 1) ExceptionDispatchInfo.Capture(errors[0]).Throw();
+        if (errors.Count > 1) throw new AggregateException("Multiple resources failed to dispose.", errors);
     }
 
     #endregion
@@ -504,7 +521,7 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         // List<T>.Add を無同期で行うと登録が失われて Dispose の一括解放から漏れ
         // (write ロックが GC まで残留)、内部配列の resize 競合で
         // IndexOutOfRangeException が出て圧縮全体が間欠的に失敗する。
-        var dest = new ArchiveStreamReader(stream);
+        var dest = new ArchiveStreamReader(stream, dispose: true, CaptureException);
         lock (_stateLock) _streams.Add(dest);
         return dest;
     }

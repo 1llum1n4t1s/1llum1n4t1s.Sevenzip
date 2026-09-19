@@ -130,7 +130,8 @@ public class CompressionOption : ArchiveOption
     /// </para>
     /// <para>
     /// <b>対応フォーマット:</b> 7z / Zip 等の ISequentialOutStream 受け取り型のフォーマット。
-    /// 非対応フォーマットの場合は警告ログを出力して無視される。
+    /// 非対応フォーマットや未対応 API と組み合わせた場合は
+    /// <see cref="NotSupportedException"/> をスローする。
     /// </para>
     /// <para>
     /// <b>制限:</b> <see cref="ArchiveWriter.Save(System.IO.Stream, System.IProgress{Report}, bool)"/>
@@ -283,7 +284,7 @@ public class CompressionOption : ArchiveOption
     /// <para>
     /// <c>true</c> にすると、ライブラリ内部の 2 段試行
     /// (<c>FileShare.Read</c> → <c>FileShare.ReadWrite | FileShare.Delete</c>) で両方失敗した
-    /// ファイルを <see cref="ArchiveWriter._items"/> に追加せず、警告ログを残し、
+    /// ファイルを <see cref="ArchiveWriter._items"/> に追加せず、
     /// <see cref="ArchiveWriter.FileSkipped"/> イベントを発火して呼び出し側に通知する。
     /// 1 ファイルアクセス不能で圧縮全体を死なせたくないデスクトップ GUI 用途で使う。
     /// </para>

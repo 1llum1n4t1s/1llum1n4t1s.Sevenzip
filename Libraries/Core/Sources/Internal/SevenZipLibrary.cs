@@ -324,29 +324,19 @@ internal sealed class SevenZipLibrary
     /// finalizer 経路から借用の返却を安全に実行する。
     /// </summary>
     /// <param name="lib">返却する借用ハンドル。ctor が失敗している場合は null。</param>
-    /// <param name="owner">呼び出し元のクラス名 (ログ出力用)。</param>
     /// <remarks>
     /// <para>
     /// .NET の finalizer スレッドで発生した未処理例外は catch できずプロセスごと即死するため、
-    /// この経路で行う処理は全て try/catch で囲む必要がある。警告ログの出力もその対象に含める:
-    /// この経路が走るのはプロセス終了間際が典型で、ログシンクが既に閉じている・ログファイルが
-    /// ロックされている確率が高い。ログ出力が保護されていないと、後続の
-    /// <see cref="Lease.ReleaseFromFinalizer"/> の try/catch より手前で死ぬ。
+    /// この経路で行う処理は全て try/catch で囲む必要がある。
     /// </para>
     /// <para>
     /// <see cref="ArchiveReader"/> / <see cref="ArchiveWriter"/> の双方から呼ばれる共通処理。
     /// </para>
     /// </remarks>
-    public static void ReleaseFromFinalizerSafe(Lease lib, string owner)
+    public static void ReleaseFromFinalizerSafe(Lease lib)
     {
-        try
-        {
-            Logger.Warn($"[{owner}] Dispose が呼ばれずに finalize されました。" +
-                        "7z.dll はプロセス終了まで解放されません。using / Dispose を使用してください。");
-        }
+        try { lib?.ReleaseFromFinalizer(); }
         catch { /* finalizer で例外を漏らさない */ }
-
-        try { lib?.ReleaseFromFinalizer(); } catch { /* 同上 */ }
     }
 
     #endregion

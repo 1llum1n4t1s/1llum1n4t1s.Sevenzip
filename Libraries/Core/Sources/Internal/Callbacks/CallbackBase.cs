@@ -89,6 +89,19 @@ internal abstract class CallbackBase : DisposableBase
         lock (_exceptionLock) Exceptions.Push(error);
     }
 
+    /// <summary>
+    /// COM Stream 実装が捕捉した例外を、この操作の例外スタックへ接続する。
+    /// </summary>
+    internal void CaptureException(Exception error) => PushException(error);
+
+    /// <summary>
+    /// 捕捉済みの例外が存在するかどうかを取得する。
+    /// </summary>
+    internal bool HasExceptions
+    {
+        get { lock (_exceptionLock) return Exceptions.Count > 0; }
+    }
+
     #endregion
 
     #region Report

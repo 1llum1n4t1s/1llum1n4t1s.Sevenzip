@@ -18,6 +18,7 @@
 /* ------------------------------------------------------------------------- */
 using Cube.Text.Extensions;
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
 namespace Cube.FileSystem.SevenZip;
 
@@ -124,6 +125,23 @@ internal static class ArchiveExtension
         src.GetProperty((uint)index, pid, ref pv);
         // VT_UI8 の場合のみ値を返す（それ以外は default）
         return pv.VarType == VarEnum.VT_UI8 ? pv.GetUInt64() : default;
+    }
+
+    /// <summary>
+    /// アーカイブ項目数を、公開コレクションで表現可能な範囲へ検証して取得する。
+    /// </summary>
+    public static int GetSupportedItemCount(this IInArchive src) =>
+        ToSupportedItemCount(src.GetNumberOfItems());
+
+    /// <summary>
+    /// 7-Zip の uint 項目数を CLR 配列・IReadOnlyList が扱える int へ変換する。
+    /// </summary>
+    internal static int ToSupportedItemCount(uint count)
+    {
+        if (count > int.MaxValue)
+            throw new InvalidDataException(
+                $"The archive contains {count} items, exceeding the supported limit of {int.MaxValue}.");
+        return (int)count;
     }
 
     /// <summary>

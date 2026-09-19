@@ -17,6 +17,7 @@
 /* ------------------------------------------------------------------------- */
 using Cube.Tests.Fixtures;
 using NUnit.Framework;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -170,5 +171,62 @@ internal class CallbackRegressionTest : FileFixture
             Assert.That(stream, Is.Null);
             Assert.That(callback.Exceptions.TryPeek(out _), Is.True);
         });
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// OpenVolumeWithoutSourceHintCapturesClearFailure
+    ///
+    /// <summary>
+    /// Stream 版で sourceHint が無い場合、追加ボリュームを暗黙に探索しないこと。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [Test]
+    public void OpenVolumeWithoutSourceHintCapturesClearFailure()
+    {
+        using var callback = new OpenCallback(string.Empty);
+
+        var code = callback.GetStream("archive.rar.002", out var stream);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(code, Is.Not.EqualTo((int)SevenZipCode.Success));
+            Assert.That(stream, Is.Null);
+            Assert.That(callback.Exceptions.TryPeek(out var error), Is.True);
+            Assert.That(error, Is.TypeOf<InvalidOperationException>());
+            Assert.That(error?.Message, Does.Contain("sourceHint"));
+            Assert.That(error?.Message, Does.Contain("local path of the first volume"));
+        });
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// MultiVolumeStreamRequiresLocalSourceHint
+    ///
+    /// <summary>
+    /// Stream 版の分割書庫は、先頭ボリュームのパスを sourceHint に指定した場合だけ
+    /// 追加ボリュームを解決できること。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    [Test]
+    public void MultiVolumeStreamRequiresLocalSourceHint()
+    {
+        var source = GetSource("SampleVolume.rar.001");
+
+        using (var input = File.OpenRead(source))
+        {
+            var error = Assert.Throws<SevenZipException>(() =>
+            {
+                using var _ = new ArchiveReader(input);
+            });
+            Assert.That(error.InnerException, Is.TypeOf<InvalidOperationException>());
+            Assert.That(error.InnerException?.Message, Does.Contain("sourceHint"));
+        }
+
+        using var hintedInput = File.OpenRead(source);
+        using var reader = new ArchiveReader(hintedInput, sourceHint: source);
+        Assert.That(reader.Items.Count, Is.GreaterThan(0));
     }
 }

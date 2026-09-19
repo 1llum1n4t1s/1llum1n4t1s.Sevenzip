@@ -20,6 +20,7 @@ using Cube.Text.Extensions;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 namespace Cube.FileSystem.SevenZip;
 
@@ -144,8 +145,9 @@ public sealed class ArchiveReader : DisposableBase
     /// （呼び出し側が所有権を保持する）。既定値は true。
     /// </param>
     /// <param name="sourceHint">
-    /// <see cref="Source"/> プロパティに設定する任意のヒント文字列（通常は元のファイルパスや URL）。
-    /// エラーログや再オープン時の識別用。省略時は空文字。
+    /// <see cref="Source"/> プロパティに設定する任意のヒント文字列。
+    /// 分割書庫では追加ボリュームを解決するため、先頭ボリュームのローカルパスが必須。
+    /// URL 等は単一ボリュームの識別子としてのみ使用できる。省略時は空文字。
     /// </param>
     ///
     /* --------------------------------------------------------------------- */
@@ -164,7 +166,9 @@ public sealed class ArchiveReader : DisposableBase
     /// <param name="password">アーカイブのパスワード。</param>
     /// <param name="leaveOpen">Stream の所有権を保持するかどうか。</param>
     /// <param name="sourceHint">
-    /// <see cref="Source"/> プロパティに設定する任意のヒント文字列。省略時は空文字。
+    /// <see cref="Source"/> プロパティに設定する任意のヒント文字列。
+    /// 分割書庫では追加ボリュームを解決するため、先頭ボリュームのローカルパスが必須。
+    /// URL 等は単一ボリュームの識別子としてのみ使用できる。省略時は空文字。
     /// </param>
     ///
     /* --------------------------------------------------------------------- */
@@ -184,7 +188,9 @@ public sealed class ArchiveReader : DisposableBase
     /// <param name="options">展開オプション。</param>
     /// <param name="leaveOpen">Stream の所有権を保持するかどうか。</param>
     /// <param name="sourceHint">
-    /// <see cref="Source"/> プロパティに設定する任意のヒント文字列。省略時は空文字。
+    /// <see cref="Source"/> プロパティに設定する任意のヒント文字列。
+    /// 分割書庫では追加ボリュームを解決するため、先頭ボリュームのローカルパスが必須。
+    /// URL 等は単一ボリュームの識別子としてのみ使用できる。省略時は空文字。
     /// </param>
     ///
     /* --------------------------------------------------------------------- */
@@ -204,7 +210,9 @@ public sealed class ArchiveReader : DisposableBase
     /// <param name="options">展開オプション。</param>
     /// <param name="leaveOpen">Stream の所有権を保持するかどうか。</param>
     /// <param name="sourceHint">
-    /// <see cref="Source"/> プロパティに設定する任意のヒント文字列。省略時は空文字。
+    /// <see cref="Source"/> プロパティに設定する任意のヒント文字列。
+    /// 分割書庫では追加ボリュームを解決するため、先頭ボリュームのローカルパスが必須。
+    /// URL 等は単一ボリュームの識別子としてのみ使用できる。省略時は空文字。
     /// </param>
     ///
     /* --------------------------------------------------------------------- */
@@ -226,7 +234,9 @@ public sealed class ArchiveReader : DisposableBase
     /// <param name="options">展開オプション。</param>
     /// <param name="leaveOpen">Stream の所有権を保持するかどうか。</param>
     /// <param name="sourceHint">
-    /// <see cref="Source"/> プロパティに設定する任意のヒント文字列。省略時は空文字。
+    /// <see cref="Source"/> プロパティに設定する任意のヒント文字列。
+    /// 分割書庫では追加ボリュームを解決するため、先頭ボリュームのローカルパスが必須。
+    /// URL 等は単一ボリュームの識別子としてのみ使用できる。省略時は空文字。
     /// </param>
     ///
     /* --------------------------------------------------------------------- */
@@ -266,11 +276,11 @@ public sealed class ArchiveReader : DisposableBase
             _lib  = lib;
             _core = lib.GetInArchive(format);
 
-            // Format.Zip 以外で Encoding/CodePage 非デフォルト指定の場合は警告
+            // Format.Zip 以外では Encoding/CodePage を適用できないため早期に通知する。
             if (format != Format.Zip && !options.IsDefaultCodePage())
-                Logger.Warn(
-                    $"[ArchiveReader] ArchiveOption.Encoding/CodePage is only honored for Format.Zip " +
-                    $"and ignored for {format}.");
+                throw new ArgumentException(
+                    $"ArchiveOption.Encoding/CodePage is only supported for Format.Zip, not {format}.",
+                    nameof(options));
 
             // Open() 前にコードページを設定する（7z.dll が ZIP ファイル名のデコードに使用）
             // ZIP 形式かつデフォルト（Oem かつ Encoding 未指定）以外の場合のみ SetProperties を呼ぶ
@@ -290,7 +300,7 @@ public sealed class ArchiveReader : DisposableBase
                         {
                             var hr = setProps.SetProperties(keys, pin.AddrOfPinnedObject(), (uint)keys.Length);
                             if (hr != 0) throw new IOException(
-                                $"コードページ {codePage} の設定に失敗しました (HRESULT: 0x{hr:X8})");
+                                $"コードページ {codePage} の設定に失敗しました (HRESULT: 0x{hr:X8})", hr);
                         }
                         finally { pin.Free(); }
                     }
@@ -303,6 +313,7 @@ public sealed class ArchiveReader : DisposableBase
 
             var cb = Hook(new OpenCallback(Source) { Password = _password });
             var ss = new ArchiveStreamReader(src, dispose);
+            ss.SetErrorHandler(cb.CaptureException);
             cb.Streams.Add(ss);
 
             // Keep managed references alive to prevent GC from collecting
@@ -316,7 +327,6 @@ public sealed class ArchiveReader : DisposableBase
             GC.KeepAlive(ss);
             if (code != 0)
             {
-                Logger.Warn($"[Open] Code:{code}");
                 // Open が失敗 (非 S_OK) のまま続行すると、GetNumberOfItems が 0 を返して
                 // Items が空になり「中身ゼロのアーカイブ」として静かに誤動作する
                 // (壊れた書庫・非対応書庫・形式不一致の展開が 0 件成功扱いになる)。失敗を明示する。
@@ -338,7 +348,7 @@ public sealed class ArchiveReader : DisposableBase
                     new COMException($"IInArchive.Open failed. HRESULT: 0x{code:X8}", code));
             }
 
-            Items = new ArchiveCollection(_core, (int)_core.GetNumberOfItems(), Source, format);
+            Items = new ArchiveCollection(_core, _core.GetSupportedItemCount(), Source, format);
         }
         catch
         {
@@ -521,7 +531,6 @@ public sealed class ArchiveReader : DisposableBase
             }
             GC.KeepAlive(cb);
 
-            Logger.Debug($"Code:{code}");
             cb.ThrowIfError(code, checkPassword: true);
         }
         finally { _password.Reset(); }
@@ -586,7 +595,6 @@ public sealed class ArchiveReader : DisposableBase
             }
             GC.KeepAlive(cb);
 
-            Logger.Debug($"Code:{code}");
             cb.ThrowIfError(code, checkPassword: true);
         }
         finally { _password.Reset(); }
@@ -609,9 +617,6 @@ public sealed class ArchiveReader : DisposableBase
     /* --------------------------------------------------------------------- */
     protected override void Dispose(bool disposing)
     {
-        // パスワードキャッシュをクリアしてヒープ上の平文を除去
-        try { _password?.Reset(); } catch { /* reset 失敗は無視 */ }
-
         // finalizer 経路 (disposing == false) では他のマネージドオブジェクトに触らない。
         // _core (source-generated ComObject)・Items・_disposable 内のオブジェクトはそれぞれ
         // 自身が finalizable で、finalize 順序は不定。先に finalize 済みの ComObject の
@@ -625,8 +630,8 @@ public sealed class ArchiveReader : DisposableBase
             // 1 回で参照カウントが永久に 0 へ戻らず、以降に正しく Dispose された全インスタンスの
             // 解放まで無効化される。ReleaseFromFinalizer は FinalRelease と DLL アンロードを
             // 行わないため finalizer スレッドでも安全 (詳細は同メソッドの remarks)。
-            // 警告ログを含め全体を保護する (finalizer スレッドの未処理例外は致死)。
-            SevenZipLibrary.ReleaseFromFinalizerSafe(_lib, nameof(ArchiveReader));
+            // 全体を保護する (finalizer スレッドの未処理例外は致死)。
+            SevenZipLibrary.ReleaseFromFinalizerSafe(_lib);
 
             _lib          = null;
             _core         = null;
@@ -635,24 +640,37 @@ public sealed class ArchiveReader : DisposableBase
             return;
         }
 
+        var errors = new List<Exception>();
+        void Cleanup(Action action)
+        {
+            try { action(); }
+            catch (Exception e) { errors.Add(e); }
+        }
+
+        // パスワードキャッシュをクリアしてヒープ上の平文を除去する。
+        Cleanup(() => _password?.Reset());
+
         // Items (ArchiveCollection) を先に Dispose して内部 _core 参照を null 化する。
         // これで Dispose 後に Items[i] がアクセスされても解放済み COM に触らない
         // (ArchiveCollection.Dispose が _core = null を行う)。
-        (Items as IDisposable)?.Dispose();
+        Cleanup(() => (Items as IDisposable)?.Dispose());
 
         if (_core != null)
         {
+            var core = _core;
             // Open に失敗した直後の Close は失敗しうるが、COM ラッパーと
             // ライブラリ参照カウントの解放は続行する (ctor 失敗クリーンアップ経路)。
-            try { _core.Close(); }
-            catch (Exception e) { Logger.Warn($"[Dispose] Close failed: {e.Message}"); }
+            Cleanup(core.Close);
             // _lib は ctor で Acquire に失敗した場合のみ null (その場合 _core も生成前)
-            _lib?.ReleaseComWrapper(_core);
+            Cleanup(() => _lib?.ReleaseComWrapper(core));
             _core = null;
         }
         _openStream   = null;
         _openCallback = null;
-        _disposable.Dispose();
+        Cleanup(_disposable.Dispose);
+
+        if (errors.Count == 1) ExceptionDispatchInfo.Capture(errors[0]).Throw();
+        if (errors.Count > 1) throw new AggregateException("Multiple resources failed to dispose.", errors);
     }
 
     #endregion

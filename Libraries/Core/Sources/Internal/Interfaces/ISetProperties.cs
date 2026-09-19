@@ -49,6 +49,7 @@ internal partial interface ISetProperties
     /// <returns>OperationResult</returns>
     ///
     /* --------------------------------------------------------------------- */
+    [PreserveSig]
     int SetProperties(
         [MarshalUsing(CountElementName = nameof(numProperties))]
         [MarshalUsing(typeof(Utf16StringMarshaller), ElementIndirectionDepth = 1)]

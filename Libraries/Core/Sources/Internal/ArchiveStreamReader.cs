@@ -63,9 +63,11 @@ internal partial class ArchiveStreamReader : ArchiveStreamBase, IInStream
     /// Value indicating whether to discard the BaseStream object when
     /// disposed.
     /// </param>
+    /// <param name="errorHandler">Stream I/O 例外の通知先。</param>
     ///
     /* --------------------------------------------------------------------- */
-    public ArchiveStreamReader(Stream src, bool dispose) : base(src, dispose) { }
+    public ArchiveStreamReader(Stream src, bool dispose, Action<Exception> errorHandler = null) :
+        base(src, dispose, errorHandler) { }
 
     #endregion
 
@@ -88,10 +90,15 @@ internal partial class ArchiveStreamReader : ArchiveStreamBase, IInStream
     /* --------------------------------------------------------------------- */
     public unsafe int Read(nint data, uint size, nint processedSize)
     {
-        var buf = new Span<byte>((void*)data, (int)size);
-        var read = BaseStream.Read(buf);
-        if (processedSize != 0) *(uint*)processedSize = (uint)read;
-        return 0; // S_OK
+        if (processedSize != 0) *(uint*)processedSize = 0;
+        try
+        {
+            var buf = new Span<byte>((void*)data, checked((int)size));
+            var read = BaseStream.Read(buf);
+            if (processedSize != 0) *(uint*)processedSize = (uint)read;
+            return 0; // S_OK
+        }
+        catch (Exception e) { return Capture(e); }
     }
 
     #endregion

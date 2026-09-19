@@ -55,7 +55,7 @@ public static class FormatFactory
         try
         {
             var bytes = new byte[16];
-            var count = src.Read(bytes, 0, 16);
+            var count = ReadAtMost(src, bytes);
             if (count <= 0) return Format.Unknown;
 
             var span = bytes.AsSpan(0, count);
@@ -133,8 +133,29 @@ public static class FormatFactory
     {
         Span<byte> bytes = stackalloc byte[expected.Length];
         _ = stream.Seek(offset, SeekOrigin.Begin);
-        if (stream.Read(bytes) < expected.Length) return false;
+        if (ReadAtMost(stream, bytes) < expected.Length) return false;
         return bytes.SequenceEqual(expected);
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// ReadAtMost
+    ///
+    /// <summary>
+    /// EOF に達するか、指定バッファが満たされるまでストリームを読み取ります。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    private static int ReadAtMost(Stream stream, Span<byte> buffer)
+    {
+        var count = 0;
+        while (count < buffer.Length)
+        {
+            var read = stream.Read(buffer[count..]);
+            if (read <= 0) break;
+            count += read;
+        }
+        return count;
     }
 
     /* --------------------------------------------------------------------- */
@@ -185,6 +206,9 @@ public static class FormatFactory
     private static (byte[] Signature, Format Format)[] CreateSignatureMap() =>
     [
         ([0x50, 0x4B, 0x03, 0x04],                         Format.Zip),
+        ([0x50, 0x4B, 0x05, 0x06],                         Format.Zip),
+        ([0x50, 0x4B, 0x06, 0x06],                         Format.Zip),
+        ([0x50, 0x4B, 0x07, 0x08],                         Format.Zip),
         ([0x42, 0x5A, 0x68],                                Format.BZip2),
         ([0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00],       Format.Rar),
         ([0x60, 0xEA],                                      Format.Arj),
@@ -200,7 +224,6 @@ public static class FormatFactory
         ([0x4D, 0x5A],                                      Format.PE),
         ([0x7F, 0x45, 0x4C, 0x46],                          Format.Elf),
         ([0x78, 0x61, 0x72, 0x21],                          Format.Xar),
-        ([0x78],                                            Format.Dmg),
         ([0x4D, 0x53, 0x57, 0x49, 0x4D, 0x00, 0x00, 0x00], Format.Wim),
         ([0x43, 0x44, 0x30, 0x30, 0x31],                    Format.Iso),
         ([0x49, 0x54, 0x53, 0x46],                          Format.Chm),

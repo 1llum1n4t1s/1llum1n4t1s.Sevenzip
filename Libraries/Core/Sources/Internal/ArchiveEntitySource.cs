@@ -133,7 +133,6 @@ internal class ArchiveEntitySource : EntitySource
         Extension     = Io.GetExtension(FullName);
         DirectoryName = Io.GetDirectoryName(FullName);
 
-        if (FullName != RawName) Logger.Debug($"{RawName.Quote()} -> {FullName.Quote()}");
     }
 
     /* --------------------------------------------------------------------- */

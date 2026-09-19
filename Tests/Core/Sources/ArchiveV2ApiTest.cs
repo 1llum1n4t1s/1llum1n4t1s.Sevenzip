@@ -43,6 +43,30 @@ namespace Cube.FileSystem.SevenZip.Tests;
 [TestFixture]
 internal class ArchiveV2ApiTest : FileFixture
 {
+    [Test]
+    public void UnsupportedVolumeOptionsThrow()
+    {
+        var tarDest = Get(nameof(UnsupportedVolumeOptionsThrow), "out.tar");
+        using var tarWriter = new ArchiveWriter(Format.Tar,
+            new CompressionOption { VolumeSize = 1024 });
+        using var updateWriter = new ArchiveWriter(Format.Zip,
+            new CompressionOption { VolumeSize = 1024 });
+
+        Assert.That(() => tarWriter.Save(tarDest), Throws.TypeOf<NotSupportedException>());
+        Assert.That(() => updateWriter.Update("source.zip", "destination.zip"),
+            Throws.TypeOf<NotSupportedException>());
+    }
+
+    [Test]
+    public void Reader_NonZipCodePageThrows()
+    {
+        var src = GetSource("SampleEmpty.7z");
+
+        Assert.That(() => new ArchiveReader(src,
+                new ArchiveOption { CodePage = CodePage.Japanese }),
+            Throws.TypeOf<ArgumentException>());
+    }
+
     /* --------------------------------------------------------------------- */
     ///
     /// RenameMap_BasicRename
@@ -223,6 +247,32 @@ internal class ArchiveV2ApiTest : FileFixture
         Assert.That(msg.Cancel, Is.True);
     }
 
+    [Test]
+    public void AsyncPasswordQuery_HandlerExceptionPropagates()
+    {
+        var q = new AsyncPasswordQuery(_ =>
+            Task.FromException<string>(new InvalidOperationException("handler failed")))
+        {
+            AllowBlockingOnCapturedContext = true,
+        };
+        var msg = new QueryMessage<string, string>("test");
+
+        Assert.That(() => q.Request(msg),
+            Throws.TypeOf<InvalidOperationException>().With.Message.EqualTo("handler failed"));
+    }
+
+    [Test]
+    public void AsyncPasswordQuery_ControlCharacterThrows()
+    {
+        var q = new AsyncPasswordQuery(_ => Task.FromResult("secret\nvalue"))
+        {
+            AllowBlockingOnCapturedContext = true,
+        };
+        var msg = new QueryMessage<string, string>("test");
+
+        Assert.That(() => q.Request(msg), Throws.TypeOf<ArgumentException>());
+    }
+
     /* --------------------------------------------------------------------- */
     ///
     /// AsyncPasswordQuery_ThrowsOnCapturedContext
@@ -345,11 +395,13 @@ internal class ArchiveV2ApiTest : FileFixture
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    [Test]
-    public void VolumeSize_SevenZip_SplitsIntoParts()
+    [TestCase(false)]
+    [TestCase(true)]
+    public void VolumeSize_SevenZip_SplitsIntoParts(bool flushToDisk)
     {
         // 十分に大きいデータを作って分割されるようにする (1MB のランダム風データ × 3 エントリ)
-        var workDir = Get(nameof(VolumeSize_SevenZip_SplitsIntoParts), "src");
+        var testName = $"{nameof(VolumeSize_SevenZip_SplitsIntoParts)}_{flushToDisk}";
+        var workDir = Get(testName, "src");
         Io.CreateDirectory(workDir);
         var rnd = new System.Random(42);
         for (var i = 0; i < 3; i++)
@@ -359,13 +411,14 @@ internal class ArchiveV2ApiTest : FileFixture
             File.WriteAllBytes(Io.Combine(workDir, $"chunk{i}.bin"), buf);
         }
 
-        var dest = Get(nameof(VolumeSize_SevenZip_SplitsIntoParts), "out.7z");
+        var dest = Get(testName, "out.7z");
 
         // VolumeSize = 512KB で分割
         var opt = new CompressionOption
         {
             CompressionLevel = CompressionLevel.Fast,
             VolumeSize       = 512 * 1024,
+            FlushToDisk      = flushToDisk,
         };
         using (var w = new ArchiveWriter(Format.SevenZip, opt))
         {
@@ -398,7 +451,7 @@ internal class ArchiveV2ApiTest : FileFixture
         }
 
         // ラウンドトリップ検証: 全ボリュームを結合 → 再展開して元の内容と一致することを確認
-        var joined = Get(nameof(VolumeSize_SevenZip_SplitsIntoParts), "joined.7z");
+        var joined = Get(testName, "joined.7z");
         using (var outStream = File.Create(joined))
         {
             foreach (var p in parts)
@@ -408,7 +461,7 @@ internal class ArchiveV2ApiTest : FileFixture
             }
         }
 
-        var extractDir = Get(nameof(VolumeSize_SevenZip_SplitsIntoParts), "extracted");
+        var extractDir = Get(testName, "extracted");
         using (var r = new ArchiveReader(joined))
         {
             r.Save(extractDir);

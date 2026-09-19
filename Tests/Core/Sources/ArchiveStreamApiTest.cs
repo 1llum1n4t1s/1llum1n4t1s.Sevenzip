@@ -17,6 +17,7 @@
 /* ------------------------------------------------------------------------- */
 using Cube.Tests.Fixtures;
 using NUnit.Framework;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -129,6 +130,68 @@ internal class ArchiveStreamApiTest : FileFixture
         Assert.That(r.Items[0].FullName, Is.EqualTo(Io.GetFileName(src)));
     }
 
+    [Test]
+    public void Writer_Save_ToStream_UnsupportedOptionsThrow()
+    {
+        using var buffer = new MemoryStream();
+        using var volumeWriter = new ArchiveWriter(Format.Zip,
+            new CompressionOption { VolumeSize = 1024 });
+        using var atomicWriter = new ArchiveWriter(Format.Zip,
+            new CompressionOption { AtomicSave = true });
+
+        Assert.That(() => volumeWriter.Save(buffer), Throws.TypeOf<NotSupportedException>());
+        Assert.That(() => atomicWriter.Save(buffer), Throws.TypeOf<NotSupportedException>());
+    }
+
+    [Test]
+    public void Writer_Save_ToStream_FlushFailurePropagates()
+    {
+        using var buffer = new ThrowingFlushStream();
+        using var writer = new ArchiveWriter(Format.Zip,
+            new CompressionOption { FlushToDisk = true });
+
+        Assert.That(() => writer.Save(buffer),
+            Throws.TypeOf<IOException>().With.Message.EqualTo("flush failed"));
+    }
+
+    [Test]
+    public void Writer_Save_ToStream_WriteFailurePreservesOriginalException()
+    {
+        using var output = new ThrowingWriteStream();
+        using var writer = new ArchiveWriter(Format.Zip);
+        writer.Add(GetSource("Sample.txt"));
+
+        var error = Assert.Throws<SevenZipException>(() => writer.Save(output));
+        Assert.That(error.InnerException, Is.TypeOf<IOException>());
+        Assert.That(error.InnerException?.Message, Is.EqualTo("write failed"));
+    }
+
+    [Test]
+    public void Reader_Stream_ReadFailurePreservesOriginalException()
+    {
+        using var input = new ThrowingReadStream(File.ReadAllBytes(GetSource("Sample.zip")));
+
+        var error = Assert.Throws<SevenZipException>(() =>
+        {
+            using var _ = new ArchiveReader(Format.Zip, input, (IQuery<string>)null,
+                new ArchiveOption());
+        });
+        Assert.That(error.InnerException, Is.TypeOf<IOException>());
+        Assert.That(error.InnerException?.Message, Is.EqualTo("read failed"));
+    }
+
+    [Test]
+    public void Reader_ExtractToStream_WriteFailurePreservesOriginalException()
+    {
+        using var reader = new ArchiveReader(GetSource("Sample.zip"));
+        using var output = new ThrowingWriteStream();
+        var index = reader.Items.First(e => !e.IsDirectory).Index;
+
+        var error = Assert.Throws<SevenZipException>(() => reader.Extract(index, output));
+        Assert.That(error.InnerException, Is.TypeOf<IOException>());
+        Assert.That(error.InnerException?.Message, Is.EqualTo("write failed"));
+    }
+
     /* --------------------------------------------------------------------- */
     ///
     /// Writer_AddStream_RoundTrip
@@ -202,6 +265,35 @@ internal class ArchiveStreamApiTest : FileFixture
         var names = r.Items.Select(e => e.FullName).ToList();
         Assert.That(names, Does.Contain("new_stream_entry.txt"));
         Assert.That(names, Does.Not.Contain(firstName));
+    }
+
+    [TestCase(false, false)]
+    [TestCase(true, true)]
+    public void Writer_Update_SameStream_FirstWriteFailureHonorsDestructiveOption(
+        bool allowDestructive, bool expectEmpty)
+    {
+        var original = File.ReadAllBytes(GetSource("Sample.zip"));
+        using var stream = new ThrowingWriteStream(original);
+        using var writer = new ArchiveWriter(Format.Zip);
+
+        Assert.That(() => writer.Update(stream, stream, renameMap: null,
+            allowDestructiveOnWritebackFailure: allowDestructive),
+            Throws.TypeOf<IOException>().With.Message.EqualTo("write failed"));
+        Assert.That(stream.ToArray(), expectEmpty ? Is.Empty : Is.EqualTo(original));
+    }
+
+    [Test]
+    public void Writer_Update_SameStream_RoundTrip()
+    {
+        using var stream = new MemoryStream();
+        using (var source = File.OpenRead(GetSource("Sample.zip"))) source.CopyTo(stream);
+        stream.Position = 0L;
+
+        using (var writer = new ArchiveWriter(Format.Zip)) writer.Update(stream, stream);
+
+        stream.Position = 0L;
+        using var reader = new ArchiveReader(stream);
+        Assert.That(reader.Items.Count, Is.GreaterThan(0));
     }
 
     /* --------------------------------------------------------------------- */
@@ -395,5 +487,30 @@ internal class ArchiveStreamApiTest : FileFixture
         // has_file は両方に含まれる
         Assert.That(withNames.Any(n => n.Contains("has_file")), Is.True);
         Assert.That(noNames.Any(n => n.Contains("has_file")), Is.True);
+    }
+
+    private sealed class ThrowingFlushStream : MemoryStream
+    {
+        public override void Flush() => throw new IOException("flush failed");
+    }
+
+    private sealed class ThrowingReadStream(byte[] buffer) : MemoryStream(buffer, writable: false)
+    {
+        public override int Read(byte[] buffer, int offset, int count) =>
+            throw new IOException("read failed");
+
+        public override int Read(Span<byte> buffer) => throw new IOException("read failed");
+    }
+
+    private sealed class ThrowingWriteStream : MemoryStream
+    {
+        public ThrowingWriteStream() { }
+
+        public ThrowingWriteStream(byte[] buffer) : base(buffer, writable: true) { }
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new IOException("write failed");
+
+        public override void Write(ReadOnlySpan<byte> buffer) => throw new IOException("write failed");
     }
 }

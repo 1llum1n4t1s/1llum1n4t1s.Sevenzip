@@ -44,7 +44,6 @@ dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Platfor
 
 - **Libraries/Core** — メインライブラリ (`Cube.FileSystem.SevenZip`)。ライセンス: LGPLv3
 - **Libraries/Cube.Core** — MVVM ユーティリティ、基底クラス (`DisposableBase`, `Bindable`, `IQuery<T>`, `Io`, `IoController` 等)。`PrivateAssets="all"` で参照し、DLL は NuGet パッケージに直接同梱。ライセンス: Apache 2.0
-- **Libraries/Cube.Logging** — SuperLightLogger ラッパー。テストハーネスでのみ使用（`IsPackable=false`）。NLog からの移行先。
 - **Tests/Core** — NUnit 4 によるテスト（コンソールアプリとして実行、`OutputType=Exe`）。
 - **Tests/Private** — テスト用共通基盤 (`FileFixture`, `SourceFileFixture`)。
 
@@ -118,7 +117,8 @@ Sources/
 
 1. `AddItem()` の outer catch で `_items` に追加せず、ディレクトリなら子孫列挙も止める（`AccessException` を投げない）
 2. `ArchiveWriter.FileSkipped` イベント（引数: `FileSkippedEventArgs { FullName, RelativeName, Reason }`）が発火する
-3. `Logger.Warn` にスキップ事実が記録される
+
+ライブラリは独自にログを出力しないため、スキップ対象と理由は `FileSkipped` イベントで呼び出し元が記録する。
 
 既定は `false`（従来通り throw）で後方互換性を保持する。**現状の適用範囲は `Add()` 時の fail-fast のみ**。Add 通過後に Save 中で他プロセスが新たにロックを取り始める race は対象外（`UpdateCallback.Open` 側は引き続き失敗時に例外を投げる）— 実害が出たら別途対応する。
 
@@ -138,7 +138,7 @@ COM Interop と P/Invoke は全面的に AOT 互換 API に移行済み:
 - `#region` でセクション分割（Constructors / Properties / Methods / Fields）
 - XML ドキュメントコメントは日本語
 - `ArchiveReader` / `ArchiveWriter` は**1 インスタンスを同時に触るスレッドを常に 1 つに保つ**（スレッドアフィニティは要求しない。`SemaphoreSlim` / `lock` / `await` による happens-before があればスレッドを跨いでよい。単純な非同期は `Task.Run` で一連の処理を包む）
-- finalizer 経路（`Dispose(false)`）の処理は**ログ出力を含めて全て try/catch で囲む**。未処理例外はプロセスごと即死するため。`SevenZipLibrary.ReleaseFromFinalizerSafe` に共通化済み
+- finalizer 経路（`Dispose(false)`）の処理は**全て try/catch で囲む**。未処理例外はプロセスごと即死するため。`SevenZipLibrary.ReleaseFromFinalizerSafe` に共通化済み
 
 ## 既知の 7-Zip 26.00 挙動変化
 
@@ -166,14 +166,14 @@ COM Interop と P/Invoke は全面的に AOT 互換 API に移行済み:
 - `_currentIndex` — callback worker ごとの `ThreadLocal<int>`。`GetStream` と対応する `SetOperationResult` のエントリを他 worker と混同しない
 - `CallbackBase.PushException()` — `Exceptions` スタックへの積み込み。**`Exceptions.Push` を直接呼ばない**
 
-自分の解決済みインデックスを持つ呼び出し元は `Current(int)` を使い、引数なしの `Current()` は現在 callback worker の `_currentIndex` を読む。`SetOperationResult` は処理開始時に index と entity をローカルへ確定し、イベント・ログ・進捗で同じ組を使う。
+自分の解決済みインデックスを持つ呼び出し元は `Current(int)` を使い、引数なしの `Current()` は現在 callback worker の `_currentIndex` を読む。`SetOperationResult` は処理開始時に index と entity をローカルへ確定し、イベント・例外・進捗で同じ組を使う。
 
 失敗を `Exceptions` へ積むのは必須である。`ThrowIfError` は `Exceptions` が空なら「純粋なユーザーキャンセル」と判定して `OperationCanceledException` を投げるため、積み忘れると実際の I/O 失敗が「利用者が中断した」に化ける。
 
 ## テストハーネス
 
 - NUnit 4 をコンソールアプリ (`OutputType=Exe`) として実行
-- `[OneTimeSetUp]` (`Tests/Core/Sources/Program.cs`) で `Logger.Configure(new LoggerSource("Cube.FileSystem.SevenZip.Tests.log"))` を呼ぶ
+- テストハーネスはロガーを初期化せず、ログファイルも生成しない
 - `FileFixture` 継承で `Get()` / `GetSource()` ヘルパーが使える
 - 期待値は `Tests/Core/Examples/Expected/{archive}.txt` に CSV 形式で記録
 

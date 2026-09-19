@@ -1,4 +1,4 @@
-﻿/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 //
 // Copyright (c) 2010 CubeSoft, Inc.
 //
@@ -15,29 +15,20 @@
 // limitations under the License.
 //
 /* ------------------------------------------------------------------------- */
-using System;
+using NUnit.Framework;
+using System.IO;
 namespace Cube.FileSystem.SevenZip.Tests;
 
-/* ------------------------------------------------------------------------- */
-///
-/// Program
-///
-/// <summary>
-/// Represents the main program.
-/// </summary>
-///
-/* ------------------------------------------------------------------------- */
-internal static class Program
+[TestFixture]
+internal class ArchiveExtensionTest
 {
-    /* --------------------------------------------------------------------- */
-    ///
-    /// Main
-    ///
-    /// <summary>
-    /// Represents the main method.
-    /// </summary>
-    ///
-    /* --------------------------------------------------------------------- */
-    [STAThread]
-    private static void Main() { }
+    [TestCase(0u, 0)]
+    [TestCase((uint)int.MaxValue, int.MaxValue)]
+    public void ToSupportedItemCount_AcceptsIntRange(uint value, int expected) =>
+        Assert.That(ArchiveExtension.ToSupportedItemCount(value), Is.EqualTo(expected));
+
+    [Test]
+    public void ToSupportedItemCount_RejectsLargerThanIntMax() =>
+        Assert.That(() => ArchiveExtension.ToSupportedItemCount((uint)int.MaxValue + 1u),
+            Throws.TypeOf<InvalidDataException>());
 }

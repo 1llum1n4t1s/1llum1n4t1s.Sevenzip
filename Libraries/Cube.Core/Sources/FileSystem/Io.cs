@@ -510,20 +510,14 @@ public static class Io
     /// <summary>
     /// Creates a directory and sets the attributes.
     /// </summary>
-    ///
-    /// <remarks>
-    /// NOTE: Use Logger.Try for a while because IOException may sometimes
-    /// occur.
-    /// </remarks>
-    ///
     /* --------------------------------------------------------------------- */
     private static void CreateDirectory(string path, Entity src)
     {
         CreateDirectory(path);
-        Logger.Try(() => SetAttributes(path, FileAttributes.Normal | FileAttributes.Directory));
-        Logger.Try(() => _controller.SetCreationTime(path, src.CreationTime));
-        Logger.Try(() => _controller.SetLastWriteTime(path, src.LastWriteTime));
-        Logger.Try(() => SetAttributes(path, src.Attributes));
+        SetAttributes(path, FileAttributes.Normal | FileAttributes.Directory);
+        _controller.SetCreationTime(path, src.CreationTime);
+        _controller.SetLastWriteTime(path, src.LastWriteTime);
+        SetAttributes(path, src.Attributes);
     }
 
     /* --------------------------------------------------------------------- */
@@ -554,9 +548,8 @@ public static class Io
         if (!Exists(path)) return;
 
         try { setter(path); }
-        catch (UnauthorizedAccessException err)
+        catch (UnauthorizedAccessException)
         {
-            Logger.Debug(err.Message);
             var e = new Entity(path);
             SetAttributes(path, GetUnlockAttributes(e.Attributes));
             try { setter(path); }
@@ -632,21 +625,24 @@ public static class Io
         static void move(string s, string d) => MoveOrCopy(s, d, _controller.Move);
 
         if (!Exists(dest)) { move(src, dest); return; }
-        if (!overwrite) return;
+        if (!overwrite) throw new IOException($"The destination path already exists: {dest}");
 
-        var tmp = Combine(Path.GetTempPath(), Guid.NewGuid().ToString("n"));
+        var fullDest = Path.GetFullPath(dest);
+        var directory = Path.GetDirectoryName(fullDest) ??
+            throw new IOException($"Could not resolve the destination directory: {dest}");
+        var tmp = Combine(directory, $".{Path.GetFileName(fullDest)}.{Guid.NewGuid():n}.bak");
         move(dest, tmp);
 
         try
         {
             move(src, dest);
-            Logger.Try(() => Delete(tmp));
         }
         catch
         {
             move(tmp, dest); // recover
             throw;
         }
+        Delete(tmp);
     }
 
     /* --------------------------------------------------------------------- */
@@ -657,12 +653,6 @@ public static class Io
     /// Unlocks the specified file and invokes the specified move or copy
     /// action.
     /// </summary>
-    ///
-    /// <remarks>
-    /// NOTE: Use Logger.Try for a while because IOException may sometimes
-    /// occur.
-    /// </remarks>
-    ///
     /* --------------------------------------------------------------------- */
     private static void MoveOrCopy(string src, string dest, Action<string, string> action)
     {
@@ -671,35 +661,26 @@ public static class Io
         var e = new Entity(src);
         var unlock = GetUnlockAttributes(e.Attributes);
 
-        try
+        try { action(src, dest); }
+        catch (UnauthorizedAccessException)
         {
-            action(src, dest);
-
-            try
-            {
-                _controller.SetCreationTime(dest, e.CreationTime);
-                _controller.SetLastWriteTime(dest, e.LastWriteTime);
-            }
-            catch (UnauthorizedAccessException err)
-            {
-                Logger.Warn(err.Message);
-                Logger.Try(() => SetAttributes(dest, unlock));
-                Logger.Try(() => _controller.SetCreationTime(dest, e.CreationTime));
-                Logger.Try(() => _controller.SetLastWriteTime(dest, e.LastWriteTime));
-            }
-            catch (Exception err) { Logger.Warn(err); }
-        }
-        catch (UnauthorizedAccessException err)
-        {
-            Logger.Warn(err.Message);
             if (Exists(dest)) SetAttributes(dest, unlock);
             action(src, dest);
-            Logger.Try(() => SetAttributes(dest, unlock));
-            Logger.Try(() => _controller.SetCreationTime(dest, e.CreationTime));
-            Logger.Try(() => _controller.SetLastWriteTime(dest, e.LastWriteTime));
         }
 
-        if (Exists(dest)) Logger.Try(() => SetAttributes(dest, e.Attributes));
+        try
+        {
+            _controller.SetCreationTime(dest, e.CreationTime);
+            _controller.SetLastWriteTime(dest, e.LastWriteTime);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            SetAttributes(dest, unlock);
+            _controller.SetCreationTime(dest, e.CreationTime);
+            _controller.SetLastWriteTime(dest, e.LastWriteTime);
+        }
+
+        if (Exists(dest)) SetAttributes(dest, e.Attributes);
     }
 
     /// <summary>

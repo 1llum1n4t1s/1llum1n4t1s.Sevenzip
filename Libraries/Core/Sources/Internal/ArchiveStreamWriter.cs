@@ -64,9 +64,11 @@ internal partial class ArchiveStreamWriter : ArchiveStreamBase, IOutStream
     /// Value indicating whether to discard the BaseStream object when
     /// disposed.
     /// </param>
+    /// <param name="errorHandler">Stream I/O 例外の通知先。</param>
     ///
     /* --------------------------------------------------------------------- */
-    public ArchiveStreamWriter(Stream src, bool dispose) : base(src, dispose) { }
+    public ArchiveStreamWriter(Stream src, bool dispose, Action<Exception> errorHandler = null) :
+        base(src, dispose, errorHandler) { }
 
     #endregion
 
@@ -88,8 +90,12 @@ internal partial class ArchiveStreamWriter : ArchiveStreamBase, IOutStream
     /* --------------------------------------------------------------------- */
     public int SetSize(long size)
     {
-        BaseStream.SetLength(size);
-        return 0;
+        try
+        {
+            BaseStream.SetLength(size);
+            return 0;
+        }
+        catch (Exception e) { return Capture(e); }
     }
 
     /* --------------------------------------------------------------------- */
@@ -111,10 +117,15 @@ internal partial class ArchiveStreamWriter : ArchiveStreamBase, IOutStream
     /* --------------------------------------------------------------------- */
     public unsafe int Write(nint data, uint size, nint processedSize)
     {
-        var buf = new ReadOnlySpan<byte>((void*)data, (int)size);
-        BaseStream.Write(buf);
-        if (processedSize != 0) *(uint*)processedSize = size;
-        return 0;
+        if (processedSize != 0) *(uint*)processedSize = 0;
+        try
+        {
+            var buf = new ReadOnlySpan<byte>((void*)data, checked((int)size));
+            BaseStream.Write(buf);
+            if (processedSize != 0) *(uint*)processedSize = size;
+            return 0;
+        }
+        catch (Exception e) { return Capture(e); }
     }
 
     #endregion

@@ -19,6 +19,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.ExceptionServices;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
@@ -159,13 +160,18 @@ internal partial class OpenCallback : PasswordCallback, IArchiveOpenCallback, IA
         {
             return Run(() =>
             {
+                if (string.IsNullOrEmpty(Source))
+                    throw new InvalidOperationException(
+                        "Opening additional archive volumes from a Stream requires sourceHint " +
+                        "to be the local path of the first volume.");
+
                 var src = ResolveVolumePath(name);
                 if (string.IsNullOrEmpty(src)) return 1; // S_FALSE
                 // 欠落ボリュームは従来どおり null stream + S_OK で通知し、7z.dll に
                 // 開けた範囲の書庫情報を保持させる。安全でないパスだけを S_FALSE で拒否する。
                 if (!Io.Exists(src)) return (int)SevenZipCode.Success;
 
-                var reader = new ArchiveStreamReader(Io.Open(src));
+                var reader = new ArchiveStreamReader(Io.Open(src), dispose: true, CaptureException);
                 Streams.Add(reader);
                 dest = reader;
                 return (int)SevenZipCode.Success;
@@ -244,9 +250,19 @@ internal partial class OpenCallback : PasswordCallback, IArchiveOpenCallback, IA
         // finalizer / SafeHandle が回収する (ArchiveReader.Dispose の同ガード参照)。
         if (disposing)
         {
-            foreach (var item in Streams) item.Dispose();
+            var errors = new List<Exception>();
+            foreach (var item in Streams)
+            {
+                try { item.Dispose(); }
+                catch (Exception e) { errors.Add(e); }
+            }
+            Streams.Clear();
+
+            if (errors.Count == 1) ExceptionDispatchInfo.Capture(errors[0]).Throw();
+            if (errors.Count > 1) throw new AggregateException(
+                "Multiple archive streams failed to dispose.", errors);
         }
-        Streams.Clear();
+        else Streams.Clear();
     }
 
     #endregion

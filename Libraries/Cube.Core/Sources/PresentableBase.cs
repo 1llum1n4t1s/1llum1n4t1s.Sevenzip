@@ -15,7 +15,6 @@
 // limitations under the License.
 //
 /* ------------------------------------------------------------------------- */
-using Cube.Tasks.Extensions;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -362,7 +361,6 @@ public abstract class PresentableBase : ObservableBase, IBindable
                 try { action(); }
                 catch (Exception e)
                 {
-                    Logger.Warn(e);
                     var m = OnMessage(e);
                     if (m is not null) Send(m);
                 }
@@ -370,7 +368,7 @@ public abstract class PresentableBase : ObservableBase, IBindable
         }
 
         if (synchronous) invoke();
-        else Task.Run(invoke).Forget();
+        else _ = Task.Run(invoke);
     }
 
     #endregion

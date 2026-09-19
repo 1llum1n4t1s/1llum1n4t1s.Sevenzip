@@ -14,7 +14,7 @@
 > - [Cube.Core](https://github.com/cube-soft/cube.core) をソリューション内のプロジェクトとして直接組み込み（NuGet 参照ではなく NuGet パッケージに DLL を同梱）
 > - CI を AppVeyor から **GitHub Actions** に移行
 > - NuGet パッケージ名を **1llum1n4t1s.Sevenzip** として公開
-> - **NLog から SuperLightLogger への移行**（テストハーネス用）
+> - **独自ログ出力の廃止** — 処理失敗は例外、進捗やスキップは既存のイベントで呼び出し元へ通知
 >
 > **API / 機能追加**
 > - **アーカイブ更新機能** — `ArchiveWriter.Update()` / `Remove()` で既存アーカイブのファイル追加・置換・削除が可能
@@ -108,16 +108,13 @@ using (var reader = new ArchiveReader(@"path\to\archive", password, options))
 
 ArchiveWriter および ArchiveReader はスレッドセーフではありません。1 つのインスタンスを生成から破棄まで、同時に操作するスレッドが常に 1 つになるようにしてください。スレッドを跨いで受け渡すこと自体は、`SemaphoreSlim` / `lock` / `await` などで直列化されていれば問題ありません（同一スレッドに固定する必要はありません）。単純に非同期化したい場合は、一連の処理全体を `Task.Run()` で実行してください。
 
-### ログの有効化
+### エラーと状態の通知
 
-本ライブラリは既定では何も出力しません。無視されたオプション、アーカイブのオープン失敗コード、スキップしたファイル、`.bak` の削除失敗といった診断情報は警告ログにのみ出るため、切り分けが必要な場合はログの出力先を設定してください。
+本ライブラリは独自にログを出力しません。無効または未対応のオプション、アーカイブのオープン失敗、I/O 失敗などは例外として呼び出し元へ返します。呼び出し元で必要なログ記録や利用者への通知を行ってください。
 
-```csharp
-// 任意の ILoggerSource 実装を渡す（未設定時は何も出力しない）
-Cube.Logger.Configure(new MyLoggerSource());
-```
+旧 `Cube.Logger` / `ILoggerSource` / `LogLevel` API と `Cube.Logging` プロジェクトは削除されています。既存の呼び出し元は、アーカイブ操作を `try` / `catch` し、利用しているアプリケーション側のロガーへ例外を渡してください。
 
-`Cube.Logger` / `Cube.ILoggerSource` は同梱の `Cube.Core.dll` に含まれます。例外として通知される失敗（`SevenZipException` / `ArchiveUpdateException` 等）はログ設定に関係なくスローされ、per-file の進捗・失敗は `IProgress<Report>` と `FileCompressing` / `FileExtracting` / `FileSkipped` イベントでも受け取れます。
+処理の進捗は `IProgress<Report>`、エントリ単位の状態は `FileCompressing` / `FileCompressed` / `FileExtracting` / `FileExtracted` イベントで受け取れます。`CompressionOption.SkipInaccessibleFiles = true` を指定してアクセス不能なファイルを意図的にスキップする場合は、`FileSkipped` イベントで対象と理由を通知します。
 
 ## Upstream からの変更点・注意事項
 
@@ -134,7 +131,7 @@ Cube.Logger.Configure(new MyLoggerSource());
 | `Io.Open(string, FileShare)` | **新規追加** — FileShare 指定付きオープン | Cube.Core の `IoController` にも対応オーバーロード追加。 |
 | `ArchiveReader(Stream, ...)` 等 | **v1.0.66 で追加** — Stream ベース API | path 版と並列運用。`leaveOpen` で所有権制御。 |
 | `ArchiveReader.Extract(int, Stream)` | **v1.0.66** — 単一エントリを直接 Stream に展開 | 辞書版 `Extract(IReadOnlyDictionary<int, Stream>)` も提供。 |
-| `ArchiveWriter.Save(Stream, ...)` | **v1.0.66** — Stream に直接書き込み | `VolumeSize` は未サポート (警告ログ発火 → [ログの有効化](#ログの有効化))。 |
+| `ArchiveWriter.Save(Stream, ...)` | **v1.0.66** — Stream に直接書き込み | `VolumeSize` は未サポートで、指定時は例外をスロー。 |
 | `ArchiveWriter.Add(Stream, name)` | **v1.0.66** — Stream エントリ追加 (一時ファイル経由シム) | `name` は `SafePath` でサニタイズ。 |
 | `ArchiveWriter.Update(Stream, Stream, renameMap?, ...)` | **v1.0.66** — Stream ベース更新 + rename マップ | 自己参照 Stream は `CanSeek` 必須。 |
 | `ArchiveReader.FileExtracting` / `FileExtracted` | **v1.0.66** — per-file 展開イベント | `ArchiveFileEventArgs.Cancel=true` でキャンセル可。 |
@@ -155,7 +152,7 @@ Cube.Logger.Configure(new MyLoggerSource());
 | `Update(Stream, Stream, ..., allowDestructiveOnWritebackFailure)` | **v1.0.70** — 自己参照書き戻し失敗時の dest 挙動をオプトイン化 | デフォルト false = 部分書き込み保持 / true = 全消失 (旧動作)。 |
 | `CompressionOption.SkipInaccessibleFiles` / `ArchiveWriter.FileSkipped` / `FileSkippedEventArgs` | **v1.0.76〜v1.0.86** — アクセス不能または安全に追跡できないアイテムを skip して圧縮を続行 | 既定 `false`（`AccessException`）。`true` で `Add()` 時にアクセス不能なファイルや再解析ポイントを除外し、`FileSkipped` イベント（`FullName` / `RelativeName` / `Reason`）で通知する。v1.0.86 以降はジャンクションやシンボリックリンクのリンク先を再帰的に取り込まない。適用範囲は `Add()` 時の fail-fast のみ。 |
 | 展開先の再解析ポイント競合対策 | **v1.0.87** — 展開中の親ディレクトリ差し替えを防止 | 親ディレクトリを削除・改名不能なハンドルで固定し、ジャンクションやシンボリックリンクへの競合差し替えによる destination 外への書き込みを拒否する。 |
-| `ArchiveWriter.FileCompressed` の並行処理 | **v1.0.87** — マルチスレッド圧縮時のエントリ対応を修正 | 7-Zip からコールバックが並行しても、完了イベントと失敗ログが実際に処理したエントリを指す。 |
+| `ArchiveWriter.FileCompressed` の並行処理 | **v1.0.87** — マルチスレッド圧縮時のエントリ対応を修正 | 7-Zip からコールバックが並行しても、完了イベントと失敗時の例外が実際に処理したエントリに対応する。 |
 | `ArchiveWriter.Update(...)` の入力・例外処理 | **v1.0.87** — rename と更新元オープン失敗を厳密化 | 安全化後に空となる rename は暗黙の削除にせず `ArgumentException` とし、更新元の暗号化・形式・I/Oエラーは `ArchiveReader` と同じ例外契約で通知する。 |
 | `ArchiveWriter(Format, ...)` コンストラクタ | **v1.0.78** — 未対応フォーマットの fail-fast 検証 + ctor 失敗時クリーンアップ | `Format.Unknown` は `UnknownFormatException`、書き込み非対応フォーマット (Rar 等) は ctor で即例外 (従来は `Save()` 時に失敗)。失敗時は取得済みリソースを同期解放。 |
 | 圧縮進捗 (`Report.Bytes`) の精度修正 | **v1.0.79** — 大規模アーカイブで進捗が早期に 100% へ張り付くバグを修正 | 7-Zip の completeValue をグローバル累積値として単調最大値で集計（旧実装はマルチスレッド圧縮の値後退を二重加算していた）。 |

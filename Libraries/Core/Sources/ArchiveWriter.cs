@@ -20,6 +20,7 @@ using Cube.Text.Extensions;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 namespace Cube.FileSystem.SevenZip;
 
@@ -328,7 +329,8 @@ public sealed class ArchiveWriter : DisposableBase
         if (Format == Format.Tar)
         {
             if (Options.VolumeSize > 0)
-                Logger.Warn("[Save] VolumeSize is ignored for Format.Tar");
+                throw new NotSupportedException(
+                    "VolumeSize is not supported when saving Format.Tar archives.");
             SaveAsTar(dest, FilterItems(_items), progress);
             if (Options.FlushToDisk) FileSystemHelper.FlushFile(dest);
             return;
@@ -342,26 +344,23 @@ public sealed class ArchiveWriter : DisposableBase
         // 発生する。大型アーカイブ (数 GB 以上) では TEMP 空き容量とディスク I/O に注意。
         if (Options.VolumeSize > 0)
         {
-            // Format.Zip のボリューム分割は本来 `.z01/.z02/.zip` 形式だが、
-            // 本実装は単純なバイナリ分割 (`.001/.002`) なので他ツール (WinZip / macOS Finder)
-            // では結合後でないと認識できない。呼び出し側に互換性の注意を明示する。
-            if (Format == Format.Zip)
-                Logger.Warn(
-                    "[Save] VolumeSize with Format.Zip produces binary-split (.001/.002) files, " +
-                    "not ZIP-native multi-volume (.z01/.z02/.zip). Other tools may not recognize them.");
+            // Format.Zip でも ZIP ネイティブのマルチボリュームではなく、他形式と同じ
+            // 単純なバイナリ分割 (.001/.002) を生成する。
             // AtomicSave + VolumeSize>0 は上のバリデーションで例外となるためここには到達しない。
 
             var tempPath = Path.Combine(Path.GetTempPath(),
                 $"SevenZipVol_{Guid.NewGuid():N}.tmp");
-            try
+            RunWithCleanup(() =>
             {
                 using (var ss = new ArchiveStreamWriter(Io.Create(tempPath)))
                 {
                     SaveAs(ss, FilterItems(_items), Format, dest, progress);
                 }
-                SplitFileIntoVolumes(tempPath, dest, Options.VolumeSize);
-            }
-            finally { Logger.Try(() => Io.Delete(tempPath)); }
+                SplitFileIntoVolumes(tempPath, dest, Options.VolumeSize, Options.FlushToDisk);
+            }, () =>
+            {
+                if (Io.Exists(tempPath)) Io.Delete(tempPath);
+            });
             return;
         }
 
@@ -449,8 +448,19 @@ public sealed class ArchiveWriter : DisposableBase
                 if (Options.KeepBackupOnUpdate) SetBackupPath(backup);
                 // 削除に失敗した .bak はディスクに残るためパスを公開する。null にすると
                 // LastBackupPath / BackupPaths のどちらにも残らず発見手段が無くなる。
-                else if (Logger.Try(() => Io.Delete(backup))) SetBackupPath(null);
-                else SetBackupPath(backup);
+                else
+                {
+                    try
+                    {
+                        Io.Delete(backup);
+                        SetBackupPath(null);
+                    }
+                    catch
+                    {
+                        SetBackupPath(backup);
+                        throw;
+                    }
+                }
             }
             else SetBackupPath(null);
         }
@@ -492,25 +502,28 @@ public sealed class ArchiveWriter : DisposableBase
         if (dest is null) throw new ArgumentNullException(nameof(dest));
 
         // Stream 版の Save は VolumeSize をサポートしない。
-        // 呼び出し側が設定値を設定していた場合は無視するがサイレントだと気づけないため警告。
         if (Options.VolumeSize > 0)
-            Logger.Warn("[Save] VolumeSize is not supported for Stream output; the option is ignored.");
+            throw new NotSupportedException("VolumeSize is not supported for Stream output.");
         // Stream 版では AtomicSave も無効 (rename 対象のパスが無いため)。
         if (Options.AtomicSave)
-            Logger.Warn("[Save] AtomicSave is not supported for Stream output; the option is ignored.");
+            throw new NotSupportedException("AtomicSave is not supported for Stream output.");
 
         if (Format == Format.Tar)
         {
             // TAR は現状 path ベースで一旦ディスクに書いてから Stream にコピーする
             var tempPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.tmp");
-            try
+            RunWithCleanup(() =>
             {
                 SaveAsTar(tempPath, FilterItems(_items), progress);
                 using var fs = Io.Open(tempPath);
                 // 大型アーカイブを効率的に書き戻すため 1MB バッファで CopyTo
+                dest.Position = 0;
                 fs.CopyTo(dest, bufferSize: FileSystemHelper.DefaultBufferSize);
-            }
-            finally { Logger.Try(() => Io.Delete(tempPath)); }
+                dest.SetLength(dest.Position);
+            }, () =>
+            {
+                if (Io.Exists(tempPath)) Io.Delete(tempPath);
+            });
         }
         else
         {
@@ -600,11 +613,9 @@ public sealed class ArchiveWriter : DisposableBase
         // オプションの組み合わせを早期検証
         Options.Validate(Format);
 
-        // Update はボリューム分割を行わない。無言で無視すると呼び出し側が dest.001 を
-        // 探して見つからず原因に到達できないため、Save(Stream) と同じく警告を出す。
+        // Update はボリューム分割をサポートしない。
         if (Options.VolumeSize > 0)
-            Logger.Warn($"[{nameof(ArchiveWriter)}] CompressionOption.VolumeSize is ignored by " +
-                        $"{nameof(Update)}; the archive is written as a single file.");
+            throw new NotSupportedException("VolumeSize is not supported by Update.");
 
         // 絶対パスに正規化してから同一ファイルかどうかを判定する
         var srcFull  = Path.GetFullPath(source);
@@ -642,21 +653,19 @@ public sealed class ArchiveWriter : DisposableBase
             // using var にすると outStream が開いたまま Io.Move(actualDest, dest) が
             // 走るため、Windows 環境ではウイルスチェッカー等の介入で Move が失敗しうる。
             // UpdateCore 完了後に明示的に Dispose してから Move を実行する。
-            var inStream  = new ArchiveStreamReader(Io.Open(source));
-            var outStream = new ArchiveStreamWriter(Io.Create(actualDest));
-            try
+            ArchiveStreamReader inStream = null;
+            ArchiveStreamWriter outStream = null;
+            RunWithCleanup(() =>
             {
+                inStream  = new ArchiveStreamReader(Io.Open(source));
+                outStream = new ArchiveStreamWriter(Io.Create(actualDest));
                 // sourcePassword ?? Options.Password: ソース用パスワードが未指定の場合は出力用パスワードで代用する
                 UpdateCore(inStream, outStream, source, actualDest, sourcePassword ?? Options.Password, progress);
-            }
-            finally
+            }, () =>
             {
                 // 順序重要: outStream を先に Dispose して Move 可能な状態にする
-                try { outStream.Dispose(); }
-                catch (Exception ex) { Logger.Warn($"[Update] outStream.Dispose failed: {ex.Message}"); }
-                try { inStream.Dispose(); }
-                catch (Exception ex) { Logger.Warn($"[Update] inStream.Dispose failed: {ex.Message}"); }
-            }
+                DisposeStreams(outStream, inStream);
+            });
 
             // 書き込み完了後にディスクフラッシュ。
             // rename 前に tmp ファイルの内容がディスクメディアに到達していることを保証する。
@@ -691,7 +700,7 @@ public sealed class ArchiveWriter : DisposableBase
                     throw; // Move 失敗の元例外を再スローする
                 }
                 // KeepBackupOnUpdate の場合はバックアップを保持し LastBackupPath で公開する。
-                // それ以外は従来通り削除する (失敗しても無視)。
+                // それ以外は削除し、失敗時はパスを公開して例外を呼び出し元へ返す。
                 if (backup is not null)
                 {
                     if (Options.KeepBackupOnUpdate) SetBackupPath(backup);
@@ -699,8 +708,19 @@ public sealed class ArchiveWriter : DisposableBase
                     // パスを公開する。null にしてしまうと LastBackupPath / BackupPaths の
                     // どちらにも残らず、呼び出し側が孤児 .bak を発見する手段が無くなる
                     // (AV スキャナやインデクサの共有違反で日常的に起きる)。
-                    else if (Logger.Try(() => Io.Delete(backup))) SetBackupPath(null);
-                    else SetBackupPath(backup);
+                    else
+                    {
+                        try
+                        {
+                            Io.Delete(backup);
+                            SetBackupPath(null);
+                        }
+                        catch
+                        {
+                            SetBackupPath(backup);
+                            throw;
+                        }
+                    }
                 }
                 else SetBackupPath(null);
             }
@@ -839,9 +859,11 @@ public sealed class ArchiveWriter : DisposableBase
             try
             {
                 dest.Position = 0L;
-                dest.SetLength(0L);
                 outBuffer.Position = 0L;
                 outBuffer.CopyTo(dest, FileSystemHelper.DefaultBufferSize);
+                // CopyTo が最初の書き込みで失敗した場合に元内容を先行消去しない。
+                // 新しい内容が短い場合の末尾切り詰めは、全量書き込み成功後に行う。
+                dest.SetLength(outBuffer.Length);
                 dest.Flush();
                 // 呼び出し元が読み戻せるよう位置を先頭に戻す
                 dest.Position = 0L;
@@ -878,9 +900,7 @@ public sealed class ArchiveWriter : DisposableBase
     /// </param>
     protected override void Dispose(bool disposing)
     {
-        // _lib は ctor の Acquire 失敗時は null のため null 条件演算子で扱う。
-        if (disposing) _lib?.Dispose();
-        else
+        if (!disposing)
         {
             // finalizer 経路 (disposing == false) では通常の Dispose を呼べない。
             // SevenZipLibrary.Dispose は追跡 COM ラッパーの FinalRelease と 7z.dll の
@@ -889,17 +909,37 @@ public sealed class ArchiveWriter : DisposableBase
             // アンマップ領域へ到達する。参照カウントだけを戻す専用経路を使う。
             // ここを省くと Dispose 漏れ 1 回で参照カウントが永久に 0 へ戻らず、
             // 以降に正しく Dispose された全インスタンスの解放まで無効化される。
-            // 警告ログを含め全体を保護する (finalizer スレッドの未処理例外は致死)。
-            SevenZipLibrary.ReleaseFromFinalizerSafe(_lib, nameof(ArchiveWriter));
+            // 全体を保護する (finalizer スレッドの未処理例外は致死)。
+            SevenZipLibrary.ReleaseFromFinalizerSafe(_lib);
+
+            // Add(Stream) で作成した一時ディレクトリを削除する。
+            try
+            {
+                if (_streamTempDir is not null && Directory.Exists(_streamTempDir))
+                    Directory.Delete(_streamTempDir, recursive: true);
+            }
+            catch { /* finalizer から例外を漏らさない */ }
+            _streamTempDir = null;
+            return;
         }
 
-        // Add(Stream) で作成した一時ディレクトリを削除する
-        if (_streamTempDir is not null && Directory.Exists(_streamTempDir))
+        var errors = new List<Exception>();
+        void Cleanup(Action action)
         {
-            try { Directory.Delete(_streamTempDir, recursive: true); }
-            catch { /* クリーンアップ失敗は無視する */ }
-            _streamTempDir = null;
+            try { action(); }
+            catch (Exception e) { errors.Add(e); }
         }
+
+        // _lib は ctor の Acquire 失敗時は null のため null 条件演算子で扱う。
+        Cleanup(() => _lib?.Dispose());
+
+        // Add(Stream) で作成した一時ディレクトリを削除する。
+        if (_streamTempDir is not null && Directory.Exists(_streamTempDir))
+            Cleanup(() => Directory.Delete(_streamTempDir, recursive: true));
+        _streamTempDir = null;
+
+        if (errors.Count == 1) ExceptionDispatchInfo.Capture(errors[0]).Throw();
+        if (errors.Count > 1) throw new AggregateException("Multiple resources failed to dispose.", errors);
     }
 
     #endregion
@@ -933,10 +973,11 @@ public sealed class ArchiveWriter : DisposableBase
         object setProps = null;
         OpenCallback openCb = null;
 
-        try
+        RunWithCleanup(() =>
         {
             // パスワードコールバックを生成する（暗号化アーカイブの読み取り用）
             openCb = new OpenCallback(sourceHint ?? string.Empty) { Password = new PasswordQuery(sourcePassword) };
+            inStream.SetErrorHandler(openCb.CaptureException);
             var openCode = inArchive.Open(inStream, IntPtr.Zero, openCb);
             if (openCode != 0)
             {
@@ -953,12 +994,12 @@ public sealed class ArchiveWriter : DisposableBase
                     new COMException($"IInArchive.Open failed. HRESULT: 0x{openCode:X8}", openCode));
             }
 
-            var existingCount = inArchive.GetNumberOfItems();
+            var existingCount = inArchive.GetSupportedItemCount();
 
             // 既存エントリのパスを 1 回だけ取得してキャッシュする。
             // (removeSet 構築と UpdatePlan で重複して COM RPC しないため)
             var existingPaths = new string[existingCount];
-            for (uint i = 0; i < existingCount; i++)
+            for (var i = 0; i < existingCount; i++)
             {
                 existingPaths[i] = (inArchive.GetString((int)i, ItemPropId.Path) ?? string.Empty)
                     .Replace('/', '\\');
@@ -973,7 +1014,7 @@ public sealed class ArchiveWriter : DisposableBase
             if (_removeNames.Count > 0)
             {
                 removeSet = new HashSet<uint>();
-                for (uint i = 0; i < existingCount; i++)
+                for (var i = 0; i < existingCount; i++)
                 {
                     var path = existingPaths[i];
                     if (path.Length == 0) continue;
@@ -982,7 +1023,7 @@ public sealed class ArchiveWriter : DisposableBase
                     var cursor = path;
                     while (cursor.Length > 0)
                     {
-                        if (_removeNames.Contains(cursor)) { removeSet.Add(i); break; }
+                        if (_removeNames.Contains(cursor)) { removeSet.Add((uint)i); break; }
 
                         var sep = cursor.LastIndexOf('\\');
                         if (sep <= 0) break;
@@ -1001,7 +1042,7 @@ public sealed class ArchiveWriter : DisposableBase
                 planRenameMap = new Dictionary<uint, string>(renameMap.Count);
                 foreach (var kv in renameMap)
                 {
-                    if (kv.Key < 0 || (uint)kv.Key >= existingCount) continue;
+                    if (kv.Key < 0 || kv.Key >= existingCount) continue;
                     // rename 値もサニタイズ (Zip Slip 生成側対策)。
                     // 値が null/empty は「削除」意図なのでそのまま渡す (UpdatePlan 側で削除扱い)。
                     if (string.IsNullOrEmpty(kv.Value))
@@ -1020,8 +1061,8 @@ public sealed class ArchiveWriter : DisposableBase
             // 既存アイテム・新規アイテム・削除セット・rename マップから UpdatePlan を生成する
             // existingPaths をキャッシュ配列から引き、重複 COM GetString を回避する
             var plan = new UpdatePlan(
-                existingCount,
-                idx => existingPaths[idx],
+                (uint)existingCount,
+                idx => existingPaths[(int)idx],
                 filteredItems,
                 removeSet,
                 planRenameMap
@@ -1057,6 +1098,10 @@ public sealed class ArchiveWriter : DisposableBase
                 OnFileFinished = RaiseFileCompressed,
             };
 
+            // Open 中は OpenCallback、UpdateItems 中は UpdateCallback へ Stream 例外を接続する。
+            inStream.SetErrorHandler(cb.CaptureException);
+            outStream.SetErrorHandler(cb.CaptureException);
+
             // UpdateItems を呼び出す
             var code = outArc.UpdateItems(outStream, (uint)plan.TotalCount, cb);
 
@@ -1066,20 +1111,17 @@ public sealed class ArchiveWriter : DisposableBase
             GC.KeepAlive(openCb);
 
             // エラーコードを確認して例外をスローする（キャンセルや圧縮エラーなど）
+            // 追加ボリュームの Stream 例外は OpenCallback が保持するため、操作結果の
+            // 判定前に同じ操作の UpdateCallback へ移す。
+            while (openCb.Exceptions.Count > 0)
+                cb.CaptureException(openCb.Exceptions.Pop());
             cb.ThrowIfError(code);
-        }
-        finally
-        {
-            // COM オブジェクトを DLL アンロード前に確実に解放する
-            _lib.ReleaseComWrapper(setProps);
-            _lib.ReleaseComWrapper(outArchive);
-            if (inArchive is not null)
-            {
-                inArchive.Close(); // アーカイブを閉じてからラッパーを解放する
-                _lib.ReleaseComWrapper(inArchive);
-            }
-            openCb?.Dispose();
-        }
+        }, () => RunCleanupActions("Multiple update resources failed to release.",
+            () => _lib.ReleaseComWrapper(setProps),
+            () => _lib.ReleaseComWrapper(outArchive),
+            () => inArchive?.Close(),
+            () => _lib.ReleaseComWrapper(inArchive),
+            () => openCb?.Dispose()));
     }
 
     /// <summary>
@@ -1094,21 +1136,19 @@ public sealed class ArchiveWriter : DisposableBase
             // setter.Invoke 中の例外でも確実に finally で解放できるよう外枠の try で囲む。
             IOutArchive archive = null;
             ISetProperties setProps = null;
-            try
+            var code = 0;
+            RunWithCleanup(() =>
             {
                 archive  = _lib.GetOutArchive(fmt);
                 setProps = _lib.QueryInterface<ISetProperties>(archive);
                 var setter = CompressionOptionSetter.From(fmt, Options);
-                // setter.Invoke 自体が例外をスローしても下の finally で解放される
                 setter?.Invoke(setProps);
-                return archive.UpdateItems(outStream, (uint)src.Count, cb);
-            }
-            finally
-            {
-                // COM オブジェクトを DLL アンロード前に解放する (順序: setProps → archive)
-                _lib.ReleaseComWrapper(setProps);
-                _lib.ReleaseComWrapper(archive);
-            }
+                outStream.SetErrorHandler(cb.CaptureException);
+                code = archive.UpdateItems(outStream, (uint)src.Count, cb);
+            }, () => RunCleanupActions("Multiple archive resources failed to release.",
+                () => _lib.ReleaseComWrapper(setProps),
+                () => _lib.ReleaseComWrapper(archive)));
+            return code;
         }, src, destHint, progress);
     }
 
@@ -1128,10 +1168,12 @@ public sealed class ArchiveWriter : DisposableBase
     /// <param name="sourcePath">分割元のアーカイブファイル。</param>
     /// <param name="basePath">分割後ファイルの基準パス。</param>
     /// <param name="volumeSize">1 ボリュームあたりの最大バイト数。</param>
+    /// <param name="flushToDisk">各ボリュームの書き込み完了後にディスクへ同期するかどうか。</param>
     /// <remarks>
     /// 既存 basePath.NNN が残っていた場合は上書きする。
     /// </remarks>
-    private static void SplitFileIntoVolumes(string sourcePath, string basePath, long volumeSize)
+    private static void SplitFileIntoVolumes(string sourcePath, string basePath, long volumeSize,
+        bool flushToDisk)
     {
         // バッファサイズは共通定数 FileSystemHelper.DefaultBufferSize を使用
         const int bufferSize = FileSystemHelper.DefaultBufferSize;
@@ -1162,30 +1204,56 @@ public sealed class ArchiveWriter : DisposableBase
 
                 using (var dst = Io.Create(volumePath))
                 {
-                    long written = 0;
-                    while (written < currentVolumeSize)
-                    {
-                        var toRead = (int)Math.Min(bufferSize, currentVolumeSize - written);
-                        var read = src.Read(buffer, 0, toRead);
-                        if (read <= 0) break;
-                        dst.Write(buffer, 0, read);
-                        written += read;
-                    }
+                    var written = CopyVolumeExactly(src, dst, buffer, currentVolumeSize);
                     copied += written;
                 }
+                if (flushToDisk) FileSystemHelper.FlushFile(volumePath);
                 index++;
             }
         }
-        catch
+        catch (Exception error)
         {
             // 生成済みの .001 / .002 / ... を全削除して呼び出し元に例外を伝播する
-            foreach (var v in createdVolumes) Logger.Try(() => Io.Delete(v));
+            var cleanupErrors = new List<Exception>();
+            foreach (var v in createdVolumes)
+            {
+                try
+                {
+                    if (Io.Exists(v)) Io.Delete(v);
+                }
+                catch (Exception cleanupError) { cleanupErrors.Add(cleanupError); }
+            }
+            if (cleanupErrors.Count > 0)
+            {
+                cleanupErrors.Insert(0, error);
+                throw new AggregateException(
+                    "Volume creation and cleanup both failed.", cleanupErrors);
+            }
             throw;
         }
         finally
         {
             System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
         }
+    }
+
+    /// <summary>
+    /// 指定バイト数をボリュームにコピーする。
+    /// </summary>
+    internal static long CopyVolumeExactly(Stream source, Stream destination, byte[] buffer, long count)
+    {
+        long written = 0;
+        while (written < count)
+        {
+            var toRead = (int)Math.Min(buffer.Length, count - written);
+            var read = source.Read(buffer, 0, toRead);
+            if (read <= 0)
+                throw new EndOfStreamException("The source archive ended before the volume was complete.");
+
+            destination.Write(buffer, 0, read);
+            written += read;
+        }
+        return written;
     }
 
     /// <summary>
@@ -1197,7 +1265,7 @@ public sealed class ArchiveWriter : DisposableBase
         var dir = Io.Combine(Io.GetDirectoryName(dest), $"{Guid.NewGuid():N}");
         var tmp = Io.Combine(dir, GetTarName(dest));
 
-        try
+        RunWithCleanup(() =>
         {
             // まず TAR フォーマットで中間ファイルを生成する
             Io.CreateDirectory(Io.GetDirectoryName(tmp));
@@ -1219,12 +1287,11 @@ public sealed class ArchiveWriter : DisposableBase
                 // 圧縮なしの場合は TAR ファイルをそのまま移動する
                 Io.Move(tmp, dest, true);
             }
-        }
-        finally
+        }, () =>
         {
-            // 一時ディレクトリを削除する（失敗しても無視する）
-            Logger.Try(() => Io.Delete(dir));
-        }
+            // 一時ディレクトリを削除する。失敗時は呼び出し元へ例外を返す。
+            if (Io.Exists(dir)) Io.Delete(dir);
+        });
     }
 
     /// <summary>
@@ -1243,8 +1310,6 @@ public sealed class ArchiveWriter : DisposableBase
     /// </summary>
     private void AddRecursive(RawEntity src)
     {
-        Logger.Trace($"[Add] {src.RawName.Quote()}");
-
         // フィルタ関数が true を返した場合はこのアイテムとその子孫をスキップする
         if (Options.Filter?.Invoke(src) ?? false) return;
 
@@ -1369,17 +1434,12 @@ public sealed class ArchiveWriter : DisposableBase
         }
         catch (Exception e)
         {
-            // アクセスエラーをログに記録してラップした例外をスローする
-            Logger.Debug($"Path:{src.FullName.Quote()}, Error:{e.Message} ({e.GetType().Name})");
-
             // SkipInaccessibleFiles=true: アーカイブ全体を死なせず当該アイテムをスキップ。
             // FileShare.None で他プロセスが排他保持しているファイル (Visual Studio の .vsidx 等) を
             // 想定。再解析ポイントも追跡せず同じ通知経路で除外する。_items に追加しないので
             // Save 時の GetStream にも到達せず、ディレクトリの場合は呼び出し元が子孫列挙を止める。
             if (Options?.SkipInaccessibleFiles == true)
             {
-                Logger.Warn($"Skipped inaccessible or unsafe item: Path:{src.FullName.Quote()}, " +
-                            $"Reason:{e.Message} ({e.GetType().Name})");
                 FileSkipped?.Invoke(this, new FileSkippedEventArgs
                 {
                     FullName     = src.FullName,
@@ -1461,23 +1521,67 @@ public sealed class ArchiveWriter : DisposableBase
             _lastActualBackup = backup;
         }
 
-        // 前回値が存在していれば「古い .bak が孤立する」問題を防ぐため自動削除を試みる。
-        // 削除に失敗しても BackupPaths 履歴には残るので呼び出し側が検出・クリーンアップ可能。
+        // 前回値が存在していれば「古い .bak が孤立する」問題を防ぐため自動削除する。
+        // 削除に失敗した場合は BackupPaths 履歴を維持したまま呼び出し元へ例外を返す。
         if (previous is not null && previous != backup)
         {
-            try
-            {
-                if (Io.Exists(previous)) Io.Delete(previous);
-                _backupPaths.Remove(previous);
-            }
-            catch (Exception ex)
-            {
-                Logger.Warn($"[ArchiveWriter] Failed to delete previous backup '{previous}': {ex.Message}");
-            }
+            if (Io.Exists(previous)) Io.Delete(previous);
+            _backupPaths.Remove(previous);
         }
 
         // 削除できた (または対象が無かった) 場合は追跡から外す
         if (backup is null && previous is not null && !Io.Exists(previous)) _lastActualBackup = null;
+    }
+
+    /// <summary>
+    /// 本処理とクリーンアップを両方実行し、双方が失敗した場合も両方の例外を返す。
+    /// </summary>
+    private static void RunWithCleanup(Action action, Action cleanup)
+    {
+        Exception actionError = null;
+        try { action(); }
+        catch (Exception e) { actionError = e; }
+
+        Exception cleanupError = null;
+        try { cleanup(); }
+        catch (Exception e) { cleanupError = e; }
+
+        if (actionError is not null && cleanupError is not null)
+            throw new AggregateException("The operation and its cleanup both failed.",
+                actionError, cleanupError);
+        if (actionError is not null) ExceptionDispatchInfo.Capture(actionError).Throw();
+        if (cleanupError is not null) ExceptionDispatchInfo.Capture(cleanupError).Throw();
+    }
+
+    /// <summary>
+    /// 2 本のストリームを必ず両方破棄し、複数の失敗を集約する。
+    /// </summary>
+    private static void DisposeStreams(IDisposable first, IDisposable second)
+    {
+        var errors = new List<Exception>();
+        try { first?.Dispose(); }
+        catch (Exception e) { errors.Add(e); }
+        try { second?.Dispose(); }
+        catch (Exception e) { errors.Add(e); }
+
+        if (errors.Count == 1) ExceptionDispatchInfo.Capture(errors[0]).Throw();
+        if (errors.Count > 1) throw new AggregateException("Multiple streams failed to dispose.", errors);
+    }
+
+    /// <summary>
+    /// 全ての後始末を実行し、複数失敗時は例外を集約する。
+    /// </summary>
+    private static void RunCleanupActions(string message, params Action[] actions)
+    {
+        var errors = new List<Exception>();
+        foreach (var action in actions)
+        {
+            try { action(); }
+            catch (Exception e) { errors.Add(e); }
+        }
+
+        if (errors.Count == 1) ExceptionDispatchInfo.Capture(errors[0]).Throw();
+        if (errors.Count > 1) throw new AggregateException(message, errors);
     }
 
     #endregion

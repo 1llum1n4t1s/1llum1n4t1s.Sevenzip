@@ -21,7 +21,6 @@
 | `FileSystemHelper` | 展開先の containment 検証、再解析ポイント拒否、親ディレクトリと出力ファイルのハンドル固定 | 書庫内パスと Windows filesystem namespace の境界 |
 | `CompressionOption` / `ArchiveOption` | 形式別の圧縮、暗号化、文字コード、filter、保存耐性などを表現・検証 | 公開設定と 7-Zip property の境界 |
 | `Libraries/Cube.Core` | `Io` / `IoController`、dispose 基盤、query、進捗型などの共通機能 | OS ファイルシステムを差し替え可能な抽象へ変換 |
-| `Libraries/Cube.Logging` | SuperLightLogger を `Cube.ILoggerSource` へ接続 | テストハーネス専用で、配布パッケージの公開依存にはしない |
 | `Tests/Core` / `Tests/Private` | 公開 API、COM callback、文字コード、パス安全性、並行進捗、更新復旧の回帰検証 | 実際の vendored `7z.dll` と差し替え可能な I/O の両方を使用 |
 
 `Cube.Core` は project reference では `PrivateAssets="all"` とし、ビルドした DLL と XML documentation をメイン NuGet パッケージへ直接収録します。
@@ -59,8 +58,9 @@
 - `ArchiveReader` と `ArchiveWriter` の同一 instance は、常に 1 operation だけが触れます。スレッド固定は要求せず、`lock`、`SemaphoreSlim`、`await` などで直列化された受け渡しを許容します。
 - x64 / arm64 以外のプロセスでは、native library を誤ってロードせず `PlatformNotSupportedException` で fail-fast します。
 - COM object の lifetime は `StrategyBasedComWrappers` と参照カウント付き lease で明示管理し、DLL unload 後に wrapper や finalizer が native codeへ触れない順序を守ります。
-- finalizer 経路はログを含む全処理を例外境界内で実行し、未処理例外をプロセスへ漏らしません。
-- 7-Zip の multi-thread 圧縮は callback を並行呼び出しするため、進捗状態、入力 Stream 一覧、一時ディレクトリはそれぞれの lock で保護します。現在 entry は callback worker ごとの `ThreadLocal<int>` に保持し、`GetStream` と対応する `SetOperationResult` のイベント・ログを同じ entry に結び付けます。
+- ライブラリは独自にログを出力しません。公開操作中の失敗は例外として呼び出し元へ返し、進捗と意図的なスキップは既存の progress / event API で通知します。
+- finalizer 経路は全処理を例外境界内で実行し、未処理例外や出力をプロセスへ漏らしません。
+- 7-Zip の multi-thread 圧縮は callback を並行呼び出しするため、進捗状態、入力 Stream 一覧、一時ディレクトリはそれぞれの lock で保護します。現在 entry は callback worker ごとの `ThreadLocal<int>` に保持し、`GetStream` と対応する `SetOperationResult` のイベントと例外を同じ entry に結び付けます。
 - callback 内の失敗は共通の exception stack へ保存します。stack が空の場合だけ純粋な利用者キャンセルとして扱い、I/O 失敗を `OperationCanceledException` に変換しません。
 - 圧縮進捗の completed value は書庫全体の累積値です。並行処理による後退値を再加算せず、単調な最大値として採用し、total を上限にします。
 - `UpdateCallback` が開いた入力 Stream は callback の dispose まで保持します。これは multi-thread 圧縮時の COM 違反を防ぐ一方、処理中の write lock とメモリ使用量が対象ファイル数に比例するトレードオフです。

@@ -221,7 +221,7 @@ public static class IoEx
     public static Entity GetOrDefault(string path)
     {
         try { return path.HasValue() ? new Entity(path) : null; }
-        catch (Exception e) { Logger.Debug(e.Message); }
+        catch (Exception) { }
         return null;
     }
 

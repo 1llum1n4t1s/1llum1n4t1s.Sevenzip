@@ -53,7 +53,8 @@ namespace Cube.FileSystem.SevenZip;
 /// <list type="bullet">
 /// <item><description>ハンドラが非 null/非空文字列を返す → <c>message.Value</c> にセット、<c>Cancel=false</c></description></item>
 /// <item><description>ハンドラが null/空文字列を返す → <c>message.Cancel=true</c>（キャンセル扱い）</description></item>
-/// <item><description>ハンドラが例外を投げる or CancellationToken により中断される → <c>message.Cancel=true</c></description></item>
+/// <item><description>CancellationToken により中断される → <c>message.Cancel=true</c></description></item>
+/// <item><description>ハンドラがその他の例外を投げる → 呼び出し元へ同じ例外を返す</description></item>
 /// </list>
 /// </para>
 /// </remarks>
@@ -144,9 +145,9 @@ public sealed class AsyncPasswordQuery : IQuery<string>
             {
                 // 制御文字 (NUL / LF / CR / TAB 等) はネイティブ 7z.dll 側で誤解される可能性があるため拒否。
                 // メッセージにパスワードを含めないようにする。
-                Logger.Warn("[AsyncPasswordQuery] handler returned a password containing control characters; rejected.");
-                message.Value  = null;
-                message.Cancel = true;
+                throw new ArgumentException(
+                    "The password handler returned a value containing control characters.",
+                    nameof(message));
             }
             else
             {
@@ -156,14 +157,6 @@ public sealed class AsyncPasswordQuery : IQuery<string>
         }
         catch (OperationCanceledException)
         {
-            message.Value  = null;
-            message.Cancel = true;
-        }
-        catch (Exception ex)
-        {
-            // ex.Message は握り潰す (ハンドラ内でパスワードをメッセージに含めた場合の漏洩回避)。
-            // 型名とスタック位置だけログする。
-            Logger.Warn($"[AsyncPasswordQuery] handler threw {ex.GetType().FullName}");
             message.Value  = null;
             message.Cancel = true;
         }
