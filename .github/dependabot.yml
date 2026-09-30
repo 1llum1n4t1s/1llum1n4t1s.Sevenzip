@@ -13,7 +13,11 @@ updates:
         update-types: ["minor", "patch"]
 
   - package-ecosystem: "nuget"
-    directory: "/"
+    directories:
+      - "/Libraries/Core"
+      - "/Libraries/Cube.Core"
+      - "/Tests/Core"
+      - "/Tests/Private"
     schedule:
       interval: "weekly"
       day: "monday"

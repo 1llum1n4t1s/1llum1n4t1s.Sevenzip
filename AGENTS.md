@@ -44,7 +44,7 @@ dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Platfor
 
 - **Libraries/Core** — メインライブラリ (`Cube.FileSystem.SevenZip`)。ライセンス: LGPLv3
 - **Libraries/Cube.Core** — MVVM ユーティリティ、基底クラス (`DisposableBase`, `Bindable`, `IQuery<T>`, `Io`, `IoController` 等)。`PrivateAssets="all"` で参照し、DLL は NuGet パッケージに直接同梱。ライセンス: Apache 2.0
-- **Tests/Core** — NUnit 4 によるテスト（コンソールアプリとして実行、`OutputType=Exe`）。
+- **Tests/Core** — NUnit 5 によるテスト（コンソールアプリとして実行、`OutputType=Exe`）。
 - **Tests/Private** — テスト用共通基盤 (`FileFixture`, `SourceFileFixture`)。
 
 ### ベンダードネイティブバイナリ
@@ -172,7 +172,7 @@ COM Interop と P/Invoke は全面的に AOT 互換 API に移行済み:
 
 ## テストハーネス
 
-- NUnit 4 をコンソールアプリ (`OutputType=Exe`) として実行
+- NUnit 5 をコンソールアプリ (`OutputType=Exe`) として実行
 - テストハーネスはロガーを初期化せず、ログファイルも生成しない
 - `FileFixture` 継承で `Get()` / `GetSource()` ヘルパーが使える
 - 期待値は `Tests/Core/Examples/Expected/{archive}.txt` に CSV 形式で記録
