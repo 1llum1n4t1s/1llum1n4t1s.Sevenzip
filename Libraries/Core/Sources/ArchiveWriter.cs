@@ -19,6 +19,7 @@
 using Cube.Text.Extensions;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
@@ -972,6 +973,7 @@ public sealed class ArchiveWriter : DisposableBase
         object outArchive = null;
         object setProps = null;
         OpenCallback openCb = null;
+        UpdateCallback updateCb = null;
 
         RunWithCleanup(() =>
         {
@@ -1090,7 +1092,7 @@ public sealed class ArchiveWriter : DisposableBase
             }
 
             // UpdateCallback を更新モードで生成する
-            using var cb = new UpdateCallback(filteredItems, plan, existingBytes, progress)
+            var cb = updateCb = new UpdateCallback(filteredItems, plan, existingBytes, progress)
             {
                 Destination    = destHint ?? string.Empty,
                 Password       = Options.Password,
@@ -1117,6 +1119,7 @@ public sealed class ArchiveWriter : DisposableBase
                 cb.CaptureException(openCb.Exceptions.Pop());
             cb.ThrowIfError(code);
         }, () => RunCleanupActions("Multiple update resources failed to release.",
+            () => updateCb?.Dispose(),
             () => _lib.ReleaseComWrapper(setProps),
             () => _lib.ReleaseComWrapper(outArchive),
             () => inArchive?.Close(),
@@ -1170,7 +1173,7 @@ public sealed class ArchiveWriter : DisposableBase
     /// <param name="volumeSize">1 ボリュームあたりの最大バイト数。</param>
     /// <param name="flushToDisk">各ボリュームの書き込み完了後にディスクへ同期するかどうか。</param>
     /// <remarks>
-    /// 既存 basePath.NNN が残っていた場合は上書きする。
+    /// 既存 basePath.NNN は上書きし、新しい分割数を超える旧ボリュームは作成完了後に削除する。
     /// </remarks>
     private static void SplitFileIntoVolumes(string sourcePath, string basePath, long volumeSize,
         bool flushToDisk)
@@ -1234,6 +1237,25 @@ public sealed class ArchiveWriter : DisposableBase
         finally
         {
             System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+        }
+
+        // 新しい分割の作成が成功するまでは旧上位ボリュームを保持する。
+        // 削除に失敗した場合も例外を伝播し、生成済みの新ボリュームは保持する。
+        var fullBasePath = Path.GetFullPath(basePath);
+        var prefix = Path.GetFileName(fullBasePath) + ".";
+        foreach (var path in Io.GetFiles(Path.GetDirectoryName(fullBasePath)))
+        {
+            var name = Path.GetFileName(path);
+            if (!name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+            var suffix = name.Substring(prefix.Length);
+            if (!int.TryParse(suffix, NumberStyles.None, CultureInfo.InvariantCulture, out var number) ||
+                number <= createdVolumes.Count ||
+                suffix != number.ToString("D3", CultureInfo.InvariantCulture)) continue;
+
+            // 類似名・ディレクトリ・リンクは旧ボリュームとして削除しない。
+            if ((File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+                continue;
+            Io.Delete(path);
         }
     }
 
@@ -1460,7 +1482,7 @@ public sealed class ArchiveWriter : DisposableBase
         IList<RawEntity> src, string dest, IProgress<Report> progress)
     {
         // 新規作成モードの UpdateCallback を生成する
-        using var cb = new UpdateCallback(src, progress)
+        var cb = new UpdateCallback(src, progress)
         {
             Destination    = dest ?? string.Empty,
             Password       = Options.Password,
@@ -1468,13 +1490,16 @@ public sealed class ArchiveWriter : DisposableBase
             OnFileFinished = RaiseFileCompressed,
         };
 
-        var code = func(cb);
+        RunWithCleanup(() =>
+        {
+            var code = func(cb);
 
-        // GC が UpdateItems 完了前にコールバックを回収しないよう保持する
-        GC.KeepAlive(cb);
+            // GC が UpdateItems 完了前にコールバックを回収しないよう保持する
+            GC.KeepAlive(cb);
 
-        // エラーコードを確認して例外をスローする
-        cb.ThrowIfError(code);
+            // 圧縮とコールバック破棄の両方が失敗しても元の失敗を保持する。
+            cb.ThrowIfError(code);
+        }, cb.Dispose);
     }
 
     /// <summary>

@@ -17,7 +17,9 @@
 /* ------------------------------------------------------------------------- */
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.ExceptionServices;
 namespace Cube;
 
 /* ------------------------------------------------------------------------- */
@@ -158,19 +160,29 @@ public class DisposableContainer : DisposableBase
     /// Dispose
     ///
     /// <summary>
-    /// Releases the all IDisposable objects. The class will always
-    /// invoke the dispose operation, regardless of the disposing
-    /// parameter.
+    /// 明示的な破棄では全ての子を解放し、解放失敗を呼び出し元へ返す。
+    /// ファイナライザからは他のマネージドオブジェクトを操作しない。
     /// </summary>
     ///
     /// <param name="disposing">
-    /// Note that the class ignores the parameter.
+    /// マネージドリソースを明示的に解放する場合は true。
     /// </param>
     ///
     /* --------------------------------------------------------------------- */
     protected override void Dispose(bool disposing)
     {
-        while (_core.TryDequeue(out var e)) e.Dispose();
+        if (!disposing) return;
+
+        var errors = new List<Exception>();
+        while (_core.TryDequeue(out var e))
+        {
+            try { e.Dispose(); }
+            catch (Exception error) { errors.Add(error); }
+        }
+
+        if (errors.Count == 1) ExceptionDispatchInfo.Capture(errors[0]).Throw();
+        if (errors.Count > 1) throw new AggregateException(
+            "Multiple contained resources failed to dispose.", errors);
     }
 
     #endregion

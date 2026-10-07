@@ -467,7 +467,7 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         // ロック中ファイルの一時コピーを削除する。
         // finalizer 経路 (disposing == false) では上のストリーム解放を行わないため、
         // 一時コピーのハンドルが開いたままで削除は失敗する (下の catch に落ちる)。
-        // この経路は Dispose 漏れ時のみで、両方の呼び出し元が using を使っている。
+        // この経路は Dispose 漏れ時のみで、両方の呼び出し元が後始末で必ず破棄する。
         if (disposing)
         {
             if (tempDir is not null && Directory.Exists(tempDir))

@@ -520,18 +520,10 @@ public sealed class ArchiveReader : DisposableBase
 
         try
         {
-            using var cb = CreateCallback(dest, indices, progress, null);
+            var cb = CreateCallback(dest, indices, progress, null);
             var n    = (uint?)indices?.Length ?? uint.MaxValue;
             var test = dest.HasValue() ? 0 : 1;
-
-            int code;
-            fixed (uint* p = indices)
-            {
-                code = _core.Extract(p, n, test, cb);
-            }
-            GC.KeepAlive(cb);
-
-            cb.ThrowIfError(code, checkPassword: true);
+            ExtractWithCleanup(cb, indices, n, test);
         }
         finally { _password.Reset(); }
     }
@@ -585,17 +577,9 @@ public sealed class ArchiveReader : DisposableBase
 
         try
         {
-            using var cb = CreateCallback(string.Empty, indices, progress, outputs);
+            var cb = CreateCallback(string.Empty, indices, progress, outputs);
             var n = (uint)indices.Length;
-
-            int code;
-            fixed (uint* p = indices)
-            {
-                code = _core.Extract(p, n, 0, cb);
-            }
-            GC.KeepAlive(cb);
-
-            cb.ThrowIfError(code, checkPassword: true);
+            ExtractWithCleanup(cb, indices, n, 0);
         }
         finally { _password.Reset(); }
     }
@@ -780,6 +764,31 @@ public sealed class ArchiveReader : DisposableBase
             OnFileStarted  = RaiseFileExtracting,
             OnFileFinished = RaiseFileExtracted,
         };
+    }
+
+    /// <summary>
+    /// 展開と後始末の両方の失敗を保持し、出力ストリームを必ず解放する。
+    /// </summary>
+    private unsafe void ExtractWithCleanup(ExtractCallback callback, uint[] indices, uint count, int test)
+    {
+        Exception operationError = null;
+        try
+        {
+            int code;
+            fixed (uint* p = indices) { code = _core.Extract(p, count, test, callback); }
+            GC.KeepAlive(callback);
+            callback.ThrowIfError(code, checkPassword: true);
+        }
+        catch (Exception error) { operationError = error; }
+
+        Exception cleanupError = null;
+        try { callback.Dispose(); }
+        catch (Exception error) { cleanupError = error; }
+
+        if (operationError is not null && cleanupError is not null)
+            throw new AggregateException("Extraction and its cleanup both failed.", operationError, cleanupError);
+        if (operationError is not null) ExceptionDispatchInfo.Capture(operationError).Throw();
+        if (cleanupError is not null) ExceptionDispatchInfo.Capture(cleanupError).Throw();
     }
 
     /* --------------------------------------------------------------------- */

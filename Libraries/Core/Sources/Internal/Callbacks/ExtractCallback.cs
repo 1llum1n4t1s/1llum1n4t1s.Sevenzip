@@ -19,6 +19,7 @@
 using Cube.Text.Extensions;
 using System;
 using System.Collections.Generic;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 namespace Cube.FileSystem.SevenZip;
@@ -248,12 +249,20 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
         // finalizer 経路 (disposing == false) では他のマネージドオブジェクト
         // (ArchiveStreamWriter → BaseStream) に触らない。各ストリームは自身の
         // finalizer / SafeHandle が回収する (ArchiveReader.Dispose の同ガード参照)。
-        if (disposing)
+        if (!disposing) return;
+
+        var errors = new List<Exception>();
+        foreach (var kv in _streams)
         {
-            // 未クローズのストリームを全て解放する
-            foreach (var kv in _streams) kv.Value?.Dispose();
+            // 先行ストリームの失敗でも、残りの出力と保護ハンドルを解放する。
+            try { kv.Value?.Dispose(); }
+            catch (Exception error) { errors.Add(error); }
         }
         _streams.Clear();
+
+        if (errors.Count == 1) ExceptionDispatchInfo.Capture(errors[0]).Throw();
+        if (errors.Count > 1) throw new AggregateException(
+            "Multiple extraction streams failed to dispose.", errors);
     }
 
     #endregion
