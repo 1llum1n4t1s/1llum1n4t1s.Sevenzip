@@ -186,7 +186,7 @@ jobs:
       # (ArchiveReaderTest.TestCases のコメントと
       #  Items_ExplicitCodePage_OverridesHostCodePage を参照)。
       - name: Test
-        run: dotnet test Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj -c Release -p:Platform=AnyCPU --no-restore
+        run: dotnet test Tests/Core/Cube.FileSystem.SevenZip.Tests.csproj -c Release -p:Platform=AnyCPU --no-build --no-restore
 
       - name: Pack
         run: dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Platform=AnyCPU --no-build -o Libraries/Core/bin -p:NoDefaultExcludes=true
