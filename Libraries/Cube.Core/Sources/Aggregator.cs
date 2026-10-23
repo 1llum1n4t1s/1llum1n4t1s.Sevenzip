@@ -128,7 +128,7 @@ public sealed class Aggregator : IAggregator
     /* --------------------------------------------------------------------- */
     public void Publish<T>(T message)
     {
-        if (message is null) throw new ArgumentNullException(nameof(message));
+        ArgumentNullException.ThrowIfNull(message);
         var dest = Get(message.GetType());
         if (dest is null) return;
         foreach (var e in dest) e(message);

@@ -251,17 +251,17 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
         // finalizer / SafeHandle が回収する (ArchiveReader.Dispose の同ガード参照)。
         if (!disposing) return;
 
-        var errors = new List<Exception>();
+        List<Exception> errors = null;
         foreach (var kv in _streams)
         {
             // 先行ストリームの失敗でも、残りの出力と保護ハンドルを解放する。
             try { kv.Value?.Dispose(); }
-            catch (Exception error) { errors.Add(error); }
+            catch (Exception error) { (errors ??= []).Add(error); }
         }
         _streams.Clear();
 
-        if (errors.Count == 1) ExceptionDispatchInfo.Capture(errors[0]).Throw();
-        if (errors.Count > 1) throw new AggregateException(
+        if (errors is { Count: 1 }) ExceptionDispatchInfo.Capture(errors[0]).Throw();
+        if (errors is { Count: > 1 }) throw new AggregateException(
             "Multiple extraction streams failed to dispose.", errors);
     }
 
@@ -287,7 +287,7 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
         if (StreamOutputs is not null && StreamOutputs.TryGetValue(e.Index, out var external) && external is not null)
         {
             // 外部 Stream は呼び出し側が所有するため dispose=false で包む
-            var w = new ArchiveStreamWriter(external, dispose: false, CaptureException);
+            var w = new ArchiveStreamWriter(external, dispose: false, ErrorHandler);
             _streams.Add(e.Index, w);
             _streamOutputIndices.Add(e.Index);
             return w;
@@ -313,7 +313,7 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
 
                 // ファイルの場合は書き込みストリームを生成して辞書に登録する
                 var stream = FileSystemHelper.CreateExtractionFile(Destination, e.FullName);
-                var dest   = new ArchiveStreamWriter(stream, dispose: true, CaptureException);
+                var dest   = new ArchiveStreamWriter(stream, dispose: true, ErrorHandler);
                 _streams.Add(e.Index, dest);
                 return dest;
             }

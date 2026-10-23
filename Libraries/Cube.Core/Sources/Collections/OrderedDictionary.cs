@@ -322,7 +322,7 @@ public class OrderedDictionary<TKey, TValue> :
     /* --------------------------------------------------------------------- */
     public void CopyTo(KeyValuePair<TKey, TValue>[] dest, int offset)
     {
-        if (dest is null) throw new ArgumentNullException(nameof(dest));
+        ArgumentNullException.ThrowIfNull(dest);
         if (offset < 0 || offset >= dest.Length) throw new ArgumentOutOfRangeException();
         if (dest.Length - offset < _core.Count) throw new ArgumentException("too small array");
 

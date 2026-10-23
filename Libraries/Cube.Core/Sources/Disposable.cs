@@ -46,7 +46,7 @@ public static class Disposable
     /* --------------------------------------------------------------------- */
     public static IDisposable Create(Action dispose)
     {
-        if (dispose is null) throw new ArgumentNullException(nameof(dispose));
+        ArgumentNullException.ThrowIfNull(dispose);
         return new DisposableCore(dispose);
     }
 

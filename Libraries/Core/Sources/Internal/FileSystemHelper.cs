@@ -61,7 +61,7 @@ internal static class FileSystemHelper
     public static string GetExtractionPath(string root, string relativePath)
     {
         if (string.IsNullOrEmpty(root)) throw new ArgumentException("Extraction root is required.", nameof(root));
-        if (relativePath is null) throw new ArgumentNullException(nameof(relativePath));
+        ArgumentNullException.ThrowIfNull(relativePath);
 
         var rootPath = Path.GetFullPath(root);
         var output   = Path.GetFullPath(Path.Combine(rootPath, relativePath));
@@ -156,7 +156,7 @@ internal static class FileSystemHelper
     /// </summary>
     public static void ApplyExtractionAttributes(string root, string relativePath, Action<string> action)
     {
-        if (action is null) throw new ArgumentNullException(nameof(action));
+        ArgumentNullException.ThrowIfNull(action);
 
         var output = GetExtractionPath(root, relativePath);
         var parent = Path.GetDirectoryName(output) ?? output;

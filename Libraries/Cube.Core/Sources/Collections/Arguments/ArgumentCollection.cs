@@ -176,7 +176,7 @@ public class ArgumentCollection : EnumerableBase<string>, IReadOnlyList<string>
     /// </summary>
     ///
     /* --------------------------------------------------------------------- */
-    internal IArgumentPreprocessor Preprocessor { get; }
+    private IArgumentPreprocessor Preprocessor { get; }
 
     #endregion
 

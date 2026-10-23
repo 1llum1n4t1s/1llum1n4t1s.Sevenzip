@@ -108,7 +108,7 @@ public class Entity
     /* --------------------------------------------------------------------- */
     public Entity(EntitySource src, bool dispose)
     {
-        if (src is null) throw new ArgumentNullException(nameof(src));
+        ArgumentNullException.ThrowIfNull(src);
 
         try
         {

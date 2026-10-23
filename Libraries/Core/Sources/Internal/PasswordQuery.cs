@@ -17,6 +17,7 @@
 //
 /* ------------------------------------------------------------------------- */
 using Cube.Text.Extensions;
+using System.Threading;
 namespace Cube.FileSystem.SevenZip;
 
 /* ------------------------------------------------------------------------- */
@@ -140,6 +141,6 @@ internal class PasswordQuery : IQuery<string>
     #region Fields
     private string _cache;
     // _cache の非同期アクセス保護 (7z.dll の並行呼び出し耐性)
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
     #endregion
 }

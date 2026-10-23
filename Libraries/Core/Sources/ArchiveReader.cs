@@ -256,7 +256,7 @@ public sealed class ArchiveReader : DisposableBase
     private ArchiveReader(Format format, Stream src, string sourceHint,
         PasswordQuery password, ArchiveOption options, bool dispose)
     {
-        if (src is null) throw new ArgumentNullException(nameof(src));
+        ArgumentNullException.ThrowIfNull(src);
         if (format == Format.Unknown)
         {
             // ctor 失敗で this は孤児化する。所有権を受け取った Stream を閉じ、
@@ -313,7 +313,7 @@ public sealed class ArchiveReader : DisposableBase
 
             var cb = Hook(new OpenCallback(Source) { Password = _password });
             var ss = new ArchiveStreamReader(src, dispose);
-            ss.SetErrorHandler(cb.CaptureException);
+            ss.SetErrorHandler(cb.ErrorHandler);
             cb.Streams.Add(ss);
 
             // Keep managed references alive to prevent GC from collecting
@@ -543,7 +543,7 @@ public sealed class ArchiveReader : DisposableBase
     /* --------------------------------------------------------------------- */
     public void Extract(int index, Stream output, IProgress<Report> progress = null)
     {
-        if (output is null) throw new ArgumentNullException(nameof(output));
+        ArgumentNullException.ThrowIfNull(output);
         Extract(new Dictionary<int, Stream> { { index, output } }, progress);
     }
 
@@ -562,7 +562,7 @@ public sealed class ArchiveReader : DisposableBase
     public unsafe void Extract(IReadOnlyDictionary<int, Stream> outputs, IProgress<Report> progress = null)
     {
         ThrowIfDisposed();
-        if (outputs is null) throw new ArgumentNullException(nameof(outputs));
+        ArgumentNullException.ThrowIfNull(outputs);
         if (outputs.Count == 0) return;
 
         // 展開対象の 7-zip インデックス配列を構築する（uint へ変換）。
@@ -624,11 +624,11 @@ public sealed class ArchiveReader : DisposableBase
             return;
         }
 
-        var errors = new List<Exception>();
+        List<Exception> errors = null;
         void Cleanup(Action action)
         {
             try { action(); }
-            catch (Exception e) { errors.Add(e); }
+            catch (Exception e) { (errors ??= []).Add(e); }
         }
 
         // パスワードキャッシュをクリアしてヒープ上の平文を除去する。
@@ -653,8 +653,8 @@ public sealed class ArchiveReader : DisposableBase
         _openCallback = null;
         Cleanup(_disposable.Dispose);
 
-        if (errors.Count == 1) ExceptionDispatchInfo.Capture(errors[0]).Throw();
-        if (errors.Count > 1) throw new AggregateException("Multiple resources failed to dispose.", errors);
+        if (errors is { Count: 1 }) ExceptionDispatchInfo.Capture(errors[0]).Throw();
+        if (errors is { Count: > 1 }) throw new AggregateException("Multiple resources failed to dispose.", errors);
     }
 
     #endregion

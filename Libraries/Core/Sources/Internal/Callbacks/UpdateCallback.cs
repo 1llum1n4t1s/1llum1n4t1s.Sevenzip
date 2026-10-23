@@ -451,17 +451,17 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
             _tempDir = null;
         }
 
-        var errors = new List<Exception>();
+        List<Exception> errors = null;
         if (disposing)
         {
             // ここで一括解放する。詳細は SetOperationResult のコメントを参照。
             foreach (var stream in streams)
             {
                 try { stream.Dispose(); }
-                catch (Exception e) { errors.Add(e); }
+                catch (Exception e) { (errors ??= []).Add(e); }
             }
             try { _currentIndex.Dispose(); }
-            catch (Exception e) { errors.Add(e); }
+            catch (Exception e) { (errors ??= []).Add(e); }
         }
 
         // ロック中ファイルの一時コピーを削除する。
@@ -473,7 +473,7 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
             if (tempDir is not null && Directory.Exists(tempDir))
             {
                 try { Directory.Delete(tempDir, recursive: true); }
-                catch (Exception e) { errors.Add(e); }
+                catch (Exception e) { (errors ??= []).Add(e); }
             }
         }
         else
@@ -486,8 +486,8 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
             catch { /* finalizer から例外を漏らさない */ }
         }
 
-        if (errors.Count == 1) ExceptionDispatchInfo.Capture(errors[0]).Throw();
-        if (errors.Count > 1) throw new AggregateException("Multiple resources failed to dispose.", errors);
+        if (errors is { Count: 1 }) ExceptionDispatchInfo.Capture(errors[0]).Throw();
+        if (errors is { Count: > 1 }) throw new AggregateException("Multiple resources failed to dispose.", errors);
     }
 
     #endregion
@@ -521,7 +521,7 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         // List<T>.Add を無同期で行うと登録が失われて Dispose の一括解放から漏れ
         // (write ロックが GC まで残留)、内部配列の resize 競合で
         // IndexOutOfRangeException が出て圧縮全体が間欠的に失敗する。
-        var dest = new ArchiveStreamReader(stream, dispose: true, CaptureException);
+        var dest = new ArchiveStreamReader(stream, dispose: true, ErrorHandler);
         lock (_stateLock) _streams.Add(dest);
         return dest;
     }
@@ -662,10 +662,10 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     private long _maxCompletedBytes;
     // SetCompleted の並行呼び出し (ZIP Ultra 等のマルチスレッド圧縮) で _maxCompletedBytes を
     // 保護するロック
-    private readonly object _completedLock = new();
+    private readonly Lock _completedLock = new();
     // 並行 GetStream (ZIP Ultra 等のマルチスレッド圧縮) から触られる共有可変状態
     // (_streams / _tempDir) を保護するロック
-    private readonly object _stateLock = new();
+    private readonly Lock _stateLock = new();
     // 最後に進捗を報告した TickCount64（スロットリング用）
     private long _lastReportedTicks;
     // 進捗報告の最小間隔は CallbackBase.ReportIntervalMs に集約

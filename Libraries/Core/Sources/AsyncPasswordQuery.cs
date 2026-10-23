@@ -114,7 +114,7 @@ public sealed class AsyncPasswordQuery : IQuery<string>
     /// </exception>
     public void Request(QueryMessage<string, string> message)
     {
-        if (message is null) throw new ArgumentNullException(nameof(message));
+        ArgumentNullException.ThrowIfNull(message);
 
         // 同期ブロックが危険なコンテキストからの直接呼び出しを検出してデッドロックを事前に防ぐ。
         var ctx = SynchronizationContext.Current;
@@ -172,7 +172,8 @@ public sealed class AsyncPasswordQuery : IQuery<string>
     /// <remarks>
     /// NUL (U+0000) はネイティブ文字列終端扱いされ残りが切り捨てられる。
     /// LF / CR / TAB / その他 U+0001〜U+001F / U+007F もパスワードとしては不正扱い。
-    /// 加えて Unicode Category.Control (U+0080〜U+009F, U+2028, U+2029 等) もブロック。
+    /// 加えて Unicode Category.Control (U+0080〜U+009F) もブロック。
+    /// U+2028 / U+2029 は改行・段落区切りであり、この判定ではブロックしない。
     /// U+200B (ZWSP) / U+200C / U+200D / U+2060 の不可視文字は Format カテゴリなので
     /// ここではブロックしないが、ユーザーが意図せず入れた場合にパスワード比較が狂う可能性がある。
     /// </remarks>
@@ -181,10 +182,7 @@ public sealed class AsyncPasswordQuery : IQuery<string>
         for (var i = 0; i < value.Length; i++)
         {
             var c = value[i];
-            if (c < 0x20 || c == 0x7F) return true;
-            // Unicode カテゴリで "Control" (Cc) に該当するものも拒否 (U+0080〜U+009F 等)
-            if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c)
-                == System.Globalization.UnicodeCategory.Control) return true;
+            if (char.IsControl(c)) return true;
         }
         return false;
     }

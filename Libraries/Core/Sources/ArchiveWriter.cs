@@ -215,7 +215,7 @@ public sealed class ArchiveWriter : DisposableBase
     public void Add(string src, string name)
     {
         ThrowIfDisposed();
-        if (name is null) throw new ArgumentNullException(nameof(name));
+        ArgumentNullException.ThrowIfNull(name);
         // アーカイブ内の相対パスをサニタイズ (Zip Slip 生成側対策)
         var safe = SanitizeRelativeName(name);
         if (!safe.HasValue())
@@ -241,7 +241,7 @@ public sealed class ArchiveWriter : DisposableBase
     public void Add(Stream src, string name)
     {
         ThrowIfDisposed();
-        if (src is null) throw new ArgumentNullException(nameof(src));
+        ArgumentNullException.ThrowIfNull(src);
         if (string.IsNullOrEmpty(name)) throw new ArgumentException("name is required", nameof(name));
 
         // 共通サニタイズ (Zip Slip 生成側対策)
@@ -443,27 +443,7 @@ public sealed class ArchiveWriter : DisposableBase
                 throw;
             }
 
-            // Step 5: .bak のクリーンアップ (または保持)
-            if (backup is not null)
-            {
-                if (Options.KeepBackupOnUpdate) SetBackupPath(backup);
-                // 削除に失敗した .bak はディスクに残るためパスを公開する。null にすると
-                // LastBackupPath / BackupPaths のどちらにも残らず発見手段が無くなる。
-                else
-                {
-                    try
-                    {
-                        Io.Delete(backup);
-                        SetBackupPath(null);
-                    }
-                    catch
-                    {
-                        SetBackupPath(backup);
-                        throw;
-                    }
-                }
-            }
-            else SetBackupPath(null);
+            CompleteBackup(backup);
         }
         catch (ArchiveUpdateException)
         {
@@ -500,7 +480,7 @@ public sealed class ArchiveWriter : DisposableBase
     public void Save(Stream dest, IProgress<Report> progress = null, bool leaveOpen = true)
     {
         ThrowIfDisposed();
-        if (dest is null) throw new ArgumentNullException(nameof(dest));
+        ArgumentNullException.ThrowIfNull(dest);
 
         // Stream 版の Save は VolumeSize をサポートしない。
         if (Options.VolumeSize > 0)
@@ -548,7 +528,7 @@ public sealed class ArchiveWriter : DisposableBase
     public void Remove(string relativeName)
     {
         ThrowIfDisposed();
-        if (relativeName is null) throw new ArgumentNullException(nameof(relativeName));
+        ArgumentNullException.ThrowIfNull(relativeName);
         // 空文字列 / 空白のみを拒否 (プレフィックスが "\\" になり全エントリ削除を誘発するため)
         var normalized = relativeName.Replace('/', '\\').TrimEnd('\\');
         if (string.IsNullOrWhiteSpace(normalized))
@@ -700,30 +680,7 @@ public sealed class ArchiveWriter : DisposableBase
                     }
                     throw; // Move 失敗の元例外を再スローする
                 }
-                // KeepBackupOnUpdate の場合はバックアップを保持し LastBackupPath で公開する。
-                // それ以外は削除し、失敗時はパスを公開して例外を呼び出し元へ返す。
-                if (backup is not null)
-                {
-                    if (Options.KeepBackupOnUpdate) SetBackupPath(backup);
-                    // KeepBackupOnUpdate=false でも、削除に失敗した .bak は残るため
-                    // パスを公開する。null にしてしまうと LastBackupPath / BackupPaths の
-                    // どちらにも残らず、呼び出し側が孤児 .bak を発見する手段が無くなる
-                    // (AV スキャナやインデクサの共有違反で日常的に起きる)。
-                    else
-                    {
-                        try
-                        {
-                            Io.Delete(backup);
-                            SetBackupPath(null);
-                        }
-                        catch
-                        {
-                            SetBackupPath(backup);
-                            throw;
-                        }
-                    }
-                }
-                else SetBackupPath(null);
+                CompleteBackup(backup);
             }
         }
         catch (ArchiveUpdateException)
@@ -820,8 +777,8 @@ public sealed class ArchiveWriter : DisposableBase
         ThrowIfDisposed();
         if (Format == Format.Tar)
             throw new NotSupportedException("Update is not supported for TAR format.");
-        if (source is null) throw new ArgumentNullException(nameof(source));
-        if (dest is null) throw new ArgumentNullException(nameof(dest));
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(dest);
 
         var sameStream = ReferenceEquals(source, dest);
 
@@ -924,11 +881,11 @@ public sealed class ArchiveWriter : DisposableBase
             return;
         }
 
-        var errors = new List<Exception>();
+        List<Exception> errors = null;
         void Cleanup(Action action)
         {
             try { action(); }
-            catch (Exception e) { errors.Add(e); }
+            catch (Exception e) { (errors ??= []).Add(e); }
         }
 
         // _lib は ctor の Acquire 失敗時は null のため null 条件演算子で扱う。
@@ -939,8 +896,8 @@ public sealed class ArchiveWriter : DisposableBase
             Cleanup(() => Directory.Delete(_streamTempDir, recursive: true));
         _streamTempDir = null;
 
-        if (errors.Count == 1) ExceptionDispatchInfo.Capture(errors[0]).Throw();
-        if (errors.Count > 1) throw new AggregateException("Multiple resources failed to dispose.", errors);
+        if (errors is { Count: 1 }) ExceptionDispatchInfo.Capture(errors[0]).Throw();
+        if (errors is { Count: > 1 }) throw new AggregateException("Multiple resources failed to dispose.", errors);
     }
 
     #endregion
@@ -979,7 +936,7 @@ public sealed class ArchiveWriter : DisposableBase
         {
             // パスワードコールバックを生成する（暗号化アーカイブの読み取り用）
             openCb = new OpenCallback(sourceHint ?? string.Empty) { Password = new PasswordQuery(sourcePassword) };
-            inStream.SetErrorHandler(openCb.CaptureException);
+            inStream.SetErrorHandler(openCb.ErrorHandler);
             var openCode = inArchive.Open(inStream, IntPtr.Zero, openCb);
             if (openCode != 0)
             {
@@ -1101,8 +1058,8 @@ public sealed class ArchiveWriter : DisposableBase
             };
 
             // Open 中は OpenCallback、UpdateItems 中は UpdateCallback へ Stream 例外を接続する。
-            inStream.SetErrorHandler(cb.CaptureException);
-            outStream.SetErrorHandler(cb.CaptureException);
+            inStream.SetErrorHandler(cb.ErrorHandler);
+            outStream.SetErrorHandler(cb.ErrorHandler);
 
             // UpdateItems を呼び出す
             var code = outArc.UpdateItems(outStream, (uint)plan.TotalCount, cb);
@@ -1146,7 +1103,7 @@ public sealed class ArchiveWriter : DisposableBase
                 setProps = _lib.QueryInterface<ISetProperties>(archive);
                 var setter = CompressionOptionSetter.From(fmt, Options);
                 setter?.Invoke(setProps);
-                outStream.SetErrorHandler(cb.CaptureException);
+                outStream.SetErrorHandler(cb.ErrorHandler);
                 code = archive.UpdateItems(outStream, (uint)src.Count, cb);
             }, () => RunCleanupActions("Multiple archive resources failed to release.",
                 () => _lib.ReleaseComWrapper(setProps),
@@ -1217,16 +1174,16 @@ public sealed class ArchiveWriter : DisposableBase
         catch (Exception error)
         {
             // 生成済みの .001 / .002 / ... を全削除して呼び出し元に例外を伝播する
-            var cleanupErrors = new List<Exception>();
+            List<Exception> cleanupErrors = null;
             foreach (var v in createdVolumes)
             {
                 try
                 {
                     if (Io.Exists(v)) Io.Delete(v);
                 }
-                catch (Exception cleanupError) { cleanupErrors.Add(cleanupError); }
+                catch (Exception cleanupError) { (cleanupErrors ??= []).Add(cleanupError); }
             }
-            if (cleanupErrors.Count > 0)
+            if (cleanupErrors is not null)
             {
                 cleanupErrors.Insert(0, error);
                 throw new AggregateException(
@@ -1372,7 +1329,7 @@ public sealed class ArchiveWriter : DisposableBase
     /// <c>Update(..., renameMap, ...)</c> の rename 値に共通で適用する。
     /// <c>..</c> / ドライブレター / UNC / 絶対パスは除去される。
     /// </remarks>
-    internal static string SanitizeRelativeName(string name)
+    private static string SanitizeRelativeName(string name)
     {
         if (name is null) return null;
         return new SafePath(name)
@@ -1441,7 +1398,7 @@ public sealed class ArchiveWriter : DisposableBase
                 try
                 {
                     using var stream = Io.Open(src.FullName);
-                    if (stream is null) throw new ArgumentNullException(nameof(stream));
+                    ArgumentNullException.ThrowIfNull(stream);
                 }
                 catch (IOException ex) when (FileSystemHelper.IsFileLocked(ex))
                 {
@@ -1525,6 +1482,31 @@ public sealed class ArchiveWriter : DisposableBase
     private void ResetLastBackupPath() => LastBackupPath = null;
 
     /// <summary>
+    /// 保存完了後のバックアップ保持・削除と追跡情報の更新を行う。
+    /// </summary>
+    /// <param name="backup">今回生成したバックアップ。生成しなかった場合は null。</param>
+    private void CompleteBackup(string backup)
+    {
+        if (backup is null || Options.KeepBackupOnUpdate)
+        {
+            SetBackupPath(backup);
+            return;
+        }
+
+        try
+        {
+            Io.Delete(backup);
+            SetBackupPath(null);
+        }
+        catch
+        {
+            // 削除に失敗したバックアップも呼び出し側が発見できるようにする。
+            SetBackupPath(backup);
+            throw;
+        }
+    }
+
+    /// <summary>
     /// 新しい .bak パスを設定する共通ヘルパー。
     /// 前回値が残っていれば自動削除し、<see cref="LastBackupPath"/> と <see cref="BackupPaths"/> 履歴を更新する。
     /// </summary>
@@ -1583,14 +1565,14 @@ public sealed class ArchiveWriter : DisposableBase
     /// </summary>
     private static void DisposeStreams(IDisposable first, IDisposable second)
     {
-        var errors = new List<Exception>();
+        List<Exception> errors = null;
         try { first?.Dispose(); }
-        catch (Exception e) { errors.Add(e); }
+        catch (Exception e) { (errors ??= []).Add(e); }
         try { second?.Dispose(); }
-        catch (Exception e) { errors.Add(e); }
+        catch (Exception e) { (errors ??= []).Add(e); }
 
-        if (errors.Count == 1) ExceptionDispatchInfo.Capture(errors[0]).Throw();
-        if (errors.Count > 1) throw new AggregateException("Multiple streams failed to dispose.", errors);
+        if (errors is { Count: 1 }) ExceptionDispatchInfo.Capture(errors[0]).Throw();
+        if (errors is { Count: > 1 }) throw new AggregateException("Multiple streams failed to dispose.", errors);
     }
 
     /// <summary>
@@ -1598,15 +1580,15 @@ public sealed class ArchiveWriter : DisposableBase
     /// </summary>
     private static void RunCleanupActions(string message, params Action[] actions)
     {
-        var errors = new List<Exception>();
+        List<Exception> errors = null;
         foreach (var action in actions)
         {
             try { action(); }
-            catch (Exception e) { errors.Add(e); }
+            catch (Exception e) { (errors ??= []).Add(e); }
         }
 
-        if (errors.Count == 1) ExceptionDispatchInfo.Capture(errors[0]).Throw();
-        if (errors.Count > 1) throw new AggregateException(message, errors);
+        if (errors is { Count: 1 }) ExceptionDispatchInfo.Capture(errors[0]).Throw();
+        if (errors is { Count: > 1 }) throw new AggregateException(message, errors);
     }
 
     #endregion

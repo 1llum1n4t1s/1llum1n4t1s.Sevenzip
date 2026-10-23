@@ -171,7 +171,7 @@ internal partial class OpenCallback : PasswordCallback, IArchiveOpenCallback, IA
                 // 開けた範囲の書庫情報を保持させる。安全でないパスだけを S_FALSE で拒否する。
                 if (!Io.Exists(src)) return (int)SevenZipCode.Success;
 
-                var reader = new ArchiveStreamReader(Io.Open(src), dispose: true, CaptureException);
+                var reader = new ArchiveStreamReader(Io.Open(src), dispose: true, ErrorHandler);
                 Streams.Add(reader);
                 dest = reader;
                 return (int)SevenZipCode.Success;
@@ -250,16 +250,16 @@ internal partial class OpenCallback : PasswordCallback, IArchiveOpenCallback, IA
         // finalizer / SafeHandle が回収する (ArchiveReader.Dispose の同ガード参照)。
         if (disposing)
         {
-            var errors = new List<Exception>();
+            List<Exception> errors = null;
             foreach (var item in Streams)
             {
                 try { item.Dispose(); }
-                catch (Exception e) { errors.Add(e); }
+                catch (Exception e) { (errors ??= []).Add(e); }
             }
             Streams.Clear();
 
-            if (errors.Count == 1) ExceptionDispatchInfo.Capture(errors[0]).Throw();
-            if (errors.Count > 1) throw new AggregateException(
+            if (errors is { Count: 1 }) ExceptionDispatchInfo.Capture(errors[0]).Throw();
+            if (errors is { Count: > 1 }) throw new AggregateException(
                 "Multiple archive streams failed to dispose.", errors);
         }
         else Streams.Clear();

@@ -521,7 +521,7 @@ internal sealed class SevenZipLibrary
     private static SevenZipLibrary _shared;
     // スレッドセーフな操作のための同期オブジェクト。
     // _shared と、全世代の _refCount / _tracked / _keepAlive を保護する。
-    private static readonly object _lock = new();
+    private static readonly Lock _lock = new();
 
     // この世代を借りている Lease の数（世代ごとに独立。static にすると世代跨ぎで誤カウントする）
     private int _refCount;

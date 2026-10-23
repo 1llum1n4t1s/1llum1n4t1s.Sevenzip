@@ -19,6 +19,7 @@
 using Cube.Text.Extensions;
 using System;
 using System.Collections.Generic;
+using System.Threading;
 namespace Cube.FileSystem.SevenZip;
 
 /// <summary>
@@ -32,7 +33,11 @@ internal abstract class CallbackBase : DisposableBase
     /// 指定した引数で CallbackBase クラスの新しいインスタンスを初期化する。
     /// </summary>
     /// <param name="aggregator">進捗報告を受け取るオブジェクト。null の場合は報告しない。</param>
-    protected CallbackBase(IProgress<Report> aggregator) => _inner = aggregator;
+    protected CallbackBase(IProgress<Report> aggregator)
+    {
+        _inner = aggregator;
+        ErrorHandler = CaptureException;
+    }
 
     #endregion
 
@@ -68,6 +73,11 @@ internal abstract class CallbackBase : DisposableBase
     /// 取り出しは処理完了後の単一スレッドから行う想定。
     /// </remarks>
     public Stack<Exception> Exceptions { get; } = new();
+
+    /// <summary>
+    /// この操作のストリーム間で共有する例外通知先を取得する。
+    /// </summary>
+    internal Action<Exception> ErrorHandler { get; }
 
     #endregion
 
@@ -330,6 +340,6 @@ internal abstract class CallbackBase : DisposableBase
     // 進捗通知の受信者。null の場合は報告をスキップする。
     private readonly IProgress<Report> _inner;
     // 並行コールバックからの Exceptions への積み込みを直列化するロック
-    private readonly object _exceptionLock = new();
+    private readonly Lock _exceptionLock = new();
     #endregion
 }
