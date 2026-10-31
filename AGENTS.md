@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code and other coding agents working in this repository.
+この文書は本リポジトリで作業するエージェント向けの規約と検証手順です。システム構造と設計判断は [DESIGN.md](DESIGN.md)、利用方法は [Readme.md](Readme.md) を参照してください。
 
 ## プロジェクト概要
 
@@ -9,6 +9,9 @@ This file provides guidance to Claude Code and other coding agents working in th
 ## ビルド・テストコマンド
 
 ```bash
+# lockfile と依存関係の整合性を確認
+dotnet restore Cube.FileSystem.SevenZip.slnx --locked-mode
+
 # ソリューション全体のビルド（Managed DLL は AnyCPU、ネイティブ 7z.dll のみ RID で分岐）
 dotnet build Cube.FileSystem.SevenZip.slnx -c Debug -p:Platform=AnyCPU
 
@@ -30,97 +33,20 @@ dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Platfor
 - `-p:Platform` を各プロジェクトへ伝播させるには `.slnx` の per-project `<Platform Solution="*|x64" Project="x64" />` mapping が必要。これが無いと solution 経由のビルドは指定を無視して全プロジェクトを AnyCPU で解決し、同梱ネイティブ 7z.dll の選択と出力先分岐が効かなくなる（`.slnx` にプロジェクトを追加したら mapping も追加する）。
 - テスト実行時は Tests/Core が RID を Platform に追従させるため、出力は `bin\Debug\net10.0-windows8\win-x64\`（AnyCPU / x64）または `bin\arm64\Debug\net10.0-windows8\win-arm64\`（arm64）に配置される。RID を `win-x64` 固定にすると `-p:Platform=arm64` で `PlatformTarget` と衝突して `NETSDK1032` になる。arm64 のテスト実行自体は arm64 ホストが必要。
 - managed アセンブリはアーキ非依存で、NuGet パッケージは Platform に関係なく x64 / arm64 両方のネイティブ 7z.dll を同梱する。pack は AnyCPU で行えば十分。
-- Tests/Core の RID が Platform 依存なので、`Tests/Core/packages.lock.json` の RID セクション（`net10.0-windows8.0/win-x64`）も Platform 依存になる。**`-p:Platform=arm64` で restore / build すると `win-arm64` に書き換わる**。CI は `dotnet restore --locked-mode`（AnyCPU）で検証するため、arm64 を試した後は `git checkout -- Tests/Core/packages.lock.json` で戻してからコミットする。
+- Tests/Core の RID が Platform 依存なので、`Tests/Core/packages.lock.json` の RID セクション（`net10.0-windows8.0/win-x64`）も Platform 依存になる。**`-p:Platform=arm64` で restore / build すると `win-arm64` に書き換わる**。CI は `dotnet restore --locked-mode`（AnyCPU）で検証するため、arm64 を試した後は、開始時の未コミット変更を保護したうえで、今回の検証による RID 差分だけを戻し、AnyCPU の `--locked-mode` restore を確認する。
 
 ## バージョン管理
 
 バージョンは `Directory.Build.props` の `<Version>` タグで一元管理（全プロジェクト共通）。patch を +1 ずつインクリメント（`/vava` スキルで自動化）。コミットメッセージは日本語。
 
-`1llum1n4t1s.Sevenzip` の直接参照元、更新対象ファイル、復元条件、検証コマンドは、リポジトリ直下の `vava.config.json` を正本とする。直接参照元を追加・削除したときは、同じ変更内で `consumerUpdates.targets` を同期する。
+## 実装・配布時の制約
 
-## アーキテクチャ
+構成、COM 境界、入出力の流れ、ロック中ファイルと再解析ポイントの扱いは [DESIGN.md](DESIGN.md) を正本とします。
 
-### プロジェクト構成
-
-- **Libraries/Core** — メインライブラリ (`Cube.FileSystem.SevenZip`)。ライセンス: LGPLv3
-- **Libraries/Cube.Core** — MVVM ユーティリティ、基底クラス (`DisposableBase`, `Bindable`, `IQuery<T>`, `Io`, `IoController` 等)。`PrivateAssets="all"` で参照し、DLL は NuGet パッケージに直接同梱。ライセンス: Apache 2.0
-- **Tests/Core** — NUnit 5 によるテスト（コンソールアプリとして実行、`OutputType=Exe`）。
-- **Tests/Private** — テスト用共通基盤 (`FileFixture`, `SourceFileFixture`)。
-
-### ベンダードネイティブバイナリ
-
-`Libraries/Core/Native/x64/7z.dll` および `Libraries/Core/Native/arm64/7z.dll` (7-Zip 26.05) を直接 vendor し、NuGet パッケージの `runtimes/win-x64/native/` と `runtimes/win-arm64/native/` に同梱する。これらは **`.gitignore` の `*.dll` ルール** に引っかかるため、末尾の例外ルール `!Libraries/Core/Native/**/*.dll` により明示的に追跡している。
-
-`7z.dll` は `SevenZipLibrary` (Libraries/Core/Sources/Internal/SevenZipLibrary.cs) がアセンブリ隣から `LoadLibrary` で読み込む。.NET SDK の runtime asset 規約により、実行時の RID に応じて `runtimes/win-{rid}/native/7z.dll` が自動的にアセンブリ隣に配置される。x64 / arm64 以外のプロセスでは構築時に `PlatformNotSupportedException` を投げる（ランタイムガード）。
-
-### ネイティブバイナリの配置
-
-NuGet パッケージの `runtimes/win-{x64,arm64}/native/7z.dll` として配布。`RuntimeIdentifier` 指定ビルドや `dotnet publish` ではアセンブリ直下に自動配置される。RID なしの `dotnet build` では `runtimes/{rid}/native/` サブディレクトリに配置されるため、`SevenZipLibrary` がフォールバック探索で対応する。
-
-7-Zip 本体の追従は `publish.yml` のリリースワークフロー内で自動化。`release/**` ブランチ push 時に 7-zip.org から最新の 7z.dll をダウンロードし、NuGet パッケージに同梱する。リポジトリ内の vendored DLL はローカル開発・テスト用のフォールバック。
-
-ネイティブバイナリまたは配布処理を更新するときは、DLL と同じ配布物のライセンスも同期し、pack 後の `.nupkg` に両アーキテクチャの DLL と `licenses/7-Zip/License.txt` が含まれることを確認する。取得元と配置の設計は [DESIGN.md](DESIGN.md#native-binary-を-nuget-に同梱する) を参照する。
-
-### 7-Zip COM Interop 構造（Libraries/Core）
-
-```
-Sources/
-├── ArchiveReader.cs, ArchiveWriter.cs   # 公開 API (sealed クラス)
-├── ArchiveEntity.cs                     # アーカイブエントリ (継承可)
-├── ZipArchiveEntity.cs                  # ZIP 固有エントリ (Method / HostOS 等)
-├── ArchiveFileEventArgs.cs              # per-file イベント引数
-├── AsyncPasswordQuery.cs                # 非同期パスワード問い合わせ + UI スレッドガード
-├── ArchiveUpdateException.cs            # Update ロールバック失敗時の構造化例外
-├── Format.cs                            # Zip/7z/Tar/Rar/Iso/Udf 等の列挙
-├── Options/
-│   ├── ArchiveOption.cs                 # CodePage / Encoding / Filter / ThreadCount など共通オプション
-│   └── CompressionOption.cs             # Writer 用: 圧縮レベル / メソッド / パスワード / CustomParameters / VolumeSize / FlushToDisk / AtomicSave / KeepBackupOnUpdate + Validate()
-└── Internal/
-    ├── Interfaces/          # COM インターフェース定義 ([GeneratedComInterface])
-    ├── Callbacks/           # COM コールバック実装 ([GeneratedComClass])
-    │   ├── UpdateCallback.cs   # 圧縮時: IArchiveUpdateCallback + ICryptoGetTextPassword2 + per-file イベント
-    │   ├── ExtractCallback.cs  # 展開時: IArchiveExtractCallback + StreamOutputs 分岐
-    │   ├── OpenCallback.cs     # 解凍時のオープン処理
-    │   ├── PasswordCallback.cs
-    │   └── CallbackBase.cs     # 共通進捗報告 + FireFileEvent ヘルパー
-    ├── Options/             # CompressionOptionSetter 系 (既知キー + CustomParameters merge)
-    ├── UpdatePlan.cs        # 更新プラン (Keep / Replace / Add / Rename / Remove)
-    ├── FileSystemHelper.cs  # ロック判定 + 展開先パス検証・ハンドル固定
-    └── SevenZipLibrary.cs   # 7z.dll の参照カウント付き singleton + CreateObject 関数ポインタ
-```
-
-### ファイルI/O基盤（Cube.Core）
-
-`Io` 静的クラス + `IoController` でファイル操作を提供。テスト時は `SourceFileFixture.Teardown()` で `Io.Configure(new())` により標準実装にリセットされる。
-
-`Io.Open()` には 2 つのオーバーロード:
-- `Io.Open(path)` — `FileShare.Read` 相当
-- `Io.Open(path, FileShare share)` — 任意の `FileShare` モード（フォーク追加）
-
-### ロック中ファイルの自動コピー機能
-
-圧縮時に他プロセスがロックしているファイルを自動的に一時コピーして処理する:
-
-1. `ArchiveWriter.AddItem()` — 事前チェックで `Io.Open()` 失敗時、`Io.Open(path, FileShare.ReadWrite | FileShare.Delete)` でフォールバック確認
-2. `UpdateCallback.Open()` — `Save()` 時に `Io.Open()` 失敗なら `CopyLockedFile()` で `%TEMP%\SevenZip_{GUID}\` に一時コピーし、コピーを開く
-3. `UpdateCallback.Dispose()` — 一時ディレクトリを削除
-
-ロック判定は `IsFileLocked()` で HResult（`ERROR_SHARING_VIOLATION = 0x80070020`、`ERROR_LOCK_VIOLATION = 0x80070021`）を確認。
-
-#### アクセス不能・再解析ポイントの skip 続行 (`CompressionOption.SkipInaccessibleFiles`)
-
-`FileShare.None` で他プロセスが排他保持しているファイル (Visual Studio の `.vsidx` 等) は、自動コピー機構（`FileShare.ReadWrite | FileShare.Delete` で再試行）でも開けず、既定では `AddItem()` の外側 catch が `AccessException` を投げて圧縮全体が失敗する。
-
-ジャンクションやシンボリックリンク等の再解析ポイントは、循環や追加元ツリー外への越境を防ぐためリンク先を追跡しない。`ArchiveWriter.Add()` と `Io.Copy` / `Io.Move` は拒否し、`Io.Delete` はリンク自体だけを削除する。展開時は destination から対象の親までを `FILE_FLAG_OPEN_REPARSE_POINT` で開き、`FILE_SHARE_DELETE` を許可しないハンドルをファイル書き込みまたは属性設定の完了まで保持する。既存要素の検査だけで済ませず、検査後の junction / symlink 差し替えも拒否する。
-
-呼び出し側 (GUI アプリ等) で「1 アイテムのアクセス不能や再解析ポイントで全体を死なせない」が要件のとき、`CompressionOption.SkipInaccessibleFiles = true` を渡すと:
-
-1. `AddItem()` の outer catch で `_items` に追加せず、ディレクトリなら子孫列挙も止める（`AccessException` を投げない）
-2. `ArchiveWriter.FileSkipped` イベント（引数: `FileSkippedEventArgs { FullName, RelativeName, Reason }`）が発火する
-
-ライブラリは独自にログを出力しないため、スキップ対象と理由は `FileSkipped` イベントで呼び出し元が記録する。
-
-既定は `false`（従来通り throw）で後方互換性を保持する。**現状の適用範囲は `Add()` 時の fail-fast のみ**。Add 通過後に Save 中で他プロセスが新たにロックを取り始める race は対象外（`UpdateCallback.Open` 側は引き続き失敗時に例外を投げる）— 実害が出たら別途対応する。
+- `Libraries/Core/Native/{x64,arm64}/7z.dll` は `.gitignore` の `!Libraries/Core/Native/**/*.dll` で追跡を維持します。
+- ネイティブバイナリまたは配布処理を更新するときは、DLL と同じ配布物のライセンスも同期し、pack 後の `.nupkg` に両アーキテクチャの DLL と `licenses/7-Zip/License.txt` が含まれることを確認します。取得・配置の設計は [DESIGN.md](DESIGN.md#native-binary-を-nuget-に同梱する) を参照してください。
+- I/O を差し替えるテストでは `SourceFileFixture.Teardown()` の `Io.Configure(new())` による標準実装への復帰を維持します。`Io.Open(path)` は `FileShare.Read`、共有モードが必要な処理は `Io.Open(path, share)` を使います。
+- `SkipInaccessibleFiles` は `Add()` 時のアクセス不能・再解析ポイントをスキップする設定です。保存中に生じた I/O 失敗をキャンセルや黙示スキップへ変換しないでください。
 
 ### NativeAOT 対応の規約
 

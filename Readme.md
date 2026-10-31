@@ -1,43 +1,20 @@
 # 1llum1n4t1s.Sevenzip
 
-**リポジトリ:** [https://github.com/1llum1n4t1s/1llum1n4t1s.Sevenzip](https://github.com/1llum1n4t1s/1llum1n4t1s.Sevenzip)
+[Cube.FileSystem.SevenZip](https://github.com/cube-soft/cube.filesystem.sevenzip) を基にした、.NET 10 向けの圧縮・解凍ライブラリです。**Windows x64 / arm64** と NativeAOT に対応し、必要な `7z.dll` を NuGet パッケージに同梱します。7-Zip の別途インストールは不要で、利用者のビルド時に 7-Zip のダウンロードも行いません。
 
-> **これは [Cube.FileSystem.SevenZip](https://github.com/cube-soft/cube.filesystem.sevenzip) のフォークです。** ソースコードは上記リポジトリで公開しています。  
-> 元リポジトリとの主な違いは以下のとおりです。
->
-> **ランタイム / ビルド / 配布**
-> - **.NET 10** 対応（ターゲットを net10.0 / net10.0-windows に変更）
-> - **NativeAOT 対応**（COM Interop を `[GeneratedComInterface]` に、P/Invoke を `[LibraryImport]` に全面移行）
-> - **Windows x64 / arm64 対応** — `<RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>` を宣言。Managed アセンブリは AnyCPU で単一、ネイティブ 7z.dll のみ RID で分岐
-> - **7-Zip 本家 26.05** のネイティブバイナリを直接 vendor（`Cube.Native.SevenZip` 依存を除去）
-> - **ネイティブバイナリ自動配布** — NuGet 公開時のリリースワークフローが 7-zip.org から最新の 7z.dll を自動取得して同梱。コンシューマのビルド時にネットワークアクセスは発生しない
-> - [Cube.Core](https://github.com/cube-soft/cube.core) をソリューション内のプロジェクトとして直接組み込み（NuGet 参照ではなく NuGet パッケージに DLL を同梱）
-> - CI を AppVeyor から **GitHub Actions** に移行
-> - NuGet パッケージ名を **1llum1n4t1s.Sevenzip** として公開
-> - **独自ログ出力の廃止** — 処理失敗は例外、進捗やスキップは既存のイベントで呼び出し元へ通知
->
-> **API / 機能追加**
-> - **アーカイブ更新機能** — `ArchiveWriter.Update()` / `Remove()` で既存アーカイブのファイル追加・置換・削除が可能
-> - **ロック中ファイル自動コピー** — 他プロセスがロック中のファイルを一時コピーして圧縮に含める
-> - **ZIP エントリ名の Reader 側 CodePage 対応** — `ArchiveOption.CodePage` が展開側でも機能（本家は Writer 側のみ）。さらに v1.0.66 から `ArchiveOption.Encoding` で任意 `Encoding` を直接指定可能
-> - **Stream ベース API**（v1.0.66〜） — `ArchiveReader(Stream)` / `ArchiveWriter.Save(Stream)` / `Update(Stream, Stream, renameMap)` / `Extract(int, Stream)` / `Add(Stream, name)` など、ファイルシステムを介さない読み書き
-> - **per-file 進捗イベント**（v1.0.66〜） — `FileExtracting` / `FileExtracted` / `FileCompressing` / `FileCompressed` + `ArchiveFileEventArgs` で個別エントリの進捗とキャンセルに対応
-> - **柔軟な圧縮オプション**（v1.0.66〜） — `CustomParameters`（7z.dll `ISetProperties` への任意キー注入）/ `VolumeSize`（分割書き出し）/ `IncludeEmptyDirectories`（空ディレクトリ除外）
-> - **追加メタデータ型**（v1.0.66〜） — `ZipArchiveEntity`（ZIP 固有メタデータ）/ `AsyncPasswordQuery`（非同期パスワード問い合わせ）/ `ArchiveEntity.IsUnicodeText`（ヒューリスティック Unicode 判定）
-> - **構造化例外**（v1.0.68〜） — `ArchiveUpdateException`（Update ロールバック失敗時に `OriginalPath` / `BackupPath` を公開）
-> - **クラッシュ耐性オプション**（v1.0.69〜） — `CompressionOption.FlushToDisk`（`FlushFileBuffers` でディスク同期）/ `CompressionOption.AtomicSave`（tmp → atomic rename パターン）/ `CompressionOption.KeepBackupOnUpdate`（.bak 保持）/ `ArchiveWriter.LastBackupPath` / `ArchiveWriter.BackupPaths` / `ArchiveWriter.LastTempPath`
-> - **並行実行安全性 / 厳密化**（v1.0.70〜） — `SevenZipLibrary` FinalRelease 二重解放防止 / `UpdateCallback.SetCompleted` の lock 保護 / `CompressionOption.Validate()` / `AsyncPasswordQuery` UI スレッドガード / `Update(Stream, Stream, ..., allowDestructiveOnWritebackFailure)` オプトインパラメータ
->
-> **削除（breaking change）**
-> - **SFX (自己展開書庫) 機能の削除**（v1.0.58） — `SfxOption` / `Format.Sfx` / `7z.sfx` 同梱を廃止。自己展開書庫が必要な場合は別途 SFX モジュールを用意する必要あり
+- `ArchiveReader` による展開と、`ArchiveWriter` による圧縮・更新・削除
+- パスと Stream による入出力、エントリ単位の進捗・キャンセル
+- 暗号化、文字コード指定、分割保存、バックアップと atomic save
 
----
-
-[1llum1n4t1s.Sevenzip](https://github.com/1llum1n4t1s/1llum1n4t1s.Sevenzip) は [7-Zip](http://www.7-zip.org/) の COM インターフェースを利用した .NET 10 向けラッパーライブラリです。**Windows x64 / arm64** をサポートします。ライセンスはプロジェクトにより GNU LGPLv3 または Apache 2.0 です。詳細は [License.md](https://github.com/1llum1n4t1s/1llum1n4t1s.Sevenzip/blob/main/License.md) を参照してください。
+利用上の注意と API は以下を、変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照してください。ソースのビルド・検証手順は [AGENTS.md](AGENTS.md)、内部構造と配布方式は [DESIGN.md](DESIGN.md) に記載しています。
 
 ## Usage
 
-NuGet パッケージでインストールできます。パッケージ ID は **1llum1n4t1s.Sevenzip** です。プロジェクトファイルに依存関係を追加するか、Visual Studio の NuGet パッケージ UI から選択してください。ソースからビルドする場合は [リポジトリ](https://github.com/1llum1n4t1s/1llum1n4t1s.Sevenzip) をクローンしてください。
+NuGet パッケージでインストールできます。パッケージ ID は **1llum1n4t1s.Sevenzip** です。プロジェクトファイルに依存関係を追加するか、Visual Studio の NuGet パッケージ UI から選択してください。対象フレームワークは `net10.0-windows8` です。
+
+```sh
+dotnet add package 1llum1n4t1s.Sevenzip
+```
 
 ### Examples for archiving files
 
@@ -66,7 +43,7 @@ using (var writer = new ArchiveWriter(Format.Zip, options))
 }
 ```
 
-ArchiveWriter にアーカイブ形式（Zip, SevenZip など）とオプションを指定し、追加したいファイル・ディレクトリを Add したうえで Save を呼び出します。Tar 系のアーカイブでは TarOption で圧縮方式（GZip, BZip2, XZ, Copy）を指定できます。
+ArchiveWriter にアーカイブ形式（Zip, SevenZip など）とオプションを指定し、追加したいファイル・ディレクトリを Add したうえで Save を呼び出します。Tar 系のアーカイブでは `CompressionOption.CompressionMethod` で圧縮方式（GZip, BZip2, XZ, Copy）を指定できます。
 
 ```cs
 var options = new CompressionOption
@@ -79,7 +56,7 @@ using (var writer = new ArchiveWriter(Format.Tar, options))
 {
     writer.Add(@"path\to\file");
     writer.Add(@"path\to\directory_including_files");
-    writer.Save(@"path\to\save.tar.gz");
+    writer.Save(@"path\to\save.tar.bz2");
 }
 ```
 
@@ -95,7 +72,7 @@ var password = new Cube.Query<string>(e =>
     e.Cancel = false;
 });
 
-// Supports only the Filter property
+// Filter、CodePage、Encoding などを指定できます。
 var files   = new[] { ".DS_Store", "Thumbs.db", "__MACOSX", "desktop.ini" };
 var options = new ArchiveOption { Filter = Filter.From(files) };
 
@@ -124,11 +101,9 @@ ArchiveWriter および ArchiveReader はスレッドセーフではありませ
 
 | メソッド / プロパティ | 変更内容 | 影響 |
 |---------|---------|------|
-| `ArchiveReader.Save(string, uint[], IProgress<Report>)` | `unsafe` 修飾子が追加 | **呼び出し側への影響なし。** C# では `unsafe` メソッドの呼び出しに `unsafe` コンテキストは不要です。`AllowUnsafeBlocks` はライブラリ側のビルドにのみ必要で、消費者側のプロジェクトには不要です。 |
 | `ArchiveWriter.Update(...)` | **新規追加** — 既存アーカイブのファイル追加・置換 | 4 つのオーバーロード。`sourcePassword` で暗号化アーカイブの更新にも対応。 |
 | `ArchiveWriter.Remove(string)` | **新規追加** — アーカイブ内の指定アイテムを削除 | `Update()` と組み合わせて使用。 |
 | `ArchiveReader` での `ArchiveOption.CodePage` 対応 | **挙動拡張** — 本家は Writer 側のみの対応だったが、Reader 側でも `CodePage` が反映されるよう修正 | ZIP ファイル名デコードに使用。既存の `CodePage` enum (`Oem`/`Utf8`/`Japanese` 等) はそのまま利用可能。 |
-| `Io.Open(string, FileShare)` | **新規追加** — FileShare 指定付きオープン | Cube.Core の `IoController` にも対応オーバーロード追加。 |
 | `ArchiveReader(Stream, ...)` 等 | **v1.0.66 で追加** — Stream ベース API | path 版と並列運用。`leaveOpen` で所有権制御。 |
 | `ArchiveReader.Extract(int, Stream)` | **v1.0.66** — 単一エントリを直接 Stream に展開 | 辞書版 `Extract(IReadOnlyDictionary<int, Stream>)` も提供。 |
 | `ArchiveWriter.Save(Stream, ...)` | **v1.0.66** — Stream に直接書き込み | `VolumeSize` は未サポートで、指定時は例外をスロー。 |
@@ -148,7 +123,6 @@ ArchiveWriter および ArchiveReader はスレッドセーフではありませ
 | `CompressionOption.AtomicSave` | **v1.0.69** — tmp → atomic rename パターン | NTFS 同一ボリューム前提。`VolumeSize` との併用不可 (例外)。 |
 | `CompressionOption.KeepBackupOnUpdate` | **v1.0.69** — Save/Update 完了後も .bak を保持 | 前回値は次回操作で自動削除され孤立しない。 |
 | `ArchiveWriter.LastBackupPath` / `BackupPaths` / `LastTempPath` | **v1.0.69〜v1.0.70** — .bak / tmp パスの公開 | `BackupPaths` は全履歴 (v1.0.70)。`LastTempPath` は異常終了時のクリーンアップ用 (v1.0.70)。 |
-| `CompressionOption.Validate(Format)`（内部メソッド） | **v1.0.70** — オプション矛盾の早期検出 | AtomicSave+VolumeSize / Tar+Password / 負値ガード。利用者が直接呼ぶ API ではなく、`ArchiveWriter` の ctor / `Save()` が内部で検証して例外を投げる。 |
 | `Update(Stream, Stream, ..., allowDestructiveOnWritebackFailure)` | **v1.0.70** — 自己参照書き戻し失敗時の dest 挙動をオプトイン化 | デフォルト false = 部分書き込み保持 / true = 全消失 (旧動作)。 |
 | `CompressionOption.SkipInaccessibleFiles` / `ArchiveWriter.FileSkipped` / `FileSkippedEventArgs` | **v1.0.76〜v1.0.86** — アクセス不能または安全に追跡できないアイテムを skip して圧縮を続行 | 既定 `false`（`AccessException`）。`true` で `Add()` 時にアクセス不能なファイルや再解析ポイントを除外し、`FileSkipped` イベント（`FullName` / `RelativeName` / `Reason`）で通知する。v1.0.86 以降はジャンクションやシンボリックリンクのリンク先を再帰的に取り込まない。適用範囲は `Add()` 時の fail-fast のみ。 |
 | 展開先の再解析ポイント競合対策 | **v1.0.87** — 展開中の親ディレクトリ差し替えを防止 | 親ディレクトリを削除・改名不能なハンドルで固定し、ジャンクションやシンボリックリンクへの競合差し替えによる destination 外への書き込みを拒否する。 |
@@ -163,7 +137,7 @@ ArchiveWriter および ArchiveReader はスレッドセーフではありませ
 | 圧縮失敗時の例外 | **v1.0.82** — 失敗が「利用者によるキャンセル」に化ける問題を修正 | 従来は per-file の圧縮失敗が空メッセージの `OperationCanceledException` になり、失敗コードと対象エントリ名が失われていた。 |
 | `ArchiveOption.Filter` の比較 | **v1.0.82** — カルチャ依存比較を Ordinal へ変更 | 従来は `tr-TR` 等で `I` / `ı` の扱いが変わり、同じアーカイブでも環境によって除外されるファイルが変わっていた。 |
 
-### 新機能
+### 使用例と注意事項
 
 #### アーカイブ更新機能
 
@@ -180,7 +154,7 @@ using (var writer = new ArchiveWriter(Format.Zip))
 
 #### ロック中ファイルの自動コピー
 
-圧縮時に他プロセスがロック中のファイルを自動検出し、`%TEMP%\SevenZip_{GUID}\` に一時コピーして処理します。`ERROR_SHARING_VIOLATION` (0x80070020) および `ERROR_LOCK_VIOLATION` (0x80070021) を検出対象とし、一時ファイルは `Dispose` 時に自動削除されます。呼び出し側のコード変更は不要です。
+圧縮時に他プロセスがロック中でも共有読み取りできるファイルを検出し、`%TEMP%\SevenZip_{GUID}\` に一時コピーして処理します。`ERROR_SHARING_VIOLATION` (0x80070020) および `ERROR_LOCK_VIOLATION` (0x80070021) を検出対象とし、一時ファイルは `Dispose` 時に自動削除されます。完全排他ファイルはコピーできません。`SkipInaccessibleFiles = true` で `Add()` 時のアクセス不能を除外できますが、保存中の失敗は例外になります。
 
 #### ZIP エントリ名の Reader 側 CodePage 対応
 
@@ -208,25 +182,11 @@ v1.0.58 で **自己展開書庫 (SFX) 関連の API をすべて削除**しま�
 
 v1.0.56 以前で `SfxOption` / `Format.Sfx` を使用していたコードはコンパイルエラーになります。自己展開書庫の生成が必要な場合は、7-Zip 公式配布の `7z.sfx` / `7zCon.sfx` を別途取得し、`ArchiveWriter` で作成した `.7z` アーカイブと連結してください。
 
-### COM 例外の HRESULT 変更
-
-`[ComImport]` の CLR CCW は、マネージド例外をすべて `E_FAIL`（0x80004005）として返していました。`[GeneratedComInterface]` では例外ごとに固有の HRESULT が返されます（例: `KeyNotFoundException` → 0x80131577）。
-
-本ライブラリ内部では HRESULT を適切にハンドリングしているため、**通常の C# 消費者には影響ありません。** ただし、ネイティブ C++ コードから直接 COM コールバックの HRESULT を検査している場合は注意が必要です。
-
 ### IProgress\<Report\> 実装の要件
 
 upstream では `SetTotal` コールバックで `ProgressState.Prepare` が報告されていましたが、`[ComImport]` の CCW が例外を `E_FAIL` として飲み込んでいたため、`IProgress<Report>` 実装側が `Prepare` を処理しなくても表面上は動作していました。
 
 本フォークでは `[GeneratedComInterface]` により例外が正確に伝播するため、**カスタムの `IProgress<Report>` 実装はすべての `ProgressState` 値（`Prepare`, `Start`, `Progress`, `Success`, `Failed`）を処理する必要があります。** 未処理の状態値があると例外として 7-Zip 側に伝わり、操作が中断されます。
-
-### COM オブジェクトのライフタイム管理
-
-COM オブジェクトの生成・解放を `StrategyBasedComWrappers` + `CreateObjectFlags.UniqueInstance` による明示的管理に変更しました。これにより、ネイティブ DLL アンロード後の GC ファイナライザによるクラッシュが防止されます。消費者側のコードに変更は不要です。
-
-## Dependencies
-
-* [7-Zip](https://www.7-zip.org/) … 本家の `7z.dll` を `Libraries/Core/Native/x64/` および `Libraries/Core/Native/arm64/` に vendor して NuGet パッケージに同梱しています (Windows x64 / arm64 対応)。`runtimes/win-x64/native/` および `runtimes/win-arm64/native/` に配置されるため、.NET SDK のランタイム RID 解決により実行時に自動的に正しいバイナリが選択されます。NuGet 公開時のリリースワークフロー (`.github/workflows/publish.yml`) が 7-zip.org から最新版を自動取得して同梱します。
 
 ## License
 

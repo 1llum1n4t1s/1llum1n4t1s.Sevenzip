@@ -61,10 +61,11 @@
 - ライブラリは独自にログを出力しません。公開操作中の失敗は例外として呼び出し元へ返し、進捗と意図的なスキップは既存の progress / event API で通知します。
 - finalizer 経路は全処理を例外境界内で実行し、未処理例外や出力をプロセスへ漏らしません。
 - 7-Zip の multi-thread 圧縮は callback を並行呼び出しするため、進捗状態、入力 Stream 一覧、一時ディレクトリはそれぞれの lock で保護します。現在 entry は callback worker ごとの `ThreadLocal<int>` に保持し、`GetStream` と対応する `SetOperationResult` のイベントと例外を同じ entry に結び付けます。
-- callback 内の失敗は共通の exception stack へ保存します。stack が空の場合だけ純粋な利用者キャンセルとして扱い、I/O 失敗を `OperationCanceledException` に変換しません。
+- callback 内の失敗は共通の exception stack へ保存します。`CallbackBase.ErrorHandler` は callback の構築時に生成し、その操作の COM Stream 間で共有します。エントリごとの delegate 割り当てを避けながら、例外を同じ同期済み stack へ通知します。stack が空の場合だけ純粋な利用者キャンセルとして扱い、I/O 失敗を `OperationCanceledException` に変換しません。
+- 後始末の例外リストは最初の失敗時に確保します。成功時の割り当てを避けつつ、残りのリソース解放を続行し、単一の失敗は元の例外と stack trace、複数の失敗は処理順の `AggregateException` で通知します。finalizer では例外を外へ返しません。
 - 圧縮進捗の completed value は書庫全体の累積値です。並行処理による後退値を再加算せず、単調な最大値として採用し、total を上限にします。
 - `UpdateCallback` が開いた入力 Stream は callback の dispose まで保持します。これは multi-thread 圧縮時の COM 違反を防ぐ一方、処理中の write lock とメモリ使用量が対象ファイル数に比例するトレードオフです。
-- 完全排他ファイルの一時コピーと `SkipInaccessibleFiles` は `Add` 時点のアクセス不能または再解析ポイントを扱います。追加後に新しく取得された lock は通常の保存失敗として通知します。
+- ロック中ファイルは `Add` 時に共有読み取り可能か確認し、保存時の `UpdateCallback.Open` で通常オープンが共有・ロック違反になった場合に一時コピーを作成します。`FileShare.ReadWrite | FileShare.Delete` でも読めない完全排他ファイルはコピーできません。`SkipInaccessibleFiles` は `Add` 時点のアクセス不能または再解析ポイントだけをスキップし、保存中の I/O 失敗は通常の保存失敗として通知します。
 - 再帰的な追加・copy・move は再解析ポイントを追跡せず、delete はリンク自体だけを削除します。展開先では destination から対象までを `FILE_FLAG_OPEN_REPARSE_POINT` で開き、親ハンドルでは `FILE_SHARE_DELETE` を許可しません。ハンドルを操作完了まで保持することで、検査後の junction / symlink 差し替えを含む再解析ポイント経由の書き込みを拒否します。
 - 展開先は書庫内パスをそのまま信頼せず、destination 外へ書き出さないことを優先します。filter 比較は locale に依存しない ordinal 規則を使います。
 - 更新時の rename は null / 空文字だけを明示的な削除要求として扱い、非空入力が安全化後に空となる場合は `ArgumentException` で拒否します。更新元の open 失敗は reader と同様に callback 例外、`S_FALSE`、負の HRESULT を区別します。
@@ -82,7 +83,9 @@ NativeAOT と trimming に対応するため、COM は generated interop、P/Inv
 
 x64 / arm64 の `7z.dll` を両方とも runtime asset として同梱し、利用者による別途インストールを不要にします。パッケージサイズと対応 OS を限定する代わりに、managed assembly と検証済み native binary の組み合わせを固定できます。
 
-リポジトリ内の binary はローカル開発用の fallback です。公開 workflow は release branch 上で 7-zip.org から最新版を取得し、HTTPS と配信元 host allowlist を検査します。upstream binary が未署名の場合は署名を必須にせず、取得元制限と SHA256 の job summary 記録で追跡可能性を確保します。
+RID 指定ビルドや publish ではアセンブリ隣の `7z.dll` を使用し、RID なしの利用では `SevenZipLibrary` が `runtimes/win-{x64,arm64}/native/` も探索します。
+
+リポジトリ内の `Libraries/Core/Native/{x64,arm64}/7z.dll` はローカル開発用の fallback です。公開 workflow は release branch 上で 7-zip.org から最新版を取得し、HTTPS と配信元 host allowlist を検査します。upstream binary が未署名の場合は署名を必須にせず、取得元制限と SHA256 の job summary 記録で追跡可能性を確保します。
 
 7-Zip のライセンス情報をバイナリと合わせて配布するため、公開 workflow は DLL と同じ配布物から `License.txt` を取得し、見つからない場合は失敗します。取得したファイルは `Libraries/Core/Native/License.txt` に配置し、NuGet パッケージの `licenses/7-Zip/License.txt` に収録します。
 
