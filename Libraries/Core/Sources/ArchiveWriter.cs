@@ -613,7 +613,7 @@ public sealed class ArchiveWriter : DisposableBase
             : dest;
 
         // dest が既存でバックアップ退避が必要なケース (sameFile または AtomicSave + 既存 dest)
-        var needsBackup = sameFile || (Options.AtomicSave && Io.Exists(dest) && !sameFile);
+        var needsBackup = sameFile || (Options.AtomicSave && Io.Exists(dest));
         var backup = needsBackup
             ? Path.Combine(destDir, $"{Guid.NewGuid():N}.bak")
             : null;
