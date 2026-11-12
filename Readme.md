@@ -1,6 +1,6 @@
 # 1llum1n4t1s.Sevenzip
 
-[Cube.FileSystem.SevenZip](https://github.com/cube-soft/cube.filesystem.sevenzip) を基にした、.NET 10 向けの圧縮・解凍ライブラリです。**Windows x64 / arm64** と NativeAOT に対応し、必要な `7z.dll` を NuGet パッケージに同梱します。7-Zip の別途インストールは不要で、利用者のビルド時に 7-Zip のダウンロードも行いません。
+[Cube.FileSystem.SevenZip](https://github.com/cube-soft/cube.filesystem.sevenzip) を基にした、.NET 11 向けの圧縮・解凍ライブラリです。**Windows x64 / arm64** と NativeAOT に対応し、必要な `7z.dll` を NuGet パッケージに同梱します。7-Zip の別途インストールは不要で、利用者のビルド時に 7-Zip のダウンロードも行いません。
 
 - `ArchiveReader` による展開と、`ArchiveWriter` による圧縮・更新・削除
 - パスと Stream による入出力、エントリ単位の進捗・キャンセル
@@ -10,7 +10,7 @@
 
 ## Usage
 
-NuGet パッケージでインストールできます。パッケージ ID は **1llum1n4t1s.Sevenzip** です。プロジェクトファイルに依存関係を追加するか、Visual Studio の NuGet パッケージ UI から選択してください。対象フレームワークは `net10.0-windows8` です。
+NuGet パッケージでインストールできます。パッケージ ID は **1llum1n4t1s.Sevenzip** です。プロジェクトファイルに依存関係を追加するか、Visual Studio の NuGet パッケージ UI から選択してください。対象フレームワークは `net11.0-windows8` です。
 
 ```sh
 dotnet add package 1llum1n4t1s.Sevenzip
@@ -68,7 +68,7 @@ using (var writer = new ArchiveWriter(Format.Tar, options))
 // Set password directly or using Query<string>
 var password = new Cube.Query<string>(e =>
 {
-    e.Result = "password";
+    e.Value = "password";
     e.Cancel = false;
 });
 
@@ -101,14 +101,14 @@ ArchiveWriter および ArchiveReader はスレッドセーフではありませ
 
 | メソッド / プロパティ | 変更内容 | 影響 |
 |---------|---------|------|
-| `ArchiveWriter.Update(...)` | **新規追加** — 既存アーカイブのファイル追加・置換 | 4 つのオーバーロード。`sourcePassword` で暗号化アーカイブの更新にも対応。 |
+| `ArchiveWriter.Update(...)` | **新規追加** — 既存アーカイブのファイル追加・置換 | 5 つのオーバーロード。`sourcePassword` で暗号化アーカイブの更新にも対応。 |
 | `ArchiveWriter.Remove(string)` | **新規追加** — アーカイブ内の指定アイテムを削除 | `Update()` と組み合わせて使用。 |
 | `ArchiveReader` での `ArchiveOption.CodePage` 対応 | **挙動拡張** — 本家は Writer 側のみの対応だったが、Reader 側でも `CodePage` が反映されるよう修正 | ZIP ファイル名デコードに使用。既存の `CodePage` enum (`Oem`/`Utf8`/`Japanese` 等) はそのまま利用可能。 |
 | `ArchiveReader(Stream, ...)` 等 | **v1.0.66 で追加** — Stream ベース API | path 版と並列運用。`leaveOpen` で所有権制御。 |
 | `ArchiveReader.Extract(int, Stream)` | **v1.0.66** — 単一エントリを直接 Stream に展開 | 辞書版 `Extract(IReadOnlyDictionary<int, Stream>)` も提供。 |
-| `ArchiveWriter.Save(Stream, ...)` | **v1.0.66** — Stream に直接書き込み | `VolumeSize` は未サポートで、指定時は例外をスロー。 |
+| `ArchiveWriter.Save(Stream, ...)` | **v1.0.66** — Stream に直接書き込み | `VolumeSize` / `AtomicSave` は未サポートで、指定時は例外をスロー。`leaveOpen: false` の Stream は処理開始後、成功・失敗を問わず破棄。 |
 | `ArchiveWriter.Add(Stream, name)` | **v1.0.66** — Stream エントリ追加 (一時ファイル経由シム) | `name` は `SafePath` でサニタイズ。 |
-| `ArchiveWriter.Update(Stream, Stream, renameMap?, ...)` | **v1.0.66** — Stream ベース更新 + rename マップ | 自己参照 Stream は `CanSeek` 必須。 |
+| `ArchiveWriter.Update(Stream, Stream, renameMap?, ...)` | **v1.0.66** — Stream ベース更新 + rename マップ | 自己参照 Stream は `CanSeek` 必須。`VolumeSize` / `AtomicSave` 指定時は例外をスロー。rename 先が他のエントリと衝突する場合は `ArgumentException`。 |
 | `ArchiveReader.FileExtracting` / `FileExtracted` | **v1.0.66** — per-file 展開イベント | `ArchiveFileEventArgs.Cancel=true` でキャンセル可。 |
 | `ArchiveWriter.FileCompressing` / `FileCompressed` | **v1.0.66** — per-file 圧縮イベント | 同上。 |
 | `ArchiveOption.Encoding : Encoding` | **v1.0.66** — 任意 `Encoding` 指定 | `CodePage` enum より優先。 |

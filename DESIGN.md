@@ -4,7 +4,7 @@
 
 ## 目的とスコープ
 
-本システムは、7-Zip の COM インターフェースを .NET 10 から利用する Windows 専用ラッパーです。公開 API は主に `ArchiveReader` と `ArchiveWriter` で構成し、パスと `Stream` の両方を入力・出力に使えます。
+本システムは、7-Zip の COM インターフェースを .NET 11 から利用する Windows 専用ラッパーです。公開 API は主に `ArchiveReader` と `ArchiveWriter` で構成し、パスと `Stream` の両方を入力・出力に使えます。
 
 サポートするプロセスアーキテクチャは x64 と arm64 です。managed assembly は AnyCPU とし、実行時の RID に対応する `7z.dll` を NuGet runtime asset として同梱します。自己展開書庫（SFX）の生成はスコープ外です。
 
@@ -60,17 +60,17 @@
 - COM object の lifetime は `StrategyBasedComWrappers` と参照カウント付き lease で明示管理し、DLL unload 後に wrapper や finalizer が native codeへ触れない順序を守ります。
 - ライブラリは独自にログを出力しません。公開操作中の失敗は例外として呼び出し元へ返し、進捗と意図的なスキップは既存の progress / event API で通知します。
 - finalizer 経路は全処理を例外境界内で実行し、未処理例外や出力をプロセスへ漏らしません。
-- 7-Zip の multi-thread 圧縮は callback を並行呼び出しするため、進捗状態、入力 Stream 一覧、一時ディレクトリはそれぞれの lock で保護します。現在 entry は callback worker ごとの `ThreadLocal<int>` に保持し、`GetStream` と対応する `SetOperationResult` のイベントと例外を同じ entry に結び付けます。
-- callback 内の失敗は共通の exception stack へ保存します。`CallbackBase.ErrorHandler` は callback の構築時に生成し、その操作の COM Stream 間で共有します。エントリごとの delegate 割り当てを避けながら、例外を同じ同期済み stack へ通知します。stack が空の場合だけ純粋な利用者キャンセルとして扱い、I/O 失敗を `OperationCanceledException` に変換しません。
+- 7-Zip の multi-thread 圧縮では `SetCompleted` が並行に呼ばれるため、進捗状態、入力 Stream 一覧、一時ディレクトリはそれぞれの lock で保護します。一方、`GetStream` と `SetOperationResult` は全形式で 7-Zip 側が直列化し、「`GetStream(k)` → `SetOperationResult(k)` → `GetStream(k+1)`」の順で交互に呼ばれます。ただし呼び出しスレッドは対にならない（7z の LZMA2 ブロック MT では k の終了が k+1 を開くスレッドから届く）ため、処理中 entry はスレッド単位ではなくインスタンスで 1 つの「最後に開いた entry」として保持し、`SetOperationResult` のイベントと例外をその entry に結び付けます。ZIP MT の `SetOperationResult` は入力を圧縮スレッドへ渡した時点で呼ばれるため、`FileCompressed` は 7-Zip が当該 entry の入力を受け取った時点を表します。7z では空ファイルとディレクトリ、ZIP では新規ディレクトリに対して `GetStream` / `SetOperationResult` が呼ばれず、イベントも発火しません。
+- callback 内の失敗は共通の exception stack へ保存します。`CallbackBase.ErrorHandler` は callback の構築時に生成し、その操作の COM Stream 間で共有します。書庫の入力 Stream（分割ボリュームを含む）は open 用 callback で作られるため、展開・更新の間だけ通知先をその操作の callback へ付け替え、通知済み状態を操作ごとにリセットします。エントリごとの delegate 割り当てを避けながら、例外を同じ同期済み stack へ通知します。stack が空の場合だけ純粋な利用者キャンセルとして扱い、I/O 失敗を `OperationCanceledException` に変換しません。
 - 後始末の例外リストは最初の失敗時に確保します。成功時の割り当てを避けつつ、残りのリソース解放を続行し、単一の失敗は元の例外と stack trace、複数の失敗は処理順の `AggregateException` で通知します。finalizer では例外を外へ返しません。
 - 圧縮進捗の completed value は書庫全体の累積値です。並行処理による後退値を再加算せず、単調な最大値として採用し、total を上限にします。
 - `UpdateCallback` が開いた入力 Stream は callback の dispose まで保持します。これは multi-thread 圧縮時の COM 違反を防ぐ一方、処理中の write lock とメモリ使用量が対象ファイル数に比例するトレードオフです。
-- ロック中ファイルは `Add` 時に共有読み取り可能か確認し、保存時の `UpdateCallback.Open` で通常オープンが共有・ロック違反になった場合に一時コピーを作成します。`FileShare.ReadWrite | FileShare.Delete` でも読めない完全排他ファイルはコピーできません。`SkipInaccessibleFiles` は `Add` 時点のアクセス不能または再解析ポイントだけをスキップし、保存中の I/O 失敗は通常の保存失敗として通知します。
-- 再帰的な追加・copy・move は再解析ポイントを追跡せず、delete はリンク自体だけを削除します。展開先では destination から対象までを `FILE_FLAG_OPEN_REPARSE_POINT` で開き、親ハンドルでは `FILE_SHARE_DELETE` を許可しません。ハンドルを操作完了まで保持することで、検査後の junction / symlink 差し替えを含む再解析ポイント経由の書き込みを拒否します。
-- 展開先は書庫内パスをそのまま信頼せず、destination 外へ書き出さないことを優先します。filter 比較は locale に依存しない ordinal 規則を使います。
-- 更新時の rename は null / 空文字だけを明示的な削除要求として扱い、非空入力が安全化後に空となる場合は `ArgumentException` で拒否します。更新元の open 失敗は reader と同様に callback 例外、`S_FALSE`、負の HRESULT を区別します。
+- ロック中ファイルは `Add` 時に共有読み取り可能か確認し、保存時の `UpdateCallback.Open` で通常オープンが共有・ロック違反になった場合に一時コピーを作成します。`FileShare.ReadWrite | FileShare.Delete` でも読めない完全排他ファイルはコピーできません。`SkipInaccessibleFiles` は `Add` 時点のアクセス不能（列挙できないディレクトリを含む）または再解析ポイントだけをスキップし、保存中の I/O 失敗は通常の保存失敗として通知します。`Add` が途中で失敗した場合、その呼び出しで追加した項目は取り消します。保存時のオープンでも、開いたファイルが再解析ポイントでないこと、および `Add` 時のパスと同じファイル（ボリュームシリアル番号とファイル ID）であることを検証し、`Add` 後の symlink / junction 差し替えを保存失敗として拒否します。途中の親ディレクトリの差し替えは検出対象外です。
+- 再帰的な追加・copy・move は再解析ポイントを追跡せず、delete はリンク自体だけを削除します。展開先では destination から対象までを `FILE_FLAG_OPEN_REPARSE_POINT` で開き、親ハンドルでは `FILE_SHARE_DELETE` を許可しません。ハンドルを操作完了まで保持することで、検査後の junction / symlink 差し替えを含む再解析ポイント経由の書き込みを拒否します。さらに出力ファイルのハンドル取得直後（内容の切り詰め前）に `GetFinalPathNameByHandle` で実体が展開先 root の最終パス配下にあることを検証し、作成直後の親ディレクトリを junction 化される競合も拒否します。この競合時は展開先外に空ファイルが残る可能性があります（既存ファイルは切り詰めません）。最終パスを取得できないファイルシステムでは fail-closed で保存を失敗させます。
+- 展開先は書庫内パスをそのまま信頼せず、destination 外へ書き出さないことを優先します。`SafePath` は escape 後に空となるセグメント（`...` や空白のみ等）を除去し、rooted / UNC 形式の名前を生成しません。名前を持たないエントリ（FNAME なし gzip などを Stream から開いた場合）には既定名 `[No name]`（2 件目以降は `[No name](n)`）を与え、何も出力せずに成功することを防ぎます。展開対象の index は native 呼び出し前に範囲検査します。filter 比較は locale に依存しない ordinal 規則を使います。
+- 更新時の rename は null / 空文字だけを明示的な削除要求として扱い、非空入力が安全化後に空となる場合は `ArgumentException` で拒否します。`Add` との置換判定は rename 後のパスで行い（同じパスを `Add` すれば `Add` の内容が優先）、rename によって出力に同名エントリが生じる場合は書き込み前に `ArgumentException` で拒否します。rename したエントリのパス以外のプロパティ（時刻・属性・ディレクトリ種別）は元書庫から引き継ぎます。更新元の open 失敗は reader と同様に callback 例外、`S_FALSE`、負の HRESULT を区別します。
 - ZIP の文字コードは host locale に依存させず、必要な入力では `ArchiveOption.CodePage` または `Encoding` を明示します。
-- `AtomicSave` と分割書き出しなど、同時に成立しない option は native 呼び出し前に `Validate` で拒否します。
+- `AtomicSave` と分割書き出しなど、同時に成立しない option は、パスと Stream のどちらの保存・更新入口でも native 呼び出し前に `Validate` で拒否します。
 - `packages.lock.json` は通常 restore で生成し、CI と公開前検証では `--locked-mode` で manifest と依存 graph の一致を要求します。
 
 ## 採用済み設計判断
@@ -103,10 +103,10 @@ SFX module の同梱と executable 連結は archive library の責務から外�
 
 ## ビルド・配布フロー
 
-- `Directory.Build.props` が .NET 10 target、共通 version、AOT compatibility、lockfile 生成、Platform 別 output を定義します。
+- `Directory.Build.props` が .NET 11 target、共通 version、AOT compatibility、lockfile 生成、Platform 別 output を定義します。
 - `Cube.FileSystem.SevenZip.slnx` が x64 / arm64 の project mapping を明示し、solution build から Platform 指定を各 project へ伝播します。
 - managed assembly は AnyCPU で build し、NuGet package には `runtimes/win-x64/native/7z.dll` と `runtimes/win-arm64/native/7z.dll` を収録します。
-- `.github/workflows/publish.yml` は `release/**` push を契機に native binary 取得、locked restore、Release build、実 DLL を使う test、pack、NuGet publish の順で実行します。
+- `.github/workflows/publish.yml` は `release/**` push を契機に native binary 取得、locked restore、Release build、実 DLL を使う test、pack、package layout 検査（両 RID の `7z.dll` と `licenses/7-Zip/License.txt` の存在と取得元との SHA256 一致）、NuGet publish の順で実行します。.NET SDK は `publish.yml` と `dependency-validation.yml` で同じ版に完全固定し、`packages.lock.json` と同時に更新します。
 - 製品 version は `Directory.Build.props` の `Version` を単一の正本とします。
 
 ## 検証資産
@@ -118,5 +118,5 @@ SFX module の同梱と executable 連結は archive library の責務から外�
 - atomic save、backup、rollback、分割書き出し
 - dispose 後の呼び出し、constructor 失敗時、finalizer safety
 - lock 中ファイルの一時コピーと skip 通知
-- callback の並行呼び出しと worker ごとの entry 対応、solid 書庫の部分展開、進捗値の単調最大・上限制御
-- x64 / arm64 の RID、native asset、NuGet package layout
+- callback の並行呼び出しと、スレッドを跨いで届く `SetOperationResult` と最後に開いた entry の対応、solid 書庫の部分展開、進捗値の単調最大・上限制御
+- NuGet package layout（`publish.yml` の公開前検査で両 RID の native asset とライセンスを確認。arm64 の `7z.dll` のロードは arm64 ホストが無いため自動テスト対象外）

@@ -4,7 +4,7 @@
 
 ## プロジェクト概要
 
-7-Zip COM インターフェースを利用した .NET 10 向け圧縮・解凍ラッパーライブラリ。[Cube.FileSystem.SevenZip](https://github.com/cube-soft/cube.filesystem.sevenzip) のフォークで、.NET 10 / NativeAOT 対応 + 本家 7-Zip バイナリの vendoring が主な変更点。NuGet パッケージ ID は `1llum1n4t1s.Sevenzip`。**Windows x64 / arm64 専用**。公開 API は `ArchiveReader`（解凍）と `ArchiveWriter`（圧縮）の 2 クラス。Stream ベース API / per-file 進捗イベント / アーカイブ更新・削除 / クラッシュ耐性オプション（AtomicSave / FlushToDisk / KeepBackupOnUpdate）等を本家から大幅に拡張。SFX 機能は v1.0.58 で削除済み (breaking change)。
+7-Zip COM インターフェースを利用した .NET 11 向け圧縮・解凍ラッパーライブラリ。[Cube.FileSystem.SevenZip](https://github.com/cube-soft/cube.filesystem.sevenzip) のフォークで、.NET 11 / NativeAOT 対応 + 本家 7-Zip バイナリの vendoring が主な変更点。NuGet パッケージ ID は `1llum1n4t1s.Sevenzip`。**Windows x64 / arm64 専用**。公開 API は `ArchiveReader`（解凍）と `ArchiveWriter`（圧縮）の 2 クラス。Stream ベース API / per-file 進捗イベント / アーカイブ更新・削除 / クラッシュ耐性オプション（AtomicSave / FlushToDisk / KeepBackupOnUpdate）等を本家から大幅に拡張。SFX 機能は v1.0.58 で削除済み (breaking change)。
 
 ## ビルド・テストコマンド
 
@@ -31,9 +31,9 @@ dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Platfor
 **重要**:
 - Platform のデフォルトは `AnyCPU`（`Directory.Build.props` で `<Platforms>AnyCPU;x64;arm64</Platforms>`）。出力先は `bin\$(Configuration)\`。x64 / arm64 明示時は `bin\x64\...` / `bin\arm64\...` に分岐。
 - `-p:Platform` を各プロジェクトへ伝播させるには `.slnx` の per-project `<Platform Solution="*|x64" Project="x64" />` mapping が必要。これが無いと solution 経由のビルドは指定を無視して全プロジェクトを AnyCPU で解決し、同梱ネイティブ 7z.dll の選択と出力先分岐が効かなくなる（`.slnx` にプロジェクトを追加したら mapping も追加する）。
-- テスト実行時は Tests/Core が RID を Platform に追従させるため、出力は `bin\Debug\net10.0-windows8\win-x64\`（AnyCPU / x64）または `bin\arm64\Debug\net10.0-windows8\win-arm64\`（arm64）に配置される。RID を `win-x64` 固定にすると `-p:Platform=arm64` で `PlatformTarget` と衝突して `NETSDK1032` になる。arm64 のテスト実行自体は arm64 ホストが必要。
+- テスト実行時は Tests/Core が RID を Platform に追従させるため、出力は `bin\Debug\net11.0-windows8\win-x64\`（AnyCPU / x64）または `bin\arm64\Debug\net11.0-windows8\win-arm64\`（arm64）に配置される。RID を `win-x64` 固定にすると `-p:Platform=arm64` で `PlatformTarget` と衝突して `NETSDK1032` になる。arm64 のテスト実行自体は arm64 ホストが必要。
 - managed アセンブリはアーキ非依存で、NuGet パッケージは Platform に関係なく x64 / arm64 両方のネイティブ 7z.dll を同梱する。pack は AnyCPU で行えば十分。
-- Tests/Core の RID が Platform 依存なので、`Tests/Core/packages.lock.json` の RID セクション（`net10.0-windows8.0/win-x64`）も Platform 依存になる。**`-p:Platform=arm64` で restore / build すると `win-arm64` に書き換わる**。CI は `dotnet restore --locked-mode`（AnyCPU）で検証するため、arm64 を試した後は、開始時の未コミット変更を保護したうえで、今回の検証による RID 差分だけを戻し、AnyCPU の `--locked-mode` restore を確認する。
+- Tests/Core の RID が Platform 依存なので、`Tests/Core/packages.lock.json` の RID セクション（`net11.0-windows8.0/win-x64`）も Platform 依存になる。**`-p:Platform=arm64` で restore / build すると `win-arm64` に書き換わる**。CI は `dotnet restore --locked-mode`（AnyCPU）で検証するため、arm64 を試した後は、開始時の未コミット変更を保護したうえで、今回の検証による RID 差分だけを戻し、AnyCPU の `--locked-mode` restore を確認する。
 
 ## バージョン管理
 
@@ -85,14 +85,14 @@ COM Interop と P/Invoke は全面的に AOT 互換 API に移行済み:
 
 ## COM コールバックの並行呼び出し
 
-7z.dll のマルチスレッド圧縮（`CompressionOption.ThreadCount > 1`）は `GetStream` / `SetCompleted` / `SetOperationResult` を**並行に呼ぶ**。`UpdateCallback` の共有可変状態はロックで保護する:
+7z.dll のマルチスレッド圧縮（`CompressionOption.ThreadCount > 1`）は `SetCompleted` を**並行に呼ぶ**。`GetStream` / `SetOperationResult` は 7-Zip が全形式で直列化する（`GetStream(k)` → `SetOperationResult(k)` → `GetStream(k+1)` の交互）が、**呼び出しスレッドは対にならない**（7z の LZMA2 ブロック MT では k の終了が k+1 を開くスレッドから届く）。`UpdateCallback` の共有可変状態はロックで保護する:
 
 - `_completedLock` — `SetCompleted` の `_maxCompletedBytes` / `Bytes`
 - `_stateLock` — `_streams`（開いたストリームのリスト）/ `_tempDir`（ロック中ファイルの一時コピー先）
-- `_currentIndex` — callback worker ごとの `ThreadLocal<int>`。`GetStream` と対応する `SetOperationResult` のエントリを他 worker と混同しない
+- `_openedIndex` — 最後に `GetStream` したエントリ（`Volatile` で読み書き）。**`ThreadLocal` にしない**（スレッドを跨いで届く `SetOperationResult` がエントリを取り違える。`UpdateCallbackProgressTest.SetOperationResult_FromOtherThread_UsesLastOpenedEntry` と実書庫の `WriterRegressionTest.Save_SevenZipMultiThread_FileEventsMatchEntries` 参照）
 - `CallbackBase.PushException()` — `Exceptions` スタックへの積み込み。**`Exceptions.Push` を直接呼ばない**
 
-自分の解決済みインデックスを持つ呼び出し元は `Current(int)` を使い、引数なしの `Current()` は現在 callback worker の `_currentIndex` を読む。`SetOperationResult` は処理開始時に index と entity をローカルへ確定し、イベント・例外・進捗で同じ組を使う。
+自分の解決済みインデックスを持つ呼び出し元は `Current(int)` を使い、引数なしの `Current()` は最後に開いたエントリ（`_openedIndex`）を返す。`SetOperationResult` は処理開始時に index と entity をローカルへ確定し、イベント・例外・進捗で同じ組を使う。
 
 失敗を `Exceptions` へ積むのは必須である。`ThrowIfError` は `Exceptions` が空なら「純粋なユーザーキャンセル」と判定して `OperationCanceledException` を投げるため、積み忘れると実際の I/O 失敗が「利用者が中断した」に化ける。
 
