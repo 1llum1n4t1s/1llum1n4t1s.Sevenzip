@@ -346,6 +346,14 @@ public sealed class SafePath(string src)
                           .SkipWhile(s => !s.HasValue())
                           .Where((s, i) => !IsRemove(s, i))
                           .Select(Escape)
+                          // IsRemove は escape 前に判定するため、"..." / 空白のみ / ". ." の
+                          // ように末尾の空白・ピリオド除去 (Escape の TrimEnd) で空になる
+                          // セグメントが残る。空要素のまま結合すると "\a" (ルート付き) や
+                          // "\\x\y" (UNC 形式) になり、展開先外を指す、または展開が拒否されて
+                          // Save 全体が中断するため、escape 後に空のセグメントを除去する。
+                          // TrimEnd は末尾のピリオドを全て落とすので、ここで "." / ".." が
+                          // 新たに生じることはない。書き込み側の名前サニタイズも同じ経路。
+                          .Where(s => s.HasValue())
                           .ToArray();
 
             _obj = new EscapedObject(k, v, Combine(k, v));

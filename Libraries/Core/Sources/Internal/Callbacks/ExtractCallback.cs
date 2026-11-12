@@ -194,20 +194,28 @@ internal partial class ExtractCallback : PasswordCallback, IArchiveExtractCallba
         // 以降の Finalize / イベント発火をガードする。
         var current = Current();
 
-        // WrongPassword または PasswordTimes>0 時の DataError は、誤パスワードが
+        // 暗号化エントリで、かつパスワード試行済みの DataError は誤パスワードとみなす
+        // (ZipCrypto 等は誤パスワードでも復号自体は進み、CRC 不一致の DataError になる)。
+        // 非暗号化エントリの DataError は単なるデータ破損なので、PasswordTimes>0
+        // (同じ書庫の別の暗号化エントリでパスワードを要求済み) でも WrongPassword に
+        // 読み替えない。読み替えると破損が「パスワード違い」と誤報され、正しいパスワードの
+        // キャッシュまで捨てられる。
+        var wrongPasswordData = code == SevenZipCode.DataError && PasswordTimes > 0 &&
+                                current?.Encrypted == true;
+
+        // WrongPassword または上記の DataError は、誤パスワードが
         // PasswordQuery._cache に永続して UI 再試行を無視する問題を防ぐため、cache をクリアする。
         // 次回 CryptoGetTextPassword 呼び出し時に Query.Request が再度実行され、
         // ユーザーに再入力の機会が与えられる。
-        if (code == SevenZipCode.WrongPassword ||
-            (code == SevenZipCode.DataError && PasswordTimes > 0))
+        if (code == SevenZipCode.WrongPassword || wrongPasswordData)
         {
             (Password as PasswordQuery)?.Reset();
         }
 
         // WrongPassword は即座に返してパスワード再試行フローに入る
         if (code == SevenZipCode.WrongPassword) return (int)code;
-        // パスワード試行済みの DataError は WrongPassword として扱う
-        if (code == SevenZipCode.DataError && PasswordTimes > 0) return (int)SevenZipCode.WrongPassword;
+        // パスワード試行済みの暗号化エントリの DataError は WrongPassword として扱う
+        if (wrongPasswordData) return (int)SevenZipCode.WrongPassword;
         // Skip モードの場合はエラーコードを無視して Success を返す
         if (_mode == AskMode.Skip)
         {

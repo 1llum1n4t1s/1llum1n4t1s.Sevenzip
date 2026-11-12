@@ -71,8 +71,15 @@ public static class ArchiveReaderExtension
     ///
     /* --------------------------------------------------------------------- */
     public static void Save(this ArchiveReader src,
-        string dest, ArchiveEntity item, IProgress<Report> progress) =>
+        string dest, ArchiveEntity item, IProgress<Report> progress)
+    {
+        ArgumentNullException.ThrowIfNull(src);
+        ArgumentNullException.ThrowIfNull(item);
+        // item が別 reader 由来で index が範囲外の場合は ArchiveReader.Save が
+        // native 呼び出し前に ArgumentOutOfRangeException で拒否する。
+        // 範囲内であれば同じ index の (別の) エントリが展開される点に注意。
         src.Save(dest, new[] { (uint)item.Index }, progress);
+    }
 
     #endregion
 

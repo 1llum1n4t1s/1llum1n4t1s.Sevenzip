@@ -195,7 +195,7 @@ public sealed class ArchiveReader : DisposableBase
     ///
     /* --------------------------------------------------------------------- */
     public ArchiveReader(Stream src, string password, ArchiveOption options, bool leaveOpen = true, string sourceHint = null) :
-        this(FormatFactory.From(src), src, sourceHint, new(password), options, dispose: !leaveOpen) { }
+        this(null, src, sourceHint, new(password), options, dispose: !leaveOpen) { }
 
     /* --------------------------------------------------------------------- */
     ///
@@ -217,7 +217,7 @@ public sealed class ArchiveReader : DisposableBase
     ///
     /* --------------------------------------------------------------------- */
     public ArchiveReader(Stream src, IQuery<string> password, ArchiveOption options, bool leaveOpen = true, string sourceHint = null) :
-        this(FormatFactory.From(src), src, sourceHint, new(password), options, dispose: !leaveOpen) { }
+        this(null, src, sourceHint, new(password), options, dispose: !leaveOpen) { }
 
     /* --------------------------------------------------------------------- */
     ///
@@ -252,11 +252,48 @@ public sealed class ArchiveReader : DisposableBase
     /// コアのコンストラクタ。全ての public コンストラクタはこの経路に集約される。
     /// </summary>
     ///
+    /// <param name="hint">
+    /// 書庫形式。null の場合は <paramref name="src"/> の先頭シグネチャから判定する。
+    /// </param>
+    /// <param name="src">書庫を読み取る Stream。</param>
+    /// <param name="sourceHint"><see cref="Source"/> に設定する値。</param>
+    /// <param name="password">パスワード問い合わせオブジェクト。</param>
+    /// <param name="options">展開オプション。</param>
+    /// <param name="dispose">
+    /// true の場合は <paramref name="src"/> の所有権を受け取り、破棄・ctor 失敗時に閉じる。
+    /// </param>
+    ///
+    /// <remarks>
+    /// Stream 版コンストラクタの形式判定 (<see cref="FormatFactory.From(Stream)"/>) は
+    /// ここで null 検査と所有権処理の後に行う。コンストラクタ初期化子の引数で評価すると、
+    /// src が null のときに ArgumentNullException ではなく NullReferenceException になり、
+    /// シーク不可 Stream で判定が失敗したときに leaveOpen=false で所有権を受け取った
+    /// Stream を誰も閉じなくなる。パス版は拡張子フォールバックを持つ
+    /// <see cref="FormatFactory.From(string)"/> の結果を従来どおり渡す。
+    /// </remarks>
+    ///
     /* --------------------------------------------------------------------- */
-    private ArchiveReader(Format format, Stream src, string sourceHint,
+    private ArchiveReader(Format? hint, Stream src, string sourceHint,
         PasswordQuery password, ArchiveOption options, bool dispose)
     {
-        ArgumentNullException.ThrowIfNull(src);
+        if (src is null)
+        {
+            // 何も取得していないため finalizer は不要 (孤児化したインスタンスの後始末を省く)。
+            GC.SuppressFinalize(this);
+            throw new ArgumentNullException(nameof(src));
+        }
+
+        Format format;
+        try { format = hint ?? FormatFactory.From(src); }
+        catch
+        {
+            // 形式判定の失敗 (シーク不可・読み取り失敗など) でも、所有権を受け取った
+            // Stream は閉じる。下の Unknown 判定・ctor 失敗時 catch と同じ方針。
+            if (dispose) { try { src.Dispose(); } catch { /* best effort */ } }
+            GC.SuppressFinalize(this);
+            throw;
+        }
+
         if (format == Format.Unknown)
         {
             // ctor 失敗で this は孤児化する。所有権を受け取った Stream を閉じ、
@@ -334,9 +371,20 @@ public sealed class ArchiveReader : DisposableBase
                 if (cb.Exceptions.Count > 0)
                 {
                     var inner = cb.Exceptions.Pop();
+                    // OpenCallback が EncryptionException を自前で積む経路は現状なく、
+                    // ヘッダー暗号の誤パスワードは 7z.dll が非 S_OK を返すだけなので
+                    // 通常は下の S_FALSE / 負 HRESULT 分岐に落ちる。利用者の IQuery 実装が
+                    // EncryptionException を投げた場合などに限り、型を保ったまま再送出する。
                     if (inner is EncryptionException) throw inner;
                     throw new SevenZipException(SevenZipCode.HeadersError, inner);
                 }
+
+                // ヘッダー暗号化書庫のパスワード要求を利用者がキャンセルすると、
+                // PasswordCallback.CryptoGetTextPassword が Cancel (-2) を返し、7z.dll は
+                // それをそのまま Open の戻り値にする。Exceptions が空 = 失敗起因ではない純粋な
+                // 利用者キャンセルなので、展開時 (CallbackExtension.ThrowIfError) と同じく
+                // OperationCanceledException として通知する (UnknownError に化かさない)。
+                if (code == (int)SevenZipCode.Cancel) throw new OperationCanceledException();
 
                 // S_FALSE (1) は「アーカイブとして解釈できない」を意味するので IsNotArc が正しい。
                 // 一方で負の HRESULT はネットワーク断・アクセス拒否・共有違反などの障害であり、
@@ -518,6 +566,14 @@ public sealed class ArchiveReader : DisposableBase
         // 破壊しないようコピーしてから正規化する。
         var indices = Normalize(src);
 
+        // 7z.dll は渡された index を検査せず内部配列を参照する (7zExtract.cpp / ZipHandler.cpp)。
+        // 範囲外の index (別 reader の ArchiveEntity 由来など) を渡すとアクセス違反で
+        // プロセスごと落ちうるため、native 呼び出し前に managed 側で拒否する。
+        // Normalize 後は昇順なので末尾だけ見れば足りる。
+        if (indices is { Length: > 0 } && indices[^1] >= (uint)Items.Count)
+            throw new ArgumentOutOfRangeException(nameof(src), indices[^1],
+                $"Index must be less than the number of items ({Items.Count}).");
+
         try
         {
             var cb = CreateCallback(dest, indices, progress, null);
@@ -572,7 +628,15 @@ public sealed class ArchiveReader : DisposableBase
         // ここで必ず昇順へ正規化する。
         var indices = new uint[outputs.Count];
         var i = 0;
-        foreach (var key in outputs.Keys) indices[i++] = (uint)key;
+        foreach (var key in outputs.Keys)
+        {
+            // 負のキーは uint キャストで巨大値になり、7z.dll が無検査で配列参照して
+            // アクセス違反になりうる。範囲外キーも同様なので native 呼び出し前に拒否する。
+            if (key < 0 || key >= Items.Count)
+                throw new ArgumentOutOfRangeException(nameof(outputs), key,
+                    $"Index must be in the range [0, {Items.Count}).");
+            indices[i++] = (uint)key;
+        }
         Array.Sort(indices);
 
         try
@@ -774,10 +838,19 @@ public sealed class ArchiveReader : DisposableBase
         Exception operationError = null;
         try
         {
-            int code;
-            fixed (uint* p = indices) { code = _core.Extract(p, count, test, callback); }
-            GC.KeepAlive(callback);
-            callback.ThrowIfError(code, checkPassword: true);
+            // 入力書庫 (およびボリューム) の Stream は open 時の OpenCallback に通知先が
+            // 固定されている。そのままだと展開中の読み取り失敗が ExtractCallback.Exceptions に
+            // 積まれず、ThrowIfError が元の IOException を失った汎用例外を投げる。
+            // 展開の間だけ通知先を ExtractCallback へ付け替え、通知済みフラグも操作ごとに戻す。
+            AttachInputStreams(callback.ErrorHandler);
+            try
+            {
+                int code;
+                fixed (uint* p = indices) { code = _core.Extract(p, count, test, callback); }
+                GC.KeepAlive(callback);
+                callback.ThrowIfError(code, checkPassword: true);
+            }
+            finally { AttachInputStreams(_openCallback?.ErrorHandler); }
         }
         catch (Exception error) { operationError = error; }
 
@@ -789,6 +862,28 @@ public sealed class ArchiveReader : DisposableBase
             throw new AggregateException("Extraction and its cleanup both failed.", operationError, cleanupError);
         if (operationError is not null) ExceptionDispatchInfo.Capture(operationError).Throw();
         if (cleanupError is not null) ExceptionDispatchInfo.Capture(cleanupError).Throw();
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// AttachInputStreams
+    ///
+    /// <summary>
+    /// 入力書庫とボリュームの全 Stream について、I/O 例外の通知先を設定し、
+    /// 前回操作で記録した例外をリセットする。
+    /// </summary>
+    ///
+    /// <remarks>
+    /// ArchiveStreamBase は最初の例外だけを通知する (CompareExchange) ため、リセットしないと
+    /// 2 回目以降の操作で同じ reader の読み取り失敗が通知されない。
+    /// OpenCallback.Streams は先頭 Stream と open 時に開いた全ボリュームを保持している。
+    /// </remarks>
+    ///
+    /* --------------------------------------------------------------------- */
+    private void AttachInputStreams(Action<Exception> handler)
+    {
+        if (_openCallback is null) return;
+        foreach (var stream in _openCallback.Streams) stream.ResetErrorHandler(handler);
     }
 
     /* --------------------------------------------------------------------- */
@@ -817,6 +912,7 @@ public sealed class ArchiveReader : DisposableBase
     private readonly DisposableContainer _disposable = new();
     // Prevent GC from collecting stream/callback whose CCWs are held by native 7-Zip.
     private object _openStream;
-    private object _openCallback;
+    // 展開操作の間だけ入力 Stream のエラー通知先を付け替えるため、型付きで保持する。
+    private OpenCallback _openCallback;
     #endregion
 }

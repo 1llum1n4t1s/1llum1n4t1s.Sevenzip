@@ -134,9 +134,36 @@ internal partial class OpenCallback : PasswordCallback, IArchiveOpenCallback, IA
     /* --------------------------------------------------------------------- */
     public int GetProperty(ItemPropId pid, ref PropVariant value)
     {
-        if (pid == ItemPropId.Name) value.Set(Source);
+        if (pid == ItemPropId.Name) value.Set(GetVolumeName());
         else value.Clear();
         return (int)SevenZipCode.Success;
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// GetVolumeName
+    ///
+    /// <summary>
+    /// 7z.dll へ kpidName として返す先頭ボリューム名を取得する。
+    /// </summary>
+    ///
+    /// <remarks>
+    /// 7z.dll は kpidName のディレクトリ部分を基に次のボリューム名 (sub\a.rar.002 等) を
+    /// 組み立てて GetStream へ渡す。相対パス "sub\a.rar.001" のまま返すと、
+    /// ResolveVolumePath が Source のディレクトリ基準で再結合して "sub\sub\..." に
+    /// 二重解決してしまうため、絶対パスへ正規化して返す。sourceHint が URL 等で
+    /// パスとして解釈できない場合は従来どおり元の値を返す (公開 Source は変更しない)。
+    /// </remarks>
+    ///
+    /* --------------------------------------------------------------------- */
+    private string GetVolumeName()
+    {
+        if (string.IsNullOrEmpty(Source)) return Source;
+        try { return Path.GetFullPath(Source); }
+        catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return Source;
+        }
     }
 
     /* --------------------------------------------------------------------- */

@@ -60,7 +60,7 @@ internal class ArchiveReaderTest : FileFixture
     ///
     /* --------------------------------------------------------------------- */
     [TestCaseSource(nameof(TestCases))]
-    public void Extract(string filename, string password, CodePage codePage = CodePage.Oem) => IgnoreCultureError(() =>
+    public void Extract(string filename, string password, CodePage codePage = CodePage.Oem) => RunPasswordCase(password, () =>
     {
         var src  = GetSource(filename);
         var dest = Get(nameof(Extract), filename);
@@ -77,6 +77,17 @@ internal class ArchiveReaderTest : FileFixture
             Assert.That(fi.CreationTime,   Is.Not.EqualTo(DateTime.MinValue), cmp.Key);
             Assert.That(fi.LastWriteTime,  Is.Not.EqualTo(DateTime.MinValue), cmp.Key);
             Assert.That(fi.LastAccessTime, Is.Not.EqualTo(DateTime.MinValue), cmp.Key);
+
+            // 期待 CSV の CRC は書庫に記録された CRC (7-Zip の kpidCrc)。0 はディレクトリまたは
+            // CRC 未記録 (TAR 等) を表すため比較しない。長さが一致しても内容が壊れている
+            // 展開を検出する。LHA / LZH は書庫形式として CRC-16 を記録するため CRC-16 で比較する。
+            if (cmp.Value.Crc != 0 && !fi.IsDirectory)
+            {
+                var lha = filename.EndsWith(".lzh", StringComparison.OrdinalIgnoreCase) ||
+                          filename.EndsWith(".lha", StringComparison.OrdinalIgnoreCase);
+                var actual = lha ? Crc16(fi.FullName) : Crc32(fi.FullName);
+                Assert.That(actual, Is.EqualTo(cmp.Value.Crc), $"CRC mismatch: {cmp.Key}");
+            }
         }
     }, $"{filename}, {password}");
 
@@ -131,7 +142,7 @@ internal class ArchiveReaderTest : FileFixture
     ///
     /* --------------------------------------------------------------------- */
     [TestCaseSource(nameof(TestCases))]
-    public void Test(string filename, string password, CodePage codePage = CodePage.Oem) => IgnoreCultureError(() => {
+    public void Test(string filename, string password, CodePage codePage = CodePage.Oem) => RunPasswordCase(password, () => {
         var src = GetSource(filename);
         using var archive = new ArchiveReader(src, password, new() { CodePage = codePage });
         archive.Test();
@@ -150,6 +161,13 @@ internal class ArchiveReaderTest : FileFixture
     ///   2. destDir の外に副作用（エスケープされたファイル）が作られないこと。
     /// </summary>
     ///
+    /// <remarks>
+    /// 書庫の生エントリ名は "..\..\(中略)..\Temp\evil.txt" で、漏洩した場合の書き込み先は
+    /// destDir と同じドライブの "\Temp\evil.txt" になる。destDir 内を列挙するだけでは
+    /// 外部への漏洩を検出できないため、展開前後で (1) このフィクスチャの Results 全体
+    /// (destDir の親を含む) と (2) 漏洩先の絶対パスの状態を比較する。
+    /// </remarks>
+    ///
     /* --------------------------------------------------------------------- */
     [TestCase("ZipSlipWin.zip")]
     [TestCase("ZipSlipWin.tar")]
@@ -157,12 +175,27 @@ internal class ArchiveReaderTest : FileFixture
     {
         var src  = GetSource(filename);
         var dest = Get(nameof(Extract_ZipSlipWin), filename);
+        var destFull = Path.GetFullPath(dest);
+        var escaped  = Path.Combine(Path.GetPathRoot(destFull), "Temp", "evil.txt");
 
-        using var archive = new ArchiveReader(src, "");
-        archive.Save(dest);
+        // destDir とその祖先は展開で作られる正当なエントリなので、比較前に作っておく
+        Directory.CreateDirectory(destFull);
+        var outsideBefore = SnapshotOutside(Results, destFull);
+        var escapedBefore = Stat(escaped);
+
+        using (var archive = new ArchiveReader(src, ""))
+        {
+            archive.Save(dest);
+        }
+
+        // destDir 外 (親ディレクトリ以上) に新規・変更エントリが無いこと
+        var outsideAfter = SnapshotOutside(Results, destFull);
+        Assert.That(outsideAfter.Except(outsideBefore), Is.Empty,
+            $"Entries created or modified outside destDir for {filename}");
+        Assert.That(Stat(escaped), Is.EqualTo(escapedBefore),
+            $"Zip-slip target was created or modified: {escaped}");
 
         // 全てのエントリが destDir 配下に収まっていること (zip-slip 防止の本質的検証)
-        var destFull = Path.GetFullPath(dest);
         var files    = Io.GetFiles(dest, "*", SearchOption.AllDirectories).ToList();
         Assert.That(files, Is.Not.Empty, $"No files extracted for {filename}");
         foreach (var entry in files)
@@ -475,6 +508,123 @@ internal class ArchiveReaderTest : FileFixture
 
     /* --------------------------------------------------------------------- */
     ///
+    /// SnapshotOutside
+    ///
+    /// <summary>
+    /// 指定ディレクトリ配下のうち、除外ディレクトリ外の全エントリの
+    /// ファイルは「パス|長さ|更新日時」、ディレクトリはパスとして列挙する。
+    /// </summary>
+    ///
+    /// <remarks>
+    /// 再解析ポイントは辿らない (他テストが残した junction 経由で外部を走査しない)。
+    /// </remarks>
+    ///
+    /* --------------------------------------------------------------------- */
+    private static HashSet<string> SnapshotOutside(string root, string exclude)
+    {
+        var prefix  = exclude.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            AttributesToSkip      = FileAttributes.ReparsePoint,
+            IgnoreInaccessible    = true,
+        };
+        return new DirectoryInfo(root)
+            .EnumerateFileSystemInfos("*", options)
+            .Where(e => !e.FullName.Equals(exclude, StringComparison.OrdinalIgnoreCase) &&
+                        !e.FullName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            // ディレクトリは存在だけを比較する。列挙で得るディレクトリの更新日時は親の
+            // インデックス由来で遅延更新されるため、直前の他テストの書き込みで揺れる。
+            .Select(e => e is FileInfo f ? $"{f.FullName}|{f.Length}|{f.LastWriteTimeUtc.Ticks}" : e.FullName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// Stat
+    ///
+    /// <summary>
+    /// ファイルの有無・長さ・更新日時を比較用の文字列で返す。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    private static string Stat(string path)
+    {
+        var fi = new FileInfo(path);
+        return fi.Exists ? $"{fi.Length}|{fi.LastWriteTimeUtc.Ticks}" : "(none)";
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// Crc32
+    ///
+    /// <summary>
+    /// ファイル内容の CRC-32 (IEEE 802.3、ZIP / 7z と同じ反転多項式 0xEDB88320) を計算する。
+    /// </summary>
+    ///
+    /// <remarks>
+    /// System.IO.Hashing はパッケージ追加 (packages.lock.json の変更) を伴うため使わず、
+    /// テーブル方式で自前実装する。
+    /// </remarks>
+    ///
+    /* --------------------------------------------------------------------- */
+    private static uint Crc32(string path)
+    {
+        var crc = 0xFFFFFFFFu;
+        foreach (var b in File.ReadAllBytes(path)) crc = s_crcTable[(crc ^ b) & 0xFF] ^ (crc >> 8);
+        return ~crc;
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// Crc16
+    ///
+    /// <summary>
+    /// ファイル内容の CRC-16/ARC (LHA が記録する CRC、反転多項式 0xA001) を計算する。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    private static uint Crc16(string path)
+    {
+        var crc = 0u;
+        foreach (var b in File.ReadAllBytes(path))
+        {
+            crc ^= b;
+            for (var k = 0; k < 8; k++) crc = (crc & 1) != 0 ? 0xA001u ^ (crc >> 1) : crc >> 1;
+        }
+        return crc;
+    }
+
+    private static readonly uint[] s_crcTable =Enumerable.Range(0, 256).Select(n =>
+    {
+        var c = (uint)n;
+        for (var k = 0; k < 8; k++) c = (c & 1) != 0 ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+        return c;
+    }).ToArray();
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// RunPasswordCase
+    ///
+    /// <summary>
+    /// 非 ASCII (CJK 等) のパスワードを使うケースだけを <see cref="IgnoreCultureError"/> で
+    /// 包んで実行し、それ以外はそのまま実行する。
+    /// </summary>
+    ///
+    /// <remarks>
+    /// ASCII パスワードや無パスワードのケースで EncryptionException が出るのは
+    /// ロケールと無関係な不具合なので、非 ja-JP 環境でも Ignore せず失敗させる。
+    /// </remarks>
+    ///
+    /* --------------------------------------------------------------------- */
+    private void RunPasswordCase(string password, Action action, string message)
+    {
+        if (password is not null && password.Any(c => c > 0x7F)) IgnoreCultureError(action, message);
+        else action();
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
     /// IgnoreCultureError
     ///
     /// <summary>
@@ -482,10 +632,10 @@ internal class ArchiveReaderTest : FileFixture
     /// </summary>
     ///
     /// <remarks>
-    /// ロケールが日本語以外の環境で失敗するテストに関しては、現時点
-    /// では無視しています。ArchiveOption.CodePage で明示的にコード
-    /// ページを指定可能になったため、新規テストではそちらを使用する
-    /// ことを推奨します。
+    /// 非 ASCII パスワード (PasswordJapanese01/02 等) は、書庫作成時のパスワード
+    /// エンコーディングが実行環境のコードページに依存するため、非 ja-JP 環境で
+    /// EncryptionException になる場合に限り無視する。呼び出しは
+    /// <see cref="RunPasswordCase"/> 経由とし、ロケール依存を隠す用途に使わない。
     /// </remarks>
     ///
     /* --------------------------------------------------------------------- */

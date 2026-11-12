@@ -50,6 +50,8 @@ public static class FormatFactory
     /* --------------------------------------------------------------------- */
     public static Format From(Stream src)
     {
+        // null を NullReferenceException ではなく引数エラーとして通知する。
+        ArgumentNullException.ThrowIfNull(src);
         var origin = src.Position;
 
         try

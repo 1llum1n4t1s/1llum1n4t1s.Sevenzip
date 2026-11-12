@@ -30,7 +30,7 @@ namespace Cube.FileSystem.SevenZip;
 /// <c>ArchiveWriter</c> と <c>UpdateCallback</c> で共有する <c>IsFileLocked</c> 判定と
 /// 1MB バッファサイズを集約する。
 /// </summary>
-internal static class FileSystemHelper
+internal static partial class FileSystemHelper
 {
     /// <summary>
     /// ストリームコピーに使用するデフォルトバッファサイズ (1MB)。
@@ -128,6 +128,14 @@ internal static class FileSystemHelper
                 IntPtr.Zero
             );
             ThrowIfInvalid(file, output);
+            // 親ハンドルは削除・改名を防ぐが、作成直後の空の親ディレクトリを junction 化する
+            // (FSCTL_SET_REPARSE_POINT) ことまでは防げない。その場合 CreateFile は親経路の
+            // 再解析ポイントを辿り、展開先外へファイルを作りうる。書き込み (SetLength を含む)
+            // の前に、開いたハンドルの実体が展開先 root の実体配下にあることを確認する。
+            // 外れた場合は削除しない: 削除はパス経由で行うため、差し替えられた経路の先
+            // (展開先外の既存ファイル) を消す恐れがある。OpenAlways で展開先外に空ファイルが
+            // 作成済みの可能性は残る (既知の制約)。ハンドルは finally で閉じる。
+            ThrowIfOutsideRoot(handles[0], file, output);
             ThrowIfReparsePoint(output);
 
             var stream = new ExtractionFileStream(file, handles);
@@ -233,7 +241,63 @@ internal static class FileSystemHelper
         }
     }
 
-    private static SafeFileHandle OpenDirectory(string path)
+    /// <summary>
+    /// 開いたハンドルの実体パスが、展開先 root ディレクトリの実体パス配下にあることを確認する。
+    /// </summary>
+    /// <param name="root">展開先 root ディレクトリのハンドル。</param>
+    /// <param name="target">検証対象 (出力ファイル) のハンドル。</param>
+    /// <param name="path">エラーメッセージ用の出力パス。</param>
+    /// <remarks>
+    /// 文字列の root パス (Path.GetFullPath) とは比較しない。8.3 短縮名、\\?\ 接頭辞、
+    /// root より上位の junction などで表記が変わり、誤検知・見逃しの原因になるため。
+    /// 両方を同じフラグ (正規化済み・NT デバイス名形式) の GetFinalPathNameByHandle で
+    /// 解決してから比較する。NT 形式はドライブ文字の割り当てに依存しない。
+    /// </remarks>
+    /// <exception cref="IOException">実体が root 配下に無い場合。</exception>
+    internal static void ThrowIfOutsideRoot(SafeFileHandle root, SafeFileHandle target, string path)
+    {
+        var rootPath   = GetFinalPath(root).TrimEnd(Path.DirectorySeparatorChar);
+        var targetPath = GetFinalPath(target);
+        if (!targetPath.StartsWith(rootPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new IOException(
+                $"Refusing to extract outside destination: '{path}' was resolved to '{targetPath}'.");
+        }
+    }
+
+    /// <summary>
+    /// ハンドルが指す実体の最終パスを NT デバイス名形式で取得する。
+    /// </summary>
+    private static unsafe string GetFinalPath(SafeFileHandle handle)
+    {
+        var size = 512u;
+        while (true)
+        {
+            var buffer = new char[size];
+            uint length;
+            fixed (char* p = buffer)
+            {
+                length = GetFinalPathNameByHandle(handle, p, size, FileNameNormalized | VolumeNameNt);
+            }
+            if (length == 0)
+            {
+                var error = Marshal.GetLastPInvokeError();
+                throw new Win32Exception(error, "Failed to resolve the final path of an extraction handle.");
+            }
+            // バッファ不足時は終端 NUL を含む必要サイズが返る
+            if (length < size) return new string(buffer, 0, (int)length);
+            size = length + 1;
+        }
+    }
+
+    [LibraryImport("kernel32.dll", EntryPoint = "GetFinalPathNameByHandleW", SetLastError = true)]
+    private static unsafe partial uint GetFinalPathNameByHandle(
+        SafeFileHandle file, char* path, uint length, uint flags);
+
+    /// <summary>
+    /// 再解析ポイントを辿らずにディレクトリを開き、削除・改名を許可しないハンドルを返す。
+    /// </summary>
+    internal static SafeFileHandle OpenDirectory(string path)
     {
         var handle = NativeMethods.CreateFile(
             ToExtendedPath(path),
@@ -315,6 +379,8 @@ internal static class FileSystemHelper
     private const uint FileAttributeNormal = 0x00000080;
     private const uint FileFlagOpenReparsePoint = 0x00200000;
     private const uint FileFlagBackupSemantics = 0x02000000;
+    private const uint FileNameNormalized = 0x0;
+    private const uint VolumeNameNt = 0x2;
     private const int ErrorFileNotFound = 2;
     private const int ErrorPathNotFound = 3;
 

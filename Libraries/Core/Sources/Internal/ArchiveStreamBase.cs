@@ -118,6 +118,21 @@ internal class ArchiveStreamBase : DisposableBase
     internal void SetErrorHandler(Action<Exception> errorHandler) => _errorHandler = errorHandler;
 
     /// <summary>
+    /// Stream I/O 例外の通知先を付け替え、記録済みの例外をリセットする。
+    /// </summary>
+    /// <remarks>
+    /// 同じ入力 Stream を複数の操作 (open → 展開 → 展開 …) で使い回す場合に、操作ごとの
+    /// callback へ例外を届けるために使う。<see cref="Capture"/> は最初の 1 件だけを通知する
+    /// (CompareExchange) ため、リセットしないと前回操作の例外が残って以降の失敗が
+    /// 新しい callback へ通知されない。7z.dll の呼び出し中 (操作中) には呼ばないこと。
+    /// </remarks>
+    internal void ResetErrorHandler(Action<Exception> errorHandler)
+    {
+        _errorHandler = errorHandler;
+        Volatile.Write(ref _error, null);
+    }
+
+    /// <summary>
     /// COM 境界を越えられない Stream 例外を保持し、HRESULT を返す。
     /// </summary>
     protected int Capture(Exception error)

@@ -118,7 +118,7 @@ internal sealed class SevenZipLibrary
     {
         // 本ライブラリは win-x64 / win-arm64 の 7z.dll のみ同梱しているため、
         // 他のアーキテクチャでは明示的に PlatformNotSupportedException を投げる。
-        // OS 縛りは TargetFramework=net10.0-windows8 により型読み込み時に強制されるため、
+        // OS 縛りは TargetFramework=net11.0-windows8 により型読み込み時に強制されるため、
         // ここではアーキテクチャのみをチェックする。
         var arch = RuntimeInformation.ProcessArchitecture;
         if (arch != Architecture.X64 && arch != Architecture.Arm64)
@@ -202,12 +202,25 @@ internal sealed class SevenZipLibrary
             var hr = Marshal.QueryInterface(unkPtr, in iid, out var ptr);
             if (hr != 0 || ptr == IntPtr.Zero) return null;
 
-            // UniqueInstance: このラッパーが COM 参照の所有権を持つ（QueryInterface の refcount を引き継ぐ）
-            var obj = s_comWrappers
-                .GetOrCreateObjectForComInstance(ptr, CreateObjectFlags.UniqueInstance);
-            // DLL アンロード前に FinalRelease を実行できるよう追跡リストに登録する
-            Track(obj);
-            return (T)obj;
+            try
+            {
+                // UniqueInstance: ラッパーは生成時に自前で AddRef した参照を所有し、
+                // FinalRelease / finalizer でそれを解放する。QueryInterface で得た参照は
+                // 引き継がれないため、下の finally で呼び出し側の参照として解放する。
+                var obj = s_comWrappers
+                    .GetOrCreateObjectForComInstance(ptr, CreateObjectFlags.UniqueInstance);
+                // DLL アンロード前に FinalRelease を実行できるよう追跡リストに登録する
+                Track(obj);
+                return (T)obj;
+            }
+            finally
+            {
+                // QueryInterface で AddRef されたカウントをデクリメントする。ラッパー生成に
+                // 失敗した場合も同じ 1 回で釣り合う (二重解放にならない)。旧実装はここを
+                // 解放せず、ReleaseComWrapper 後も native 側に参照が 1 つ残っていた
+                // (ReaderRegressionTest.ComWrapper_Release_LeavesNoNativeReference で実測)。
+                Marshal.Release(ptr);
+            }
         }
         finally
         {
@@ -481,12 +494,24 @@ internal sealed class SevenZipLibrary
         var iid = typeof(T).GUID;
         // 7z.dll の CreateObject 関数を呼び出して COM インターフェースポインタを取得する
         var ptr = CreateObject(ref clsid, ref iid);
-        // UniqueInstance でラップして参照の所有権を ComWrappers に移譲する
-        var obj = s_comWrappers
-            .GetOrCreateObjectForComInstance(ptr, CreateObjectFlags.UniqueInstance);
-        // DLL アンロード前に解放できるよう追跡リストに登録する
-        Track(obj);
-        return (T)obj;
+        try
+        {
+            // UniqueInstance でラップする。ラッパーは生成時に自前で AddRef した参照を所有し
+            // (CreateObject の参照は引き継がない)、FinalRelease / finalizer でそれを解放する。
+            var obj = s_comWrappers
+                .GetOrCreateObjectForComInstance(ptr, CreateObjectFlags.UniqueInstance);
+            // DLL アンロード前に解放できるよう追跡リストに登録する
+            Track(obj);
+            return (T)obj;
+        }
+        finally
+        {
+            // CreateObject が返した呼び出し側の参照を解放する。ラッパー生成に失敗した場合も
+            // 同じ 1 回で釣り合う。旧実装はここを解放せず、ReleaseComWrapper 後も native 側に
+            // 参照が 1 つ残っていた (ReaderRegressionTest.ComWrapper_Release_LeavesNoNativeReference
+            // で TryGetComInstance 経由の観測参照を外した残数が 1 になることを実測)。
+            Marshal.Release(ptr);
+        }
     }
 
     /// <summary>

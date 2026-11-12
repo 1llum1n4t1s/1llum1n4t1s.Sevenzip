@@ -180,6 +180,15 @@ internal static class ArchiveExtension
 
         // パスが取得できなかった場合（TAR など）はアーカイブ名から生成する
         var tmp = Io.GetBaseName(path);
+
+        // sourceHint なしの Stream で開いた場合など、アーカイブ名からも導出できない場合は
+        // 既定名を与える。空のままだと FullName が空になり、ExtractCallback が出力 Stream を
+        // 作らずに「何も書かずに成功」してしまう (FileExtracting / FileExtracted イベントは
+        // 発火するので利用者は展開できたと誤認する)。この既定名は本ライブラリ独自の値。
+        // サニタイズで空になったエントリ ("..", "." 等) はここを通らない (7z.dll から
+        // 非空のパスが返る) ため、従来どおり展開対象外のままである。
+        if (!Io.GetFileName(tmp).HasValue())
+            return index == 0 ? NoNameEntry : $"{NoNameEntry}({index})";
         // 拡張子が既知のアーカイブ形式なら、その拡張子なしのファイル名を返す
         var fmt = FormatFactory.FromExtension(Io.GetExtension(tmp));
         if (fmt != Format.Unknown) return Io.GetFileName(tmp);
@@ -193,6 +202,18 @@ internal static class ArchiveExtension
         // TAR 系の場合は .tar 拡張子を付与する
         return tar ? $"{name}.tar" : name;
     }
+
+    #endregion
+
+    #region Fields
+
+    /// <summary>
+    /// パスを持たず、アーカイブ名からも名前を導出できないエントリに与える既定名。
+    /// </summary>
+    /// <remarks>
+    /// Windows のファイル名として有効で、SafePath のサニタイズで変化しない文字だけで構成する。
+    /// </remarks>
+    internal const string NoNameEntry = "[No name]";
 
     #endregion
 }
