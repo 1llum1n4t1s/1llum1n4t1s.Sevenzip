@@ -84,6 +84,16 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     public string Destination { get; init; }
 
     /// <summary>
+    /// 更新元の既存アーカイブ (更新モードのみ) を取得または設定する。
+    /// </summary>
+    /// <remarks>
+    /// rename エントリの Path 以外のプロパティを元エントリから返すために使う。
+    /// 所有権は持たない (解放は ArchiveWriter.UpdateCore の後始末が行う)。
+    /// null の場合、rename エントリの Path 以外のプロパティは空値を返す。
+    /// </remarks>
+    public IInArchive Source { get; init; }
+
+    /// <summary>
     /// アーカイブに設定するパスワードを取得または設定する。
     /// </summary>
     /// <remarks>
@@ -238,10 +248,18 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
             var entry = _plan.Entries[index];
             if (!entry.IsNewOrReplaced && entry.RenameTo is not null)
             {
-                // Path は新しい名前に差し替え、その他は空 (7-zip が既存アーカイブから補完する)
-                if (pid == ItemPropId.Path) value.Set(entry.RenameTo);
-                else value.Clear();
-                return (int)SevenZipCode.Success;
+                // Path は新しい名前に差し替える。
+                if (pid == ItemPropId.Path)
+                {
+                    value.Set(entry.RenameTo);
+                    return (int)SevenZipCode.Success;
+                }
+
+                // Path 以外も空値を返してはならない: rename は newprop=1 で返すため、7-Zip は
+                // プロパティを既存アーカイブから補完せず、このコールバックの値だけで項目を組み立てる
+                // (7z: mtime/ctime/atime/attrib が消える、ZIP: 時刻 0・IsDir=false になる)。
+                // 本家 UI (UI/Common/UpdateCallback.cpp) と同じく、元書庫の該当エントリの値を返す。
+                return GetSourceProperty(entry.OriginalIndex, pid, ref value);
             }
         }
 
@@ -322,16 +340,20 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     public int GetStream(uint index, out ISequentialInStream stream)
     {
         var resolved = ResolveItemIndex(index);
+
+        // 最後に開いたエントリとして記録する (対応する SetOperationResult と進捗が読む)。
+        // 7-Zip は GetStream(k) → SetOperationResult(k) → GetStream(k+1) を直列に呼ぶので、
+        // 次の GetStream までの間はこの値が「処理中のエントリ」を一意に指す。
+        // 保持アイテム (resolved < 0) でも -1 を書き、前エントリの値を持ち越さない
+        // (持ち越すと保持アイテムの SetOperationResult が無関係な新規エントリを報告する)。
+        Volatile.Write(ref _openedIndex, resolved);
+
         if (resolved < 0)
         {
             // 保持アイテムの場合: 7-zip が既存アーカイブから直接コピーするためストリーム不要
             stream = null;
             return (int)SevenZipCode.Success;
         }
-
-        // 7z 形式の並行圧縮では複数のワーカースレッドが GetStream / SetOperationResult を
-        // 対で呼ぶため、処理中インデックスをコールバックスレッドごとに保持する。
-        _currentIndex.Value = resolved;
 
         var dest = default(ISequentialInStream);
         var src  = Current(resolved);
@@ -365,13 +387,21 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     /// <returns>操作結果コード。</returns>
     public int SetOperationResult(SevenZipCode code)
     {
-        var index = _currentIndex.Value;
+        // 処理開始時に index と entity をローカルへ確定し、イベント・例外・進捗で同じ組を使う。
+        // 呼び出しスレッドは対応する GetStream と異なりうる (7z の LZMA2 ブロック MT では
+        // k の終了が k+1 を開くスレッドから届く) ため、スレッド単位ではなくインスタンスで
+        // 保持している「最後に開いたエントリ」を読む。
+        // ここで -1 に戻す (消費する) ことはしない: エントリ間に届く SetCompleted の
+        // 進捗 (Current()) が null になり、進捗表示の対象ファイルが途切れるため。
+        var index = Volatile.Read(ref _openedIndex);
         var current = Current(index);
         // Stream 早期解放の設計メモ (検証済の現時点での結論):
         // 以下の 2 案で早期解放を試みたがどちらも破綻したため、Dispose 時一括解放に集約している:
         //
         // 案 A: SetOperationResult で _currentStream を即時 Dispose
-        //   → 並行 GetStream (ZIP Ultra 等) で _currentStream が別エントリで上書きされ、
+        //   → ZIP のマルチスレッド圧縮 (ZIP Ultra 等) では GetStream / SetOperationResult 自体は
+        //      直列だが、SetOperationResult は入力を圧縮スレッドへ渡した時点で呼ばれ、
+        //      ストリームの使用期間はエントリ間で重なる。_currentStream が次エントリで上書きされ、
         //      誤って使用中の stream を Dispose → MarshalDirectiveException (0x80131522)
         //
         // 案 B: Read で EOF 到達を検知して SetCompleted 時に CleanupFinishedStreams
@@ -440,7 +470,8 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         // (ストリーム) に触らない。各ストリームは自身の finalizer / SafeHandle が
         // 回収する (ArchiveReader.Dispose の同ガード参照)。一時ディレクトリ削除は
         // 純粋な OS 呼び出しなので finalizer 経路でも実行する。
-        // 共有可変状態はロック配下でスナップショットを取ってから触る (並行 GetStream 対策)。
+        // 共有可変状態は規約どおり _stateLock 配下でスナップショットを取ってから触る
+        // (_streams / _tempDir はコールバックスレッドを跨いで書かれるため)。
         ArchiveStreamReader[] streams;
         string tempDir;
         lock (_stateLock)
@@ -460,8 +491,6 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
                 try { stream.Dispose(); }
                 catch (Exception e) { (errors ??= []).Add(e); }
             }
-            try { _currentIndex.Dispose(); }
-            catch (Exception e) { (errors ??= []).Add(e); }
         }
 
         // ロック中ファイルの一時コピーを削除する。
@@ -506,8 +535,11 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         Stream stream;
         try
         {
-            // まず通常モード（FileShare.Read）で開く
-            stream = Io.Open(src.FullName);
+            // まず通常モード（FileShare.Read）で開く。
+            // Add 時点の「再解析ポイントではない」というスナップショットは保存時には古い可能性がある
+            // (Add 後にファイルがシンボリックリンク等へ差し替えられると、通常オープンはリンクを
+            // 辿って追加元ツリー外のファイルを書庫へ取り込む)。開いた実体を検証してから使う。
+            stream = OpenVerified(src.FullName, null);
         }
         catch (IOException ex) when (FileSystemHelper.IsFileLocked(ex))
         {
@@ -517,10 +549,10 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         }
 
         // ストリームを開き、Dispose 時に解放できるようリストに登録する。
-        // GetStream は 7z.dll のマルチスレッド圧縮から並行に呼ばれる (ThreadCount > 1) ため、
-        // List<T>.Add を無同期で行うと登録が失われて Dispose の一括解放から漏れ
-        // (write ロックが GC まで残留)、内部配列の resize 競合で
-        // IndexOutOfRangeException が出て圧縮全体が間欠的に失敗する。
+        // GetStream 自体は 7-Zip が直列に呼ぶが、呼び出しスレッドはエントリごとに変わり、
+        // マルチスレッド圧縮 (ThreadCount > 1) では Dispose 等の他経路と同時に触られうる。
+        // 規約として _streams は _stateLock 配下でのみ読み書きする (無同期の List<T>.Add は
+        // 登録漏れで Dispose の一括解放から外れ、write ロックが GC まで残留しうる)。
         var dest = new ArchiveStreamReader(stream, dispose: true, ErrorHandler);
         lock (_stateLock) _streams.Add(dest);
         return dest;
@@ -533,8 +565,9 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     private string CopyLockedFile(string sourcePath)
     {
         // 一時ディレクトリを遅延作成（乱数名で衝突回避）。
-        // GetStream → Open → ここは並行に到達しうるため、check-then-act をロックで囲む。
-        // 無同期だと 2 スレッドが同時に別ディレクトリを作って後勝ちで _tempDir が上書きされ、
+        // GetStream → Open → ここは 7-Zip が直列に呼ぶが、呼び出しスレッドは変わりうるため
+        // _tempDir は _stateLock 配下でのみ読み書きする (check-then-act をロックで囲む)。
+        // 仮に 2 経路が同時に別ディレクトリを作ると後勝ちで _tempDir が上書きされ、
         // 先のディレクトリが Dispose の削除対象から漏れてロック中ファイルの平文コピーが
         // %TEMP% に恒久残留する。
         string tempDir;
@@ -569,7 +602,8 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
 
         // 共通の 1MB バッファで write syscall 回数を削減
         const int bufferSize = FileSystemHelper.DefaultBufferSize;
-        using var src = Io.Open(sourcePath, FileShare.ReadWrite | FileShare.Delete);
+        // ロック中ファイルのコピー元も通常経路と同じく再解析ポイント経由でないことを検証する。
+        using var src = OpenVerified(sourcePath, FileShare.ReadWrite | FileShare.Delete);
         using var dst = new FileStream(tempPath, FileMode.Create, FileAccess.Write,
             FileShare.None, bufferSize: bufferSize);
 
@@ -587,15 +621,162 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     }
 
     /// <summary>
-    /// 現在処理中のエンティティを返す。
+    /// rename エントリの Path 以外のプロパティを、更新元アーカイブの該当エントリから取得する。
+    /// </summary>
+    /// <param name="originalIndex">更新元アーカイブ内のインデックス。</param>
+    /// <param name="pid">取得するプロパティ ID。</param>
+    /// <param name="value">取得した値 (所有権は呼び出し元の 7-Zip へ移る)。</param>
+    /// <returns>操作結果コード。</returns>
+    /// <remarks>
+    /// <para>
+    /// 7-Zip の UpdateItems は項目情報 (GetUpdateItemInfo / GetProperty) を圧縮開始前に
+    /// 呼び出し元スレッドで順に収集するため、ここで更新元ハンドラーへ再入しても
+    /// 圧縮ワーカーとは競合しない (本家 UI の CArchiveUpdateCallback も同じ再入を行う)。
+    /// </para>
+    /// <para>
+    /// 生成 COM ラッパーの <see cref="IInArchive.GetProperty"/> は失敗 HRESULT を例外に変換する。
+    /// COM 境界へ例外を漏らさず、<see cref="CallbackBase.PushException"/> で積んでから
+    /// エラーコードを返す (積まないと ThrowIfError がキャンセル扱いに化かす)。
+    /// </para>
+    /// </remarks>
+    private int GetSourceProperty(uint originalIndex, ItemPropId pid, ref PropVariant value)
+    {
+        if (Source is null)
+        {
+            value.Clear();
+            return (int)SevenZipCode.Success;
+        }
+
+        try
+        {
+            Source.GetProperty(originalIndex, pid, ref value);
+            return (int)SevenZipCode.Success;
+        }
+        catch (Exception e) when (!IsFatalException(e))
+        {
+            PushException(e);
+            return e is SevenZipException se ? (int)se.Code : (int)SevenZipCode.UnknownError;
+        }
+    }
+
+    /// <summary>
+    /// 入力ファイルを開き、パスの実体 (再解析ポイントを辿らない) と同じファイルであることを検証する。
+    /// </summary>
+    /// <param name="path">開くファイルのパス。</param>
+    /// <param name="share">共有モード。null の場合は <see cref="Io.Open(string)"/> の既定 (FileShare.Read)。</param>
+    /// <returns>検証済みの読み取りストリーム。</returns>
+    /// <exception cref="IOException">
+    /// パスが再解析ポイント・ディレクトリになっている、または開いたファイルがパスの実体と異なる場合。
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// 開く処理自体は <see cref="Io"/> 抽象を通し (テストの I/O 差し替えと共有違反判定を維持)、
+    /// その後 <c>FILE_FLAG_OPEN_REPARSE_POINT</c> でパスの末端そのものを開いて
+    /// (1) 再解析ポイント・ディレクトリでないこと、(2) ボリュームシリアル番号とファイル ID が
+    /// 開いたストリームと一致すること、を確認する。(2) により「開いた時点はリンクで、検査時点で
+    /// 実ファイルへ戻された」といった差し替え競合も検出できる。
+    /// </para>
+    /// <para>
+    /// 検出は保存の失敗として扱う (呼び出し元の Run が Exceptions に積む)。
+    /// <see cref="CompressionOption.SkipInaccessibleFiles"/> は Add 時点の設定であり、
+    /// 保存中の検出を黙示スキップへ変換しない。
+    /// </para>
+    /// <para>
+    /// 制約: 検証対象はパスの末端要素だけで、途中のディレクトリがジャンクションへ
+    /// 差し替えられた場合は検出しない (Add のルートを保持していないため、
+    /// どこまでが追加元ツリーかを判定できない)。
+    /// </para>
+    /// </remarks>
+    private static FileStream OpenVerified(string path, FileShare? share)
+    {
+        var stream = share is { } s ? Io.Open(path, s) : Io.Open(path);
+        try
+        {
+            ThrowIfRedirected(stream, path);
+            return stream;
+        }
+        catch
+        {
+            stream.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// 開いたストリームが、パスの末端 (再解析ポイントを辿らない) と同一の通常ファイルかを検証する。
+    /// </summary>
+    private static void ThrowIfRedirected(FileStream stream, string path)
+    {
+        var full = Path.GetFullPath(path);
+        using var probe = Kernel32.NativeMethods.CreateFile(
+            ToExtendedPath(full),
+            FileReadAttributes,
+            FileShareAll,
+            IntPtr.Zero,
+            OpenExisting,
+            // OPEN_REPARSE_POINT: リンクを辿らずリンク自体を開く。
+            // BACKUP_SEMANTICS: ディレクトリ (ジャンクションを含む) に差し替えられていても開けるようにする。
+            FileFlagOpenReparsePoint | FileFlagBackupSemantics,
+            IntPtr.Zero);
+        if (probe.IsInvalid)
+        {
+            var error = Marshal.GetLastPInvokeError();
+            throw new IOException($"Failed to verify the file to archive: '{full}'.",
+                HResultFromWin32(error));
+        }
+
+        if (!Native.GetFileInformationByHandle(probe, out var expected))
+            throw new IOException($"Failed to query the file to archive: '{full}'.",
+                HResultFromWin32(Marshal.GetLastPInvokeError()));
+
+        var attributes = (FileAttributes)expected.FileAttributes;
+        if ((attributes & FileAttributes.ReparsePoint) != 0)
+            throw new IOException($"Refusing to archive reparse point: '{full}'.");
+        if ((attributes & FileAttributes.Directory) != 0)
+            throw new IOException($"Refusing to archive '{full}' because it was replaced by a directory after it was added.");
+
+        if (!Native.GetFileInformationByHandle(stream.SafeFileHandle, out var actual))
+            throw new IOException($"Failed to query the opened file: '{full}'.",
+                HResultFromWin32(Marshal.GetLastPInvokeError()));
+
+        if (expected.VolumeSerialNumber != actual.VolumeSerialNumber ||
+            expected.FileIndexHigh      != actual.FileIndexHigh ||
+            expected.FileIndexLow       != actual.FileIndexLow)
+        {
+            throw new IOException(
+                $"Refusing to archive '{full}' because the opened file is not the file at that path " +
+                "(it may have been replaced by a link after it was added).");
+        }
+    }
+
+    /// <summary>
+    /// 絶対パスを長いパス対応の拡張形式 (<c>\\?\</c>) に変換する。
+    /// </summary>
+    private static string ToExtendedPath(string path)
+    {
+        if (path.StartsWith(@"\\?\", StringComparison.Ordinal)) return path;
+        return path.StartsWith(@"\\", StringComparison.Ordinal)
+            ? @"\\?\UNC\" + path[2..]
+            : @"\\?\" + path;
+    }
+
+    /// <summary>
+    /// Win32 エラーコードを HRESULT に変換する (FileSystemHelper.IsFileLocked の判定と揃える)。
+    /// </summary>
+    private static int HResultFromWin32(int error) =>
+        error <= 0 ? unchecked((int)0x80004005) : unchecked((int)(0x80070000u | (uint)(error & 0xFFFF)));
+
+    /// <summary>
+    /// 最後に開いた (GetStream した) エンティティを返す。
     /// </summary>
     /// <remarks>
-    /// 並行 GetStream では処理中インデックスが他スレッドと競合しうるため、
-    /// 自分が解決したインデックスを持っている呼び出し元は <see cref="Current(int)"/> を使う。
+    /// SetCompleted はマルチスレッド圧縮で並行に呼ばれるため、<see cref="_openedIndex"/> は
+    /// Volatile で読む。自分が解決したインデックスを持っている呼び出し元は
+    /// <see cref="Current(int)"/> を使う (読み直すと次の GetStream の値を拾いうる)。
     /// </remarks>
     private RawEntity Current()
     {
-        return Current(_currentIndex.Value);
+        return Current(Volatile.Read(ref _openedIndex));
     }
 
     /// <summary>
@@ -642,9 +823,54 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
         return false;
     }
 
+    /// <summary>
+    /// 入力ファイルの同一性検証に使う Win32 API。
+    /// </summary>
+    /// <remarks>
+    /// CreateFile は共有の <see cref="Kernel32.NativeMethods.CreateFile"/> を使い、ここでは
+    /// ファイル ID 取得 (GetFileInformationByHandle) だけを宣言する。
+    /// </remarks>
+    private static partial class Native
+    {
+        /// <summary>BY_HANDLE_FILE_INFORMATION 構造体。</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct ByHandleFileInformation
+        {
+            public uint FileAttributes;
+            public uint CreationTimeLow;
+            public uint CreationTimeHigh;
+            public uint LastAccessTimeLow;
+            public uint LastAccessTimeHigh;
+            public uint LastWriteTimeLow;
+            public uint LastWriteTimeHigh;
+            public uint VolumeSerialNumber;
+            public uint FileSizeHigh;
+            public uint FileSizeLow;
+            public uint NumberOfLinks;
+            public uint FileIndexHigh;
+            public uint FileIndexLow;
+        }
+
+        /// <summary>
+        /// 開いたハンドルの属性・ボリュームシリアル番号・ファイル ID を取得する。
+        /// </summary>
+        [LibraryImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static partial bool GetFileInformationByHandle(
+            Microsoft.Win32.SafeHandles.SafeFileHandle file,
+            out ByHandleFileInformation information);
+    }
+
     #endregion
 
     #region Fields
+    // 入力ファイル検証用の CreateFile 引数 (FILE_READ_ATTRIBUTES は共有モードの衝突判定を受けない)
+    private const uint FileReadAttributes       = 0x00000080;
+    private const uint FileShareAll             = 0x00000001 | 0x00000002 | 0x00000004;
+    private const uint OpenExisting             = 3;
+    private const uint FileFlagOpenReparsePoint = 0x00200000;
+    private const uint FileFlagBackupSemantics  = 0x02000000;
+
     // 開いた読み取りストリームのリスト（Dispose 時に全て解放する）
     private readonly List<ArchiveStreamReader> _streams = [];
 
@@ -652,8 +878,14 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     private readonly IList<RawEntity> _items;
     // 更新プラン（null = 新規作成モード、非 null = 更新モード）
     private readonly UpdatePlan _plan;
-    // 現在処理中のアイテムを指す _items インデックス（未処理は -1）
-    private readonly ThreadLocal<int> _currentIndex = new(() => -1);
+    // 最後に GetStream したアイテムを指す _items インデックス（未処理・保持アイテムは -1）。
+    // 7-Zip は GetStream / SetOperationResult を全形式で直列に呼ぶ (GetStream(k) →
+    // SetOperationResult(k) → GetStream(k+1)) が、呼び出しスレッドは対にならない
+    // (7z の LZMA2 ブロック MT では k の終了が k+1 を開くスレッドから届く)。
+    // ThreadLocal にするとスレッドを跨いで届く SetOperationResult がエントリを取り違える
+    // (Target=null や数件前のファイル) ため、インスタンスで 1 つだけ保持する。
+    // 並行に呼ばれる SetCompleted からも読むので Volatile で読み書きする。
+    private int _openedIndex = -1;
     // ロック中ファイルの一時コピー先ディレクトリ（遅延作成、Dispose 時に削除）
     private string _tempDir;
     // 最後に処理したコールバックインデックス（UpdateItemProgress の重複検出用）
@@ -663,8 +895,8 @@ internal sealed partial class UpdateCallback : CallbackBase, IArchiveUpdateCallb
     // SetCompleted の並行呼び出し (ZIP Ultra 等のマルチスレッド圧縮) で _maxCompletedBytes を
     // 保護するロック
     private readonly Lock _completedLock = new();
-    // 並行 GetStream (ZIP Ultra 等のマルチスレッド圧縮) から触られる共有可変状態
-    // (_streams / _tempDir) を保護するロック
+    // コールバックスレッドを跨いで触られる共有可変状態 (_streams / _tempDir) を保護するロック
+    // (GetStream 自体は直列だが呼び出しスレッドはエントリごとに変わる)
     private readonly Lock _stateLock = new();
     // 最後に進捗を報告した TickCount64（スロットリング用）
     private long _lastReportedTicks;

@@ -19,6 +19,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -167,43 +168,86 @@ internal class UpdateCallbackProgressTest
         finally { File.Delete(src); }
     }
 
+    /* --------------------------------------------------------------------- */
+    ///
+    /// SetOperationResult_FromOtherThread_UsesLastOpenedEntry
+    ///
+    /// <summary>
+    /// GetStream(k) と SetOperationResult が別スレッドから届いても、FileCompressed が
+    /// 最後に開いたエントリ k (Index と Target の組) で発火することを確認します。
+    /// </summary>
+    ///
+    /// <remarks>
+    /// 7-Zip は GetStream / SetOperationResult を「GetStream(k) → SetOperationResult(k) →
+    /// GetStream(k+1)」の順に直列化して呼ぶが、呼び出しスレッドは対にならない
+    /// (7z の LZMA2 ブロック MT では k の終了が k+1 を開くスレッドから届く)。
+    /// 旧実装は処理中インデックスを ThreadLocal に持っていたため、別スレッドから届いた
+    /// SetOperationResult が未設定 (-1 → Target=null) や数件前のエントリを報告していた。
+    /// 呼び出し順は 7-Zip と同じ直列のまま、スレッドだけを毎回切り替えて再現する。
+    /// </remarks>
+    ///
+    /* --------------------------------------------------------------------- */
     [Test]
-    public void SetOperationResult_ConcurrentStreamsKeepsOwnIndex()
+    public void SetOperationResult_FromOtherThread_UsesLastOpenedEntry()
     {
-        var first = Path.Combine(Path.GetTempPath(), $"UpdateCallbackProgressTest_{Guid.NewGuid():N}_a.bin");
-        var second = Path.Combine(Path.GetTempPath(), $"UpdateCallbackProgressTest_{Guid.NewGuid():N}_b.bin");
-        File.WriteAllBytes(first, [1]);
-        File.WriteAllBytes(second, [2]);
+        const int count = 6;
+        var paths = new string[count];
+        for (var i = 0; i < count; i++)
+        {
+            paths[i] = Path.Combine(Path.GetTempPath(), $"UpdateCallbackProgressTest_{Guid.NewGuid():N}_{i}.bin");
+            File.WriteAllBytes(paths[i], [(byte)i]);
+        }
+
         try
         {
-            var items = new List<RawEntity> { new(first, "a.bin"), new(second, "b.bin") };
-            var finished = new string[2];
+            var items = new List<RawEntity>();
+            for (var i = 0; i < count; i++) items.Add(new(paths[i], $"{i}.bin"));
+
+            var finished = new List<(int Index, string Name)>();
             using var cb = new UpdateCallback(items, new SilentProgress())
             {
-                OnFileFinished = e => finished[e.Index] = ((RawEntity)e.Target).RelativeName,
+                OnFileFinished = e => finished.Add((e.Index, (e.Target as RawEntity)?.RelativeName)),
             };
-            using var barrier = new Barrier(2);
 
-            var tasks = new Task[2];
-            for (var i = 0; i < tasks.Length; i++)
+            for (var k = 0; k < count; k++)
             {
-                var index = i;
-                tasks[i] = Task.Run(() =>
-                {
-                    Assert.That(cb.GetStream((uint)index, out _), Is.Zero);
-                    barrier.SignalAndWait();
-                    Assert.That(cb.SetOperationResult(SevenZipCode.Success), Is.Zero);
-                });
+                var index = k;
+                // 専用スレッドで実行し、スレッドプールの同一スレッド再利用で
+                // 「たまたま同じスレッド」になることを避ける。
+                RunOnNewThread(() => Assert.That(cb.GetStream((uint)index, out _), Is.Zero));
+                RunOnNewThread(() => Assert.That(cb.SetOperationResult(SevenZipCode.Success), Is.Zero));
             }
-            Task.WaitAll(tasks);
 
-            Assert.That(finished, Is.EqualTo(new[] { "a.bin", "b.bin" }));
+            var expected = new List<(int, string)>();
+            for (var i = 0; i < count; i++) expected.Add((i, $"{i}.bin"));
+            Assert.That(finished, Is.EqualTo(expected));
         }
         finally
         {
-            File.Delete(first);
-            File.Delete(second);
+            foreach (var path in paths) File.Delete(path);
         }
+    }
+
+    /* --------------------------------------------------------------------- */
+    ///
+    /// RunOnNewThread
+    ///
+    /// <summary>
+    /// 指定した処理を新しいスレッドで実行し、完了を待つ。スレッド内の例外は呼び出し元へ再送出する。
+    /// </summary>
+    ///
+    /* --------------------------------------------------------------------- */
+    private static void RunOnNewThread(Action action)
+    {
+        Exception error = null;
+        var thread = new Thread(() =>
+        {
+            try { action(); }
+            catch (Exception e) { error = e; }
+        });
+        thread.Start();
+        thread.Join();
+        if (error is not null) ExceptionDispatchInfo.Capture(error).Throw();
     }
 
     /* --------------------------------------------------------------------- */

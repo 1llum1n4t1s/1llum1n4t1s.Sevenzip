@@ -135,11 +135,18 @@ internal sealed class UpdatePlan
             // パス区切り文字を正規化（外部作成 ZIP は '/' を使用する場合がある）
             var path = existingPaths(i).Replace('/', '\\');
 
+            // Add との照合は「出力上のパス」(rename があれば rename 後のパス) で行う。
+            // 元パスだけで照合すると、renameMap{i:"x"} と Add(..., "x") の併用で
+            // rename 後のエントリ "x" と Add の "x" が両方出力され、同名エントリが 2 つになる
+            // (Update(Stream, Stream, renameMap, ...) の「Add の内容が優先」契約に反する)。
+            // rename 先が Add と一致した場合、rename 元エントリは Add のデータで置換する。
+            var effectivePath = hasRename ? renameTo.Replace('/', '\\') : path;
+
             // 既存側にケースだけ違う重複パス (非 Windows 製アーカイブの "README" と "readme" 等) が
             // あると、OrdinalIgnoreCase の replaceMap では両方が同じ新規アイテムにヒットして
             // 出力に同一パスのエントリが 2 つ並び、片方の元データが意図せず失われる。
             // 先にヒットした 1 件だけを置換し、残りは Keep に倒して挙動を決定的にする。
-            if (replaceMap.TryGetValue(path, out var newIdx) && !usedNewIndices.Contains(newIdx))
+            if (replaceMap.TryGetValue(effectivePath, out var newIdx) && !usedNewIndices.Contains(newIdx))
             {
                 // 置換: 新規アイテムのデータ/プロパティで既存エントリを上書きする。
                 // indexInArchive に元インデックスを渡すことで 7-zip がデータを再利用できる。
@@ -161,7 +168,7 @@ internal sealed class UpdatePlan
                     IsNewOrReplaced = false,
                     OriginalIndex   = i,
                     NewItemIndex    = -1,
-                    RenameTo        = renameTo.Replace('/', '\\'),
+                    RenameTo        = effectivePath,
                 });
             }
             else
@@ -191,8 +198,68 @@ internal sealed class UpdatePlan
             });
         }
 
+        // rename によって出力に同名エントリが生じないことを検証する (書き込み開始前に拒否)。
+        ThrowIfRenameCollides(entries, existingPaths, newItems, renameMap);
+
         // List<Entry> をイミュータブルな配列に変換して Entries プロパティに格納する
         Entries = [.. entries];
+    }
+
+    #endregion
+
+    #region Implementations
+
+    /// <summary>
+    /// rename に起因する出力パスの重複を検出し、<see cref="ArgumentException"/> で拒否する。
+    /// </summary>
+    /// <param name="entries">構築済みの出力エントリ。</param>
+    /// <param name="existingPaths">既存インデックスから相対パスを取得する関数。</param>
+    /// <param name="newItems">追加/置換する新規アイテムのリスト。</param>
+    /// <param name="renameMap">既存インデックス → 新しい相対パス のマップ。</param>
+    /// <remarks>
+    /// <para>
+    /// rename 先が保持される別エントリ (rename 後のパスを含む) と一致すると、7-Zip は
+    /// 同名エントリを 2 つ持つ書庫を黙って生成する。展開時にどちらが残るかは展開側次第で、
+    /// 利用者の意図 (rename) と無関係にデータが失われうるため、更新前に拒否する。
+    /// rename 値が安全化後に空となる場合の <see cref="ArgumentException"/> と同じく、
+    /// 不正な renameMap 入力として扱う。
+    /// </para>
+    /// <para>
+    /// 判定は「重複したパスの持ち主に rename 由来のエントリ (rename のみ、または rename 先で
+    /// Add に置換されたもの) が含まれる」場合に限る。既存書庫が元々持っている
+    /// ケース違いの重複 (rename も Add も関与しない Keep 同士) は従来どおり許容する。
+    /// 互いの名前の入れ替え (a → b, b → a) は出力上で重複しないため許容される。
+    /// </para>
+    /// </remarks>
+    private static void ThrowIfRenameCollides(List<Entry> entries, Func<uint, string> existingPaths,
+        IList<RawEntity> newItems, IReadOnlyDictionary<uint, string> renameMap)
+    {
+        if (renameMap is null || renameMap.Count == 0) return;
+
+        // 出力パス → (件数, rename 由来を含むか)。OrdinalIgnoreCase は replaceMap と同じ規則。
+        var names = new Dictionary<string, (int Count, bool Renamed)>(entries.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var e in entries)
+        {
+            string name;
+            if (e.IsNewOrReplaced) name = newItems[e.NewItemIndex].RelativeName.Replace('/', '\\');
+            else if (e.RenameTo is not null) name = e.RenameTo;
+            else name = existingPaths(e.OriginalIndex).Replace('/', '\\');
+
+            // rename 先で Add に置換されたエントリも rename 由来として数える
+            var renamed = e.RenameTo is not null ||
+                (e.OriginalIndex != uint.MaxValue && renameMap.ContainsKey(e.OriginalIndex));
+
+            names.TryGetValue(name, out var cur);
+            names[name] = (cur.Count + 1, cur.Renamed || renamed);
+        }
+
+        foreach (var kv in names)
+        {
+            if (kv.Value.Count > 1 && kv.Value.Renamed)
+                throw new ArgumentException(
+                    $"The renamed archive path '{kv.Key}' collides with another entry in the updated archive.",
+                    nameof(renameMap));
+        }
     }
 
     #endregion

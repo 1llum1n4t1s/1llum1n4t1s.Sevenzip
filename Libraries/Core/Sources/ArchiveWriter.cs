@@ -224,8 +224,19 @@ public sealed class ArchiveWriter : DisposableBase
 
         var e = new RawEntity(src, safe);
         // ファイル/ディレクトリが存在する場合のみ追加する
-        if (e.Exists) AddRecursive(e);
-        else throw new FileNotFoundException(e.FullName);
+        if (!e.Exists) throw new FileNotFoundException(e.FullName);
+
+        // Add は 1 回の呼び出し単位で「全部追加」か「何も追加しない」かのどちらかにする。
+        // 再帰追加の途中 (列挙失敗・AccessException・Filter 例外など) で失敗した場合、
+        // ここまでに積んだ _items が残ると、呼び出し側が例外を捕捉して Save を続行したときに
+        // 途中までのツリーだけが黙って書庫へ入る。開始時点の件数まで巻き戻してから再スローする。
+        var mark = _items.Count;
+        try { AddRecursive(e); }
+        catch
+        {
+            _items.RemoveRange(mark, _items.Count - mark);
+            throw;
+        }
     }
 
     /// <summary>
@@ -306,14 +317,12 @@ public sealed class ArchiveWriter : DisposableBase
     /// </exception>
     public void Save(string dest, IProgress<Report> progress)
     {
-        ThrowIfDisposed();
+        // LastTempPath / LastBackupPath を「今回の操作の値」へ揃える共通前処理。
+        // 検証や空き容量チェックで失敗した場合も前回操作の値を残さない。
+        BeginOperation();
         // オプションの組み合わせを早期検証 (VolumeSize/ThreadCount 負値、AtomicSave+VolumeSize、
         // Tar+Password の矛盾など)
         Options.Validate(Format);
-
-        // .bak を作らない経路でも前回操作の値が残らないようクリアする
-        // (LastBackupPath の契約: .bak が生成されなかった場合は null)。
-        ResetLastBackupPath();
 
         // 保存先ディレクトリを事前に作成する
         var dir = Io.GetDirectoryName(dest);
@@ -358,10 +367,7 @@ public sealed class ArchiveWriter : DisposableBase
                     SaveAs(ss, FilterItems(_items), Format, dest, progress);
                 }
                 SplitFileIntoVolumes(tempPath, dest, Options.VolumeSize, Options.FlushToDisk);
-            }, () =>
-            {
-                if (Io.Exists(tempPath)) Io.Delete(tempPath);
-            });
+            }, () => DeleteTempFile(tempPath));
             return;
         }
 
@@ -398,18 +404,19 @@ public sealed class ArchiveWriter : DisposableBase
         // 空き容量のベストエフォートチェック:
         // 既存 dest があればそのサイズ × 1.1 倍の空きを要求する (圧縮後のサイズは未知だが近似)。
         // 早期失敗させることで「数分書き込んだ末にディスク不足で失敗」という UX 破綻を防ぐ。
+        // (LastTempPath / LastBackupPath のクリアは Save 入口の BeginOperation で実施済み。
+        //  ここより前で失敗しても前回操作の値が残らない)
         FileSystemHelper.EnsureEnoughFreeSpace(destDir, dest);
-
-        // LastTempPath は正常完了時のみ null。開始時にクリア (前回の残骸参照を落とす)。
-        LastTempPath = null;
-        ResetLastBackupPath();
 
         try
         {
             // Step 1: tmp に全内容を書き込む
             if (Format == Format.Tar)
             {
-                SaveAsTar(tempPath, FilterItems(_items), progress);
+                // TAR 内包名 (GZip/BZip2/XZ で包む場合の中身の名前) は最終 dest から導出する。
+                // tmp パス ({GUID}.gz.tmp) から導出すると "{GUID}.gz.tar" になり、
+                // 非 atomic 保存 ("a.tar") と結果が食い違う。
+                SaveAsTar(tempPath, FilterItems(_items), progress, nameSource: dest);
             }
             else
             {
@@ -421,16 +428,16 @@ public sealed class ArchiveWriter : DisposableBase
             if (Options.FlushToDisk) FileSystemHelper.FlushFile(tempPath);
 
             // Step 3: 既存 dest を .bak に退避 (atomic rename)
-            if (backup is not null) Io.Move(dest, backup, false);
+            if (backup is not null) MoveFile(dest, backup);
 
             // Step 4: tmp を dest へ移動 (atomic rename)
-            try { Io.Move(tempPath, dest, false); }
+            try { MoveFile(tempPath, dest); }
             catch
             {
                 // rename 失敗時は .bak から元ファイルを復元してから再スロー
                 if (backup is not null)
                 {
-                    try { Io.Move(backup, dest, false); }
+                    try { MoveFile(backup, dest); }
                     catch (Exception restoreEx)
                     {
                         throw new ArchiveUpdateException(
@@ -475,12 +482,28 @@ public sealed class ArchiveWriter : DisposableBase
     /// <param name="progress">進捗を報告するオブジェクト。</param>
     /// <param name="leaveOpen">true の場合、完了後に <paramref name="dest"/> を Dispose しない。既定値は true。</param>
     /// <remarks>
+    /// <para>
     /// TAR フォーマットは一時ファイル経由で構築される（中間ストリームはランダムアクセスを要求するため）。
+    /// </para>
+    /// <para>
+    /// オプションはパス版 <see cref="Save(string, IProgress{Report})"/> と同じ
+    /// <c>CompressionOption.Validate</c> で検証する (Tar + Password、負の ThreadCount 等を拒否)。
+    /// <paramref name="leaveOpen"/> が false の場合、処理を開始した後は成功・失敗を問わず
+    /// <paramref name="dest"/> を Dispose する (FlushToDisk の同期は Dispose より前に行う)。
+    /// 引数・オプション検証で失敗した場合は処理を開始していないため Dispose しない。
+    /// </para>
     /// </remarks>
+    /// <exception cref="NotSupportedException">
+    /// <see cref="CompressionOption.VolumeSize"/> &gt; 0 または <see cref="CompressionOption.AtomicSave"/> = true の場合。
+    /// </exception>
     public void Save(Stream dest, IProgress<Report> progress = null, bool leaveOpen = true)
     {
-        ThrowIfDisposed();
+        // パス版と同じ共通前処理・検証を通す。以前は Stream 版だけ Validate を経由せず、
+        // Tar + Password が平文 tar として黙って出力され、負の ThreadCount が
+        // CompressionOptionSetter の (uint) キャストで巨大値になっていた。
+        BeginOperation();
         ArgumentNullException.ThrowIfNull(dest);
+        Options.Validate(Format);
 
         // Stream 版の Save は VolumeSize をサポートしない。
         if (Options.VolumeSize > 0)
@@ -489,32 +512,40 @@ public sealed class ArchiveWriter : DisposableBase
         if (Options.AtomicSave)
             throw new NotSupportedException("AtomicSave is not supported for Stream output.");
 
-        if (Format == Format.Tar)
+        // 本処理 → FlushToDisk → (leaveOpen=false なら) Dispose の順を保証する。
+        // 以前は using var が else ブロック末で dest を閉じた後に FlushToDisk が走り、
+        // FileStream + leaveOpen=false + FlushToDisk=true で ObjectDisposedException になっていた。
+        // また Tar 分岐は leaveOpen を見ておらず dest を閉じなかった。ここで所有権処理を一元化する。
+        RunWithCleanup(() =>
         {
-            // TAR は現状 path ベースで一旦ディスクに書いてから Stream にコピーする
-            var tempPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.tmp");
-            RunWithCleanup(() =>
+            if (Format == Format.Tar)
             {
-                SaveAsTar(tempPath, FilterItems(_items), progress);
-                using var fs = Io.Open(tempPath);
-                // 大型アーカイブを効率的に書き戻すため 1MB バッファで CopyTo
-                dest.Position = 0;
-                fs.CopyTo(dest, bufferSize: FileSystemHelper.DefaultBufferSize);
-                dest.SetLength(dest.Position);
-            }, () =>
+                // TAR は現状 path ベースで一旦ディスクに書いてから Stream にコピーする
+                var tempPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.tmp");
+                RunWithCleanup(() =>
+                {
+                    SaveAsTar(tempPath, FilterItems(_items), progress);
+                    using var fs = Io.Open(tempPath);
+                    // 大型アーカイブを効率的に書き戻すため 1MB バッファで CopyTo
+                    dest.Position = 0;
+                    fs.CopyTo(dest, bufferSize: FileSystemHelper.DefaultBufferSize);
+                    dest.SetLength(dest.Position);
+                }, () => DeleteTempFile(tempPath));
+            }
+            else
             {
-                if (Io.Exists(tempPath)) Io.Delete(tempPath);
-            });
-        }
-        else
-        {
-            using var ss = new ArchiveStreamWriter(dest, dispose: !leaveOpen);
-            SaveAs(ss, FilterItems(_items), Format, string.Empty, progress);
-        }
+                // dest の Dispose は外側の後始末で leaveOpen に従って行うため、ここでは閉じない。
+                using var ss = new ArchiveStreamWriter(dest, dispose: false);
+                SaveAs(ss, FilterItems(_items), Format, string.Empty, progress);
+            }
 
-        // FlushToDisk: 渡された dest が FileStream 等であればディスク同期する。
-        // それ以外 (MemoryStream / NetworkStream 等) は通常の Flush のみ。
-        if (Options.FlushToDisk) FileSystemHelper.FlushToDiskIfFileStream(dest);
+            // FlushToDisk: 渡された dest が FileStream 等であればディスク同期する。
+            // それ以外 (MemoryStream / NetworkStream 等) は通常の Flush のみ。
+            if (Options.FlushToDisk) FileSystemHelper.FlushToDiskIfFileStream(dest);
+        }, () =>
+        {
+            if (!leaveOpen) dest.Dispose();
+        });
     }
 
     /// <summary>
@@ -586,7 +617,10 @@ public sealed class ArchiveWriter : DisposableBase
     /// <exception cref="System.IO.IOException">空き容量不足 / ディスクエラー / ファイル競合等。</exception>
     public void Update(string source, string dest, string sourcePassword, IProgress<Report> progress)
     {
-        ThrowIfDisposed();
+        // LastTempPath / LastBackupPath を「今回の操作の値」へ揃える共通前処理。
+        // 以前は EnsureEnoughFreeSpace の後でクリアしていたため、容量不足で失敗すると
+        // 前回操作の値が残っていた。
+        BeginOperation();
         // 更新非対応フォーマットは早期に例外をスローする
         if (Format == Format.Tar)
             throw new NotSupportedException("Update is not supported for TAR format.");
@@ -621,10 +655,6 @@ public sealed class ArchiveWriter : DisposableBase
         // 空き容量ベストエフォートチェック (dest サイズ × 1.1 を要求)
         if (useTempThenRename) FileSystemHelper.EnsureEnoughFreeSpace(destDir, dest);
 
-        // LastTempPath は正常完了時のみ null。開始時にクリア。
-        LastTempPath = null;
-        ResetLastBackupPath();
-
         try
         {
             // 保存先ディレクトリを事前に作成する
@@ -655,18 +685,18 @@ public sealed class ArchiveWriter : DisposableBase
             if (useTempThenRename)
             {
                 // 既存 dest を .bak に退避 (backup が不要な新規作成ケースはスキップ)
-                if (backup is not null) Io.Move(dest, backup, false);
+                if (backup is not null) MoveFile(dest, backup);
                 try
                 {
                     // 新しく生成した一時ファイルを最終的な保存先に移動する
-                    Io.Move(actualDest, dest, false);
+                    MoveFile(actualDest, dest);
                 }
                 catch (Exception ex)
                 {
                     // Move 失敗時はバックアップから元のファイルを復元する
                     if (backup is not null)
                     {
-                        try { Io.Move(backup, dest, false); }
+                        try { MoveFile(backup, dest); }
                         catch (Exception restoreEx)
                         {
                             // ロールバック失敗時は ArchiveUpdateException 構造化例外で通知。
@@ -751,7 +781,29 @@ public sealed class ArchiveWriter : DisposableBase
     /// rename 処理は既存エントリのデータをそのまま再利用し、パスのみ差し替える（新規圧縮は発生しない）。
     /// 同時に <see cref="Add(string, string)"/> / <see cref="Add(Stream, string)"/> / <see cref="Remove(string)"/>
     /// による操作も適用できる。renameMap と Add に同じパスが現れた場合は Add の内容が優先される
-    /// （Add のデータで置換される）。
+    /// （Add のデータで置換される）。このとき rename 元のエントリは Add のデータで置き換えられ、
+    /// 同じパスのエントリが 2 つ出力されることはない。Add との照合は rename 後のパスで行うため、
+    /// rename 元の旧パスと同じパスを Add した場合は、rename 後のエントリとは別の新規エントリになる。
+    /// </para>
+    /// <para>
+    /// rename 後のパスが、保持される他のエントリ (rename 後のパスを含む) と大文字小文字を
+    /// 区別せず一致する場合は、同名エントリの重複を作らないよう <see cref="ArgumentException"/> で
+    /// 拒否する (書き込み開始前に検出する)。互いの名前の入れ替え (a → b, b → a) は衝突しない。
+    /// </para>
+    /// <para>
+    /// rename したエントリはパス以外の属性 (ディレクトリかどうか、属性、作成・更新・アクセス日時等) を
+    /// 元のエントリから引き継ぐ。
+    /// </para>
+    /// <para>
+    /// オプションはパス版と同じ <c>CompressionOption.Validate</c> で検証する。
+    /// <see cref="CompressionOption.VolumeSize"/> &gt; 0 と <see cref="CompressionOption.AtomicSave"/> = true は
+    /// Stream 出力では実現できないため <see cref="NotSupportedException"/> で拒否する。
+    /// <paramref name="leaveSourceOpen"/> / <paramref name="leaveDestOpen"/> が false の Stream は、
+    /// 処理を開始した後は成功・失敗を問わず Dispose する (FlushToDisk の同期は Dispose より前)。
+    /// source と dest が同一インスタンスの場合は、どちらかが false なら 1 回だけ Dispose する。
+    /// 引数・オプション検証で失敗した場合は Dispose しない。
+    /// ただし renameMap の内容（index 範囲・rename 先の衝突）は書庫を開いた後に検証するため、
+    /// その失敗は「処理開始後」として扱い Dispose する。
     /// </para>
     /// <para>
     /// <b>自己参照 (source == dest) の挙動:</b> 一度 MemoryStream に読み出してから書き戻すため、
@@ -774,11 +826,23 @@ public sealed class ArchiveWriter : DisposableBase
         bool leaveSourceOpen = true, bool leaveDestOpen = true,
         bool allowDestructiveOnWritebackFailure = false)
     {
-        ThrowIfDisposed();
+        // パス版 Update と同じ共通前処理・検証を通す (LastTempPath / LastBackupPath のリセット、
+        // CompressionOption.Validate)。以前は Stream 版だけ検証を経由せず、VolumeSize / AtomicSave を
+        // 黙って無視していた。
+        BeginOperation();
         if (Format == Format.Tar)
             throw new NotSupportedException("Update is not supported for TAR format.");
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(dest);
+        Options.Validate(Format);
+
+        // Stream 出力では分割 (.001 ...) も tmp → rename も実現できない。
+        // 無視すると呼び出し側は分割・クラッシュ耐性が効いていると誤認するため明示的に拒否する
+        // (Save(Stream) と同じ扱い)。
+        if (Options.VolumeSize > 0)
+            throw new NotSupportedException("VolumeSize is not supported by Update.");
+        if (Options.AtomicSave)
+            throw new NotSupportedException("AtomicSave is not supported for Stream output.");
 
         var sameStream = ReferenceEquals(source, dest);
 
@@ -790,63 +854,98 @@ public sealed class ArchiveWriter : DisposableBase
                 "The destination stream must be seekable for in-place update " +
                 "(source and dest reference the same stream).");
 
-        if (sameStream)
+        // 本処理 → FlushToDisk → 所有権に従った Dispose の順を保証する。
+        // 以前は非自己参照分岐の using var が dest を閉じた後に FlushToDisk が走り
+        // (leaveDestOpen=false + FileStream で ObjectDisposedException)、自己参照分岐は
+        // leaveSourceOpen / leaveDestOpen を無視して常に開いたままにしていた。
+        // ラッパー (ArchiveStreamReader/Writer) は常に dispose:false とし、Dispose は後始末で一元化する。
+        RunWithCleanup(() =>
         {
-            // 自己参照更新: 結果を MemoryStream に組み立ててから書き戻す。
-            // 入力側の全量コピーは行わない。source == dest はシーク可能であることが上の
-            // ガードで保証済みで、かつ outBuffer が完成するまで dest には一切触らないため、
-            // source をそのまま読み取り専用の入力として使える。以前は入力も MemoryStream へ
-            // 複製していたためピークメモリがアーカイブサイズの 2 倍になっていた。
-            source.Position = 0L;
-
-            using var outBuffer = new MemoryStream();
-            using (var inStream = new ArchiveStreamReader(source, dispose: false))
-            using (var outStream = new ArchiveStreamWriter(outBuffer, dispose: false))
+            if (sameStream) UpdateSameStream(dest, sourcePassword, progress, renameMap,
+                allowDestructiveOnWritebackFailure);
+            else
             {
-                // 書き戻しフェーズ前にここで例外が起きた場合、dest は無変更のまま
-                // (書き戻し未実施) となる。OOM 耐性: outBuffer が完成するまで dest
-                // に触らない設計。
+                using var inStream = new ArchiveStreamReader(source, dispose: false);
+                using var outStream = new ArchiveStreamWriter(dest, dispose: false);
                 UpdateCore(inStream, outStream, string.Empty, string.Empty,
                     sourcePassword ?? Options.Password, progress, renameMap);
             }
 
-            // 結果を元の Stream に書き戻す (CanSeek は上記ガードで保証済み)。
-            // 書き戻し中 (CopyTo / Flush) の例外挙動は allowDestructiveOnWritebackFailure で切り替え:
-            //  - false (既定): dest の状態はそのまま (部分書き込み状態の可能性あり) で例外のみ伝播
-            //  - true: dest.SetLength(0) で破棄してサイレント破損を防ぐ
-            try
-            {
-                dest.Position = 0L;
-                outBuffer.Position = 0L;
-                outBuffer.CopyTo(dest, FileSystemHelper.DefaultBufferSize);
-                // CopyTo が最初の書き込みで失敗した場合に元内容を先行消去しない。
-                // 新しい内容が短い場合の末尾切り詰めは、全量書き込み成功後に行う。
-                dest.SetLength(outBuffer.Length);
-                dest.Flush();
-                // 呼び出し元が読み戻せるよう位置を先頭に戻す
-                dest.Position = 0L;
-            }
-            catch
-            {
-                if (allowDestructiveOnWritebackFailure)
-                {
-                    try { dest.SetLength(0L); dest.Flush(); } catch { /* 最終防御は失敗しても諦める */ }
-                }
-                // false の場合は dest をそのまま呼び出し側に委ねる (部分書き込み状態を保つ)
-                throw;
-            }
-        }
-        else
+            // FlushToDisk: dest が FileStream ならディスク同期を行う。
+            // 自己参照ケースでも通常ケースでも共通で適用 (書き戻し完了後の最終フラッシュ)。
+            if (Options.FlushToDisk) FileSystemHelper.FlushToDiskIfFileStream(dest);
+        }, () =>
         {
-            using var inStream = new ArchiveStreamReader(source, dispose: !leaveSourceOpen);
-            using var outStream = new ArchiveStreamWriter(dest, dispose: !leaveDestOpen);
+            if (sameStream)
+            {
+                // 同一インスタンスなので、どちらかの所有権が移っていれば 1 回だけ閉じる。
+                if (!leaveSourceOpen || !leaveDestOpen) source.Dispose();
+            }
+            else
+            {
+                // 出力側を先に閉じる (従来の using の解放順と同じ)。両方の失敗は集約する。
+                DisposeStreams(leaveDestOpen ? null : dest, leaveSourceOpen ? null : source);
+            }
+        });
+    }
+
+    /// <summary>
+    /// source と dest が同一 Stream の場合の更新処理 (MemoryStream に組み立ててから書き戻す)。
+    /// </summary>
+    /// <param name="stream">入力兼出力の Stream。シーク可能であることは呼び出し元で検証済み。</param>
+    /// <param name="sourcePassword">ソースアーカイブのパスワード。null の場合は Options.Password。</param>
+    /// <param name="progress">進捗を報告するオブジェクト。</param>
+    /// <param name="renameMap">保持エントリの rename マップ。</param>
+    /// <param name="allowDestructiveOnWritebackFailure">書き戻し失敗時に stream を空にするかどうか。</param>
+    /// <remarks>
+    /// Stream の Dispose は行わない (所有権の処理は呼び出し元の後始末で一元化している)。
+    /// </remarks>
+    private void UpdateSameStream(Stream stream, string sourcePassword, IProgress<Report> progress,
+        IReadOnlyDictionary<int, string> renameMap, bool allowDestructiveOnWritebackFailure)
+    {
+        // 自己参照更新: 結果を MemoryStream に組み立ててから書き戻す。
+        // 入力側の全量コピーは行わない。source == dest はシーク可能であることが上の
+        // ガードで保証済みで、かつ outBuffer が完成するまで dest には一切触らないため、
+        // source をそのまま読み取り専用の入力として使える。以前は入力も MemoryStream へ
+        // 複製していたためピークメモリがアーカイブサイズの 2 倍になっていた。
+        stream.Position = 0L;
+
+        using var outBuffer = new MemoryStream();
+        using (var inStream = new ArchiveStreamReader(stream, dispose: false))
+        using (var outStream = new ArchiveStreamWriter(outBuffer, dispose: false))
+        {
+            // 書き戻しフェーズ前にここで例外が起きた場合、dest は無変更のまま
+            // (書き戻し未実施) となる。OOM 耐性: outBuffer が完成するまで dest
+            // に触らない設計。
             UpdateCore(inStream, outStream, string.Empty, string.Empty,
                 sourcePassword ?? Options.Password, progress, renameMap);
         }
 
-        // FlushToDisk: dest が FileStream ならディスク同期を行う。
-        // 自己参照ケースでも通常ケースでも共通で適用 (書き戻し完了後の最終フラッシュ)。
-        if (Options.FlushToDisk) FileSystemHelper.FlushToDiskIfFileStream(dest);
+        // 結果を元の Stream に書き戻す (CanSeek は呼び出し元のガードで保証済み)。
+        // 書き戻し中 (CopyTo / Flush) の例外挙動は allowDestructiveOnWritebackFailure で切り替え:
+        //  - false (既定): dest の状態はそのまま (部分書き込み状態の可能性あり) で例外のみ伝播
+        //  - true: dest.SetLength(0) で破棄してサイレント破損を防ぐ
+        try
+        {
+            stream.Position = 0L;
+            outBuffer.Position = 0L;
+            outBuffer.CopyTo(stream, FileSystemHelper.DefaultBufferSize);
+            // CopyTo が最初の書き込みで失敗した場合に元内容を先行消去しない。
+            // 新しい内容が短い場合の末尾切り詰めは、全量書き込み成功後に行う。
+            stream.SetLength(outBuffer.Length);
+            stream.Flush();
+            // 呼び出し元が読み戻せるよう位置を先頭に戻す
+            stream.Position = 0L;
+        }
+        catch
+        {
+            if (allowDestructiveOnWritebackFailure)
+            {
+                try { stream.SetLength(0L); stream.Flush(); } catch { /* 最終防御は失敗しても諦める */ }
+            }
+            // false の場合は dest をそのまま呼び出し側に委ねる (部分書き込み状態を保つ)
+            throw;
+        }
     }
 
     /// <summary>
@@ -940,12 +1039,25 @@ public sealed class ArchiveWriter : DisposableBase
             var openCode = inArchive.Open(inStream, IntPtr.Zero, openCb);
             if (openCode != 0)
             {
+                // 失敗分類は ArchiveReader の Open 失敗分類と揃える。
                 if (openCb.Exceptions.Count > 0)
                 {
                     var inner = openCb.Exceptions.Pop();
+                    // 更新元のパスワードは固定文字列の PasswordQuery で渡すため、OpenCallback が
+                    // EncryptionException を積む経路は現状ない (ヘッダー暗号の誤パスワード・
+                    // パスワード未指定は 7z.dll が S_FALSE を返し、下の IsNotArc 分岐に落ちる)。
+                    // 将来 IQuery 経由の問い合わせを受け付けた場合に型を保つための防御として残す。
                     if (inner is EncryptionException) throw inner;
                     throw new SevenZipException(SevenZipCode.HeadersError, inner);
                 }
+
+                // パスワード要求がキャンセルされると PasswordCallback.CryptoGetTextPassword が
+                // Cancel (-2) を返し、7z.dll はそれを Open の戻り値にする。Exceptions が空 = 失敗起因
+                // ではない純粋な利用者キャンセルなので OperationCanceledException とする
+                // (ArchiveReader と同じ。UnknownError(COMException) に化かさない)。
+                // 注意: 現状の更新元パスワードは固定文字列 (PasswordQuery(string)) で Cancel を
+                // 立てないため公開 API からは到達しないが、分類を reader と一致させておく。
+                if (openCode == (int)SevenZipCode.Cancel) throw new OperationCanceledException();
 
                 if (openCode > 0) throw new SevenZipException(SevenZipCode.IsNotArc);
                 throw new SevenZipException(SevenZipCode.UnknownError,
@@ -1051,6 +1163,9 @@ public sealed class ArchiveWriter : DisposableBase
             // UpdateCallback を更新モードで生成する
             var cb = updateCb = new UpdateCallback(filteredItems, plan, existingBytes, progress)
             {
+                // rename エントリの Path 以外のプロパティ (IsDir / Attrib / 各時刻等) を
+                // 元書庫から返すために、開いている IInArchive を渡す (解放は本メソッドの後始末)。
+                Source         = inArchive,
                 Destination    = destHint ?? string.Empty,
                 Password       = Options.Password,
                 OnFileStarted  = RaiseFileCompressing,
@@ -1238,11 +1353,20 @@ public sealed class ArchiveWriter : DisposableBase
     /// <summary>
     /// 新しい TAR アーカイブを作成して指定したパスに保存する。
     /// </summary>
-    private void SaveAsTar(string dest, IList<RawEntity> src, IProgress<Report> progress)
+    /// <param name="dest">書き出し先パス (AtomicSave では tmp パス)。</param>
+    /// <param name="src">追加するアイテム。</param>
+    /// <param name="progress">進捗を報告するオブジェクト。</param>
+    /// <param name="nameSource">
+    /// TAR 内包名 (GZip/BZip2/XZ で包む場合の中身の名前) の導出元パス。
+    /// null の場合は <paramref name="dest"/> から導出する。AtomicSave のように tmp パスへ
+    /// 書き出す場合は最終的な保存先を渡し、非 atomic 保存と同じ内包名にする。
+    /// </param>
+    private void SaveAsTar(string dest, IList<RawEntity> src, IProgress<Report> progress,
+        string nameSource = null)
     {
         // 一時ディレクトリに TAR を作成し、必要に応じて圧縮する
         var dir = Io.Combine(Io.GetDirectoryName(dest), $"{Guid.NewGuid():N}");
-        var tmp = Io.Combine(dir, GetTarName(dest));
+        var tmp = Io.Combine(dir, GetTarName(nameSource ?? dest));
 
         RunWithCleanup(() =>
         {
@@ -1300,8 +1424,29 @@ public sealed class ArchiveWriter : DisposableBase
         static RawEntity make(string s, RawEntity e) =>
             new(s, Io.Combine(e.RelativeName, Io.GetFileName(s)));
 
+        // Io.GetFiles / GetDirectories は遅延列挙のため、アクセス拒否等の例外は foreach 中の
+        // MoveNext で発生し、AddItem の例外境界の外へ素通りしていた (SkipInaccessibleFiles=true でも
+        // スキップされず、false でも AccessException に包まれない)。列挙だけを先に確定させ、
+        // AddItem と同じ「スキップ通知 or AccessException」の規約で扱う。
+        // Filter / 子の追加処理の例外は利用者コード由来なのでこの try には含めない。
+        List<string> files;
+        List<string> directories;
+        try
+        {
+            files       = new List<string>(Io.GetFiles(src.FullName));
+            directories = new List<string>(Io.GetDirectories(src.FullName));
+        }
+        catch (Exception e)
+        {
+            // ディレクトリ自体は直前の AddItem で末尾に登録済み。中身を読めないディレクトリは
+            // アイテムごと除外してから、スキップ通知または AccessException にする。
+            _items.RemoveAt(_items.Count - 1);
+            SkipOrThrow(src, e);
+            return;
+        }
+
         // ディレクトリ直下のファイルを追加する
-        foreach (var e in Io.GetFiles(src.FullName))
+        foreach (var e in files)
         {
             var entity = make(e, src);
             // フィルタに一致したファイルはスキップする
@@ -1310,7 +1455,7 @@ public sealed class ArchiveWriter : DisposableBase
         }
 
         // サブディレクトリを再帰的に処理する
-        foreach (var e in Io.GetDirectories(src.FullName)) AddRecursive(make(e, src));
+        foreach (var e in directories) AddRecursive(make(e, src));
     }
 
     /// <summary>
@@ -1417,19 +1562,33 @@ public sealed class ArchiveWriter : DisposableBase
             // FileShare.None で他プロセスが排他保持しているファイル (Visual Studio の .vsidx 等) を
             // 想定。再解析ポイントも追跡せず同じ通知経路で除外する。_items に追加しないので
             // Save 時の GetStream にも到達せず、ディレクトリの場合は呼び出し元が子孫列挙を止める。
-            if (Options?.SkipInaccessibleFiles == true)
-            {
-                FileSkipped?.Invoke(this, new FileSkippedEventArgs
-                {
-                    FullName     = src.FullName,
-                    RelativeName = src.RelativeName,
-                    Reason       = e,
-                });
-                return false;
-            }
-
-            throw new AccessException(src.RawName, e);
+            SkipOrThrow(src, e);
+            return false;
         }
+    }
+
+    /// <summary>
+    /// Add 時にアクセスできなかったアイテムを、設定に従ってスキップ通知するか例外にする。
+    /// </summary>
+    /// <param name="src">対象アイテム。</param>
+    /// <param name="error">原因となった例外。</param>
+    /// <exception cref="AccessException">
+    /// <see cref="CompressionOption.SkipInaccessibleFiles"/> が false の場合。
+    /// </exception>
+    /// <remarks>
+    /// SkipInaccessibleFiles は Add 時点の判定だけに使う。保存中の I/O 失敗をこの経路で
+    /// スキップへ変換してはならない (UpdateCallback 側は失敗として Exceptions に積む)。
+    /// </remarks>
+    private void SkipOrThrow(RawEntity src, Exception error)
+    {
+        if (Options?.SkipInaccessibleFiles != true) throw new AccessException(src.RawName, error);
+
+        FileSkipped?.Invoke(this, new FileSkippedEventArgs
+        {
+            FullName     = src.FullName,
+            RelativeName = src.RelativeName,
+            Reason       = error,
+        });
     }
 
     /// <summary>
@@ -1480,6 +1639,79 @@ public sealed class ArchiveWriter : DisposableBase
     /// 過去の .bak は引き続き検出・クリーンアップできる。
     /// </remarks>
     private void ResetLastBackupPath() => LastBackupPath = null;
+
+    /// <summary>
+    /// Save / Update の全公開入口で最初に行う共通前処理。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="LastTempPath"/> (正常完了時は null) と <see cref="LastBackupPath"/>
+    /// (今回の操作で生成された .bak、無ければ null) は「今回の操作の値」を表す契約のため、
+    /// 検証・空き容量チェック・Stream 系 API を含むどの経路で失敗・完了しても前回操作の値が
+    /// 残らないよう、何よりも先にリセットする。以前は一部経路 (非 atomic Save、Stream 系 API、
+    /// 空き容量チェックの失敗) でリセットされず、呼び出し側が前回の tmp / .bak を
+    /// 「今回の失敗の残骸」と誤認しうる状態だった。
+    /// </remarks>
+    private void BeginOperation()
+    {
+        ThrowIfDisposed();
+        LastTempPath = null;
+        ResetLastBackupPath();
+    }
+
+    /// <summary>
+    /// 作業用 tmp ファイルを削除する。削除に失敗した場合は <see cref="LastTempPath"/> で公開する。
+    /// </summary>
+    /// <param name="path">削除する tmp ファイルのパス。</param>
+    /// <remarks>
+    /// 失敗は呼び出し元へ再スローする (RunWithCleanup が本処理の例外と集約する)。
+    /// 呼び出し側は catch で LastTempPath を参照して手動削除できる。
+    /// </remarks>
+    private void DeleteTempFile(string path)
+    {
+        try
+        {
+            if (Io.Exists(path)) Io.Delete(path);
+        }
+        catch
+        {
+            LastTempPath = path;
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// ファイルを移動 (同一ボリューム内の rename) し、移動の成否を実体で判定する。
+    /// </summary>
+    /// <param name="src">移動元のパス。</param>
+    /// <param name="dest">移動先のパス (存在しないこと)。</param>
+    /// <remarks>
+    /// <para>
+    /// <see cref="Io.Move(string, string, bool)"/> は rename 成功後に作成日時・更新日時・属性を
+    /// 再設定し、その段階で例外を投げうる。呼び出し元の rollback は「例外 = 未移動」と
+    /// 解釈するため、そのまま伝播すると実際には成功した移動を失敗と誤報告し、
+    /// 不要な復元 (既に dest が存在するため失敗 → ArchiveUpdateException) や、
+    /// 退避済み .bak が <see cref="LastBackupPath"/> に載らない状態を招く。
+    /// </para>
+    /// <para>
+    /// 例外発生後に「移動元が消え、移動先が存在する」なら rename 自体は完了しているとみなして
+    /// 成功扱いにする。同一ボリュームの rename はタイムスタンプと属性を保持するため、
+    /// 再設定の失敗で内容・メタデータは失われない。判定できない場合は元の例外を伝播する。
+    /// </para>
+    /// </remarks>
+    private static void MoveFile(string src, string dest)
+    {
+        try { Io.Move(src, dest, false); }
+        catch when (HasMoved(src, dest)) { /* rename は完了済み。メタデータ再設定の失敗のみ */ }
+    }
+
+    /// <summary>
+    /// 移動が実体として完了しているかどうかを判定する (例外フィルター用、例外を投げない)。
+    /// </summary>
+    private static bool HasMoved(string src, string dest)
+    {
+        try { return !Io.Exists(src) && Io.Exists(dest); }
+        catch { return false; }
+    }
 
     /// <summary>
     /// 保存完了後のバックアップ保持・削除と追跡情報の更新を行う。
