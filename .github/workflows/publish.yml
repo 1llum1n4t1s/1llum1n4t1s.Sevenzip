@@ -193,7 +193,10 @@ jobs:
           $installer = Join-Path $env:RUNNER_TEMP 'dotnet-install.ps1'
           Invoke-WebRequest 'https://raw.githubusercontent.com/actions/setup-dotnet/a98b56852c35b8e3190ac28c8c2271da59106c68/externals/install-dotnet.ps1' -OutFile $installer
           if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash -ne 'B224982626C6DDF7CE915D7D560B7060D3C42754EB621F8CC53B8C775C0CC6B5') { throw 'Pinned .NET installer SHA-256 mismatch.' }
-          & $installer -Channel 10.0 -InstallDir $installRoot -NoPath
+          # SDK は dependency-validation.yml と同じ版に完全固定する。-Channel 指定の浮動だと
+          # 新しい SDK の公開時に暗黙参照の Microsoft.NET.ILLink.Tasks の版が変わり、
+          # packages.lock.json と食い違って --locked-mode restore でリリースが止まる。
+          & $installer -Version 11.0.100 -InstallDir $installRoot -NoPath
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           "DOTNET_ROOT=$installRoot" >> $env:GITHUB_ENV
           $installRoot >> $env:GITHUB_PATH
@@ -221,6 +224,39 @@ jobs:
 
       - name: Pack
         run: dotnet pack Libraries/Core/Cube.FileSystem.SevenZip.csproj -c Release -p:Platform=AnyCPU --no-build -o Libraries/Core/bin -p:NoDefaultExcludes=true
+
+      # push は取り消せないため、公開前に nupkg の中身を検査する。
+      # AGENTS.md / DESIGN.md の契約どおり、両アーキの 7z.dll と 7-Zip のライセンスが
+      # runtime asset として同梱され、DLL が今回取得・テストしたものと同一であることを確認する。
+      - name: Verify package layout
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $packages = @(Get-ChildItem -Path "Libraries/Core/bin" -Filter "1llum1n4t1s.Sevenzip.*.nupkg" -File)
+          if ($packages.Count -ne 1) { throw "Expected exactly one 1llum1n4t1s.Sevenzip package, found $($packages.Count)." }
+          $expected = [ordered]@{
+            'runtimes/win-x64/native/7z.dll'   = 'Libraries/Core/Native/x64/7z.dll'
+            'runtimes/win-arm64/native/7z.dll' = 'Libraries/Core/Native/arm64/7z.dll'
+            'licenses/7-Zip/License.txt'       = 'Libraries/Core/Native/License.txt'
+          }
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($packages[0].FullName)
+          try {
+            foreach ($entryName in $expected.Keys) {
+              $entry = $zip.GetEntry($entryName)
+              if (-not $entry) { throw "Package is missing $entryName." }
+              # 同梱物と取得元のハッシュを比較し、別アーキや古い DLL の混入を検出する。
+              $sha = [System.Security.Cryptography.SHA256]::Create()
+              $stream = $entry.Open()
+              try { $packed = [System.BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') }
+              finally { $stream.Dispose(); $sha.Dispose() }
+              $source = (Get-FileHash -LiteralPath $expected[$entryName] -Algorithm SHA256).Hash
+              if ($packed -ne $source) { throw "$entryName does not match $($expected[$entryName])." }
+              Write-Host "$entryName SHA256: $packed"
+            }
+          } finally {
+            $zip.Dispose()
+          }
 
       - name: Authenticate to NuGet.org
         id: login

@@ -28,7 +28,10 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: 10.0.x
+          # SDK は publish.yml と同じ版に完全固定する。浮動 (11.0.x) だと新しい SDK の公開時に
+          # 暗黙参照の Microsoft.NET.ILLink.Tasks の版が変わり、packages.lock.json と食い違って
+          # --locked-mode restore が失敗する。SDK を上げるときは両 workflow と lock を同時に更新する。
+          dotnet-version: 11.0.100
       - name: Restore
         run: |
           dotnet restore Cube.FileSystem.SevenZip.slnx --locked-mode
