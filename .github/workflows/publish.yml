@@ -1,13 +1,14 @@
 # NuGet パッケージ公開ワークフロー
 #
-# release/** ブランチへの push 時に、7-zip.org から最新の 7z.dll を取得し、
+# main のコミットに付けた軽量タグ vx.y.z の push 時に、7-zip.org から最新の 7z.dll を取得し、
 # ビルド → パック → NuGet 公開を行う。
 name: Publish to NuGet
 
 on:
   push:
-    branches:
-      - 'release/**'
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  # やり直し専用: gh workflow run publish.yml --ref vx.y.z（タグ以外の ref は検証で失敗する）
   workflow_dispatch:
 
 # 最小権限: checkout 用の read と、NuGet.org の Trusted Publishing で
@@ -19,10 +20,8 @@ permissions:
 jobs:
   publish:
     runs-on: windows-latest
-    # workflow_dispatch からの誤実行防止: release/** ブランチ以外では実行しない
-    if: >-
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/release/'))
+    # workflow_dispatch からの誤実行防止は、最初の「Verify release tag and Version」step が
+    # タグ以外の ref を無条件に拒否することで担保する。
     steps:
       - name: Checkout code
         shell: pwsh
@@ -50,6 +49,33 @@ jobs:
             $env:GIT_CONFIG_KEY_0 = $null
             $env:GIT_CONFIG_VALUE_0 = $null
           }
+
+      - name: Verify release tag and Version
+        # タグ vx.y.z（main の祖先 commit を指す軽量タグ）に対して、Directory.Build.props の <Version> が x.y.z と
+        # 一致しているか照合する。push / workflow_dispatch のどちらの経路でも必ず実行し、条件付き skip にしない。
+        # NuGet はバージョン番号を永久に予約するため、誤公開は不可逆。ネイティブ取得より前に置いて数秒で落とす。
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REF_TYPE -ne 'tag') { throw "This workflow must run on a 'vx.y.z' tag. Current ref: '$env:GITHUB_REF'." }
+          if ($env:GITHUB_REF_NAME -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw "Tag '$env:GITHUB_REF_NAME' is not a strict 'vx.y.z' tag." }
+          if ($env:GITHUB_SHA -notmatch '^[0-9a-f]{40}$') { throw 'Unexpected GITHUB_SHA.' }
+          $expectedVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+          # 軽量タグで、いまもこの commit を指すこと
+          $tagRef = gh api "repos/$($env:GITHUB_REPOSITORY)/git/ref/tags/$($env:GITHUB_REF_NAME)" --jq '.object.type + " " + .object.sha'
+          if ($LASTEXITCODE) { throw 'Failed to read the tag ref.' }
+          if ($tagRef -ne "commit $($env:GITHUB_SHA)") { throw "Tag is not a lightweight tag pointing at $($env:GITHUB_SHA) ($tagRef)." }
+          # 既定ブランチの祖先であること（compare API）
+          $default = gh api "repos/$($env:GITHUB_REPOSITORY)" --jq .default_branch
+          if ($LASTEXITCODE -or -not $default) { throw 'Failed to read the default branch.' }
+          $cmp = gh api "repos/$($env:GITHUB_REPOSITORY)/compare/$($env:GITHUB_SHA)...$($default)?per_page=1" --jq '.status + " " + (.behind_by | tostring)'
+          if ($LASTEXITCODE) { throw 'Failed to compare with the default branch.' }
+          if ($cmp -notin @('ahead 0', 'identical 0')) { throw "Tag commit is not an ancestor of '$default' ($cmp)." }
+          $propsVersion = (Select-Xml -Path Directory.Build.props -XPath '//Project/PropertyGroup/Version' | Select-Object -First 1).Node.InnerText
+          if ($propsVersion -ne $expectedVersion) { throw "Directory.Build.props Version='$propsVersion' does not match tag 'v$expectedVersion'. Update <Version> before tagging." }
+          Write-Host "Version OK: Directory.Build.props=$propsVersion matches tag v$expectedVersion"
 
       - name: Fetch latest 7-Zip native binaries
         shell: pwsh

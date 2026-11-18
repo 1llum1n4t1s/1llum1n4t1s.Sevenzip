@@ -85,7 +85,7 @@ x64 / arm64 の `7z.dll` を両方とも runtime asset として同梱し、利�
 
 RID 指定ビルドや publish ではアセンブリ隣の `7z.dll` を使用し、RID なしの利用では `SevenZipLibrary` が `runtimes/win-{x64,arm64}/native/` も探索します。
 
-リポジトリ内の `Libraries/Core/Native/{x64,arm64}/7z.dll` はローカル開発用の fallback です。公開 workflow は release branch 上で 7-zip.org から最新版を取得し、HTTPS と配信元 host allowlist を検査します。upstream binary が未署名の場合は署名を必須にせず、取得元制限と SHA256 の job summary 記録で追跡可能性を確保します。
+リポジトリ内の `Libraries/Core/Native/{x64,arm64}/7z.dll` はローカル開発用の fallback です。公開 workflow は配信タグ（main の祖先 commit に付けた軽量タグ）の checkout 上で 7-zip.org から最新版を取得し、HTTPS と配信元 host allowlist を検査します。upstream binary が未署名の場合は署名を必須にせず、取得元制限と SHA256 の job summary 記録で追跡可能性を確保します。
 
 7-Zip のライセンス情報をバイナリと合わせて配布するため、公開 workflow は DLL と同じ配布物から `License.txt` を取得し、見つからない場合は失敗します。取得したファイルは `Libraries/Core/Native/License.txt` に配置し、NuGet パッケージの `licenses/7-Zip/License.txt` に収録します。
 
@@ -106,7 +106,7 @@ SFX module の同梱と executable 連結は archive library の責務から外�
 - `Directory.Build.props` が .NET 11 target、共通 version、AOT compatibility、lockfile 生成、Platform 別 output を定義します。
 - `Cube.FileSystem.SevenZip.slnx` が x64 / arm64 の project mapping を明示し、solution build から Platform 指定を各 project へ伝播します。
 - managed assembly は AnyCPU で build し、NuGet package には `runtimes/win-x64/native/7z.dll` と `runtimes/win-arm64/native/7z.dll` を収録します。
-- `.github/workflows/publish.yml` は `release/**` push を契機に native binary 取得、locked restore、Release build、実 DLL を使う test、pack、package layout 検査（両 RID の `7z.dll` と `licenses/7-Zip/License.txt` の存在と取得元との SHA256 一致）、NuGet publish の順で実行します。.NET SDK は `publish.yml` と `dependency-validation.yml` で同じ版に完全固定し、`packages.lock.json` と同時に更新します。
+- `.github/workflows/publish.yml` は軽量タグ `vX.Y.Z` の push を契機に（先頭で、タグであること・厳密形・軽量タグが実行 commit を指すこと・既定ブランチの祖先であること・`Directory.Build.props` の版との一致を検査したうえで）native binary 取得、locked restore、Release build、実 DLL を使う test、pack、package layout 検査（両 RID の `7z.dll` と `licenses/7-Zip/License.txt` の存在と取得元との SHA256 一致）、NuGet publish の順で実行します。.NET SDK は `publish.yml` と `dependency-validation.yml` で同じ版に完全固定し、`packages.lock.json` と同時に更新します。
 - 製品 version は `Directory.Build.props` の `Version` を単一の正本とします。
 
 ## 検証資産

@@ -105,7 +105,7 @@ COM Interop と P/Invoke は全面的に AOT 互換 API に移行済み:
 
 ## CI/CD
 
-GitHub Actions で `release/**` ブランチへの push 時に、7-zip.org から最新 7z.dll を取得 → ビルド → テスト → NuGet パッケージを自動公開（`.github/workflows/publish.yml`）。`main` ブランチには公開トリガーは設定されていない。
+GitHub Actions で、main のコミットに付けた軽量タグ `vX.Y.Z` の push 時に、7-zip.org から最新 7z.dll を取得 → ビルド → テスト → NuGet パッケージを自動公開（`.github/workflows/publish.yml`）。release ブランチと GitHub Release は使わない。`main` への push には公開トリガーは設定されていない。workflow は、タグであること・厳密な `vX.Y.Z` 形・軽量タグで実行 commit を指すこと・既定ブランチの祖先であること・`Directory.Build.props` の `<Version>` との一致を無条件に検査する。やり直しは `gh workflow run publish.yml --ref vX.Y.Z`。
 
 ### テストのロケール非依存性
 
